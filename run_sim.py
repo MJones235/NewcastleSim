@@ -13,8 +13,9 @@ def main():
     # Load population
     # Set use_test=True to use simple test population
     # Set use_test=False to load from actual CSV file
-    population_file = '/home/michael/NewcastlePopulation/data/outputs/02_generation/synthetic_population_with_locations_20251209_181047.csv'
-    sim_manager.load_population(population_file, use_test=False)
+    # Set use_trips=True to load from trip-based CSV
+    trip_file = '/home/michael/NewcastlePopulation/data/outputs/04_daily_routine/formatted_travel_diaries_20251211_164752.csv'
+    sim_manager.load_population(trip_file, use_test=False, use_trips=True)
     
     # Start SUMO
     print("\nStarting SUMO simulation...")
@@ -24,7 +25,7 @@ def main():
         '--additional-files', 'network/osm_stops.add.xml,network/osm_pt.rou.xml',
         '--gui-settings-file', 'network/viewsettings.xml',
         '--delay', '0',
-        # '--mesosim',  # Disabled - mesosim has strict insertion limits
+        '--mesosim',
         '--start',
         '--error-log', 'sumo_errors.log',
         '--log', 'sumo.log',

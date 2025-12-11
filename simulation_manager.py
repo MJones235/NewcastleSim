@@ -39,13 +39,14 @@ class SimulationManager:
         if len(self.agents) % 1000 == 0:
             print(f"Added {len(self.agents)} agents...")
     
-    def load_population(self, population_file: str, use_test: bool = False, max_agents: int = None):
+    def load_population(self, population_file: str, use_test: bool = False, max_agents: int = None, use_trips: bool = False):
         """Load agents from population file
         
         Args:
             population_file: Path to CSV file
             use_test: If True, use test population instead
             max_agents: Optional limit on agents to load (for testing)
+            use_trips: If True, load from trip-based CSV instead of demographics
         """
         print(f"Loading population from {population_file}...")
         
@@ -56,7 +57,10 @@ class SimulationManager:
         else:
             # Load from actual CSV file
             loader = PopulationLoader(self.network_file)
-            agents = loader.load_from_csv(population_file, max_agents=max_agents)
+            if use_trips:
+                agents = loader.load_from_trip_csv(population_file, max_agents=max_agents)
+            else:
+                agents = loader.load_from_csv(population_file, max_agents=max_agents)
             
             for agent in agents:
                 self.add_agent(agent)
