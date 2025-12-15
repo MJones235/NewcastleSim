@@ -58,3 +58,5 @@ htmlcov/
 
 # OS
 Thumbs.db
+
+output/

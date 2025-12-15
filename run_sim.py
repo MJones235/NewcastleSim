@@ -2,7 +2,9 @@ import traci
 import sumolib
 from simulation_manager import SimulationManager
 
-sumo_binary = sumolib.checkBinary('sumo-gui')
+# Performance mode: use headless SUMO for speed (10-20x faster)
+use_gui = True
+sumo_binary = sumolib.checkBinary('sumo-gui' if use_gui else 'sumo')
 
 
 def main():
@@ -19,29 +21,32 @@ def main():
     
     # Start SUMO
     print("\nStarting SUMO simulation...")
-    traci.start([
+    
+    max_time = 24 * 3600  # End at midnight
+    
+    sumo_cmd = [
         sumo_binary,
         '--net-file', 'network/osm.net.xml',
         '--additional-files', 'network/osm_stops.add.xml,network/osm_pt.rou.xml',
-        '--gui-settings-file', 'network/viewsettings.xml',
-        '--delay', '0',
         '--mesosim',
-        '--start',
         '--error-log', 'sumo_errors.log',
         '--log', 'sumo.log',
         '--ignore-route-errors',  # Don't quit on PT route errors
-        '--verbose'
-    ])
+        '--time-to-teleport', '-1',  # Disable teleporting
+        '--no-step-log',  # Disable verbose step logging for speed
+        '--no-warnings'  # Suppress routing warnings (logged to file anyway)
+    ]
     
-    # Run simulation
-    # Start at 7:30 AM (27000 seconds from midnight)
-    start_time = 7 * 3600 + 30 * 60  # 7:30 AM
-    max_time = 24 * 3600  # End at midnight
-    
-    sim_manager.current_time = start_time  # Set starting time
-    
-    print(f"\nRunning simulation from 07:30 to 24:00...")
-    
+    # GUI-specific options
+    if use_gui:
+        sumo_cmd.extend([
+            '--gui-settings-file', 'network/viewsettings.xml',
+            '--delay', '0',
+            '--start'
+        ])
+            
+    traci.start(sumo_cmd)
+            
     try:
         while sim_manager.current_time < max_time:
             sim_manager.step()

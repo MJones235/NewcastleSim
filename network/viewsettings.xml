@@ -1,3 +1,7 @@
 <viewsettings>
-    <scheme name="real world"/>
+    <scheme name="real world">
+        <vehicles vehicleQuality="2" vehicleSize="4" showBlinker="1"/>
+        <legend showSizeLegend="0"/>
+        <time show="1" format="HH:MM:SS"/>
+    </scheme>
 </viewsettings>

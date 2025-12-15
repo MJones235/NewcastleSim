@@ -21,6 +21,9 @@ class SimulationManager:
         self.agents: Dict[str, Agent] = {}
         self.current_time = 0
         self.diagnostics = SimulationDiagnostics()
+        self.screenshot_enabled = False
+        self.screenshot_interval = 10
+        self.screenshot_prefix = "output/frame_"
         
     def load_network(self):
         """Load the SUMO network for analysis"""
@@ -109,21 +112,13 @@ class SimulationManager:
         for agent in self.agents.values():
             agent.update(self.current_time)
         
-        # Update GUI time display
-        self._update_time_display()
-    
-    def _update_time_display(self):
-        """Update the time display in SUMO GUI"""
-        hours = self.current_time // 3600
-        minutes = (self.current_time % 3600) // 60
-        time_str = f"Simulation Time: {hours:02d}:{minutes:02d}"
-        
-        try:
-            # Set GUI parameter to show time in the top bar
-            traci.gui.setSchema(traci.gui.DEFAULT_VIEW, "real world")
-            traci.gui.trackVehicle(traci.gui.DEFAULT_VIEW, "")  # Clear tracking
-        except:
-            pass  # GUI commands may fail in non-GUI mode
+        # Take screenshot if recording is enabled
+        if self.screenshot_enabled and self.current_time % self.screenshot_interval == 0:
+            try:
+                filename = f"{self.screenshot_prefix}{self.current_time:06d}.png"
+                traci.gui.screenshot(traci.gui.DEFAULT_VIEW, filename)
+            except:
+                pass  # Silently fail if GUI not available
     
     def _print_status(self):
         """Print current status of all agents"""
