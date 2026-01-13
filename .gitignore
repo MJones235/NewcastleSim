@@ -52,9 +52,14 @@ htmlcov/
 
 # Data files (adjust based on your needs)
 *.csv
-*.json
+edge_mapping_cache.json
 *.sqlite
 *.db
+
+# Simulation outputs
+data/pedestrian_zones/output/
+data/pedestrian_zones/*.png
+data/traffic/output/
 
 # OS
 Thumbs.db
