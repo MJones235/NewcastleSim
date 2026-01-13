@@ -13,11 +13,8 @@ def main():
     sim_manager.load_network()
     
     # Load population
-    # Set use_test=True to use simple test population
-    # Set use_test=False to load from actual CSV file
-    # Set use_trips=True to load from trip-based CSV
     trip_file = '/home/michael/NewcastlePopulation/data/outputs/04_daily_routine/formatted_travel_diaries_20251211_164752.csv'
-    sim_manager.load_population(trip_file, use_test=False, use_trips=True)
+    sim_manager.load_population(trip_file, use_trips=True)
     
     # Start SUMO
     print("\nStarting SUMO simulation...")
