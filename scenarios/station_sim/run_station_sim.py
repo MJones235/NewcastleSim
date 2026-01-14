@@ -23,13 +23,15 @@ def setup_scenario(regenerate_passengers=True):
     
     if regenerate_passengers:
         print("\nGenerating passenger trips...")
+        # Use original stops for generation (has 'lines' attribute)
+        # but passengers will use stops_with_access.xml during simulation
         generator = PassengerGenerator(
             network_file='scenarios/station_sim/network/net.net.xml',
             stops_file='scenarios/station_sim/network/osm_stops.add.xml',
             pt_routes_file='scenarios/station_sim/network/osm_pt.rou.xml'
         )
         
-        # Generate passengers with reduced numbers to avoid overwhelming JuPedSim
+        # Generate passengers and save to network folder
         generator.generate_arriving_passengers(
             passengers_per_train=50,
             output_file='scenarios/station_sim/network/passengers_arriving.rou.xml'
@@ -63,7 +65,7 @@ def run_simulation(use_gui=True, max_time=3 * 3600):
         sumo_binary,
         '--net-file', 'scenarios/station_sim/network/net.net.xml',
         '--additional-files', ','.join([
-            'scenarios/station_sim/network/osm_stops.add.xml',  # Use original stops with lines attribute
+            'scenarios/station_sim/network/stops_with_access.xml',  # Stops with access elements
             'scenarios/station_sim/network/osm.add.xml',  # JuPedSim walkable areas
             'scenarios/station_sim/network/osm_pt.rou.xml',
             'scenarios/station_sim/network/passengers_arriving.rou.xml',

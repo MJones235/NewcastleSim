@@ -26,10 +26,9 @@ class PassengerGenerator:
         self.network_file = network_file
         self.stops_file = stops_file
         self.pt_routes_file = pt_routes_file
-        self.exit_edge = "1078920102"  # Main pedestrian exit edge leading to station exit
-        # Edges in/near the station concourse (known to be in JuPedSim walking area)
-        self.outside_exit_edges = ['1112372126#0', '1112372126#1', '540275676#8', '540275676#9', '1078920102']
-        self.entry_edges = ['631597724#0']  # Where passengers start before entering station
+        # Entry/exit edges at station boundary - JuPedSim routes through walkable area
+        self.exit_edge = "1078920102"  # Main station exit
+        self.entrance_edge = "1078920102"  # Main station entrance
         
         # Parse train stops
         self.train_stops = self._parse_train_stops()
@@ -59,15 +58,13 @@ class PassengerGenerator:
                         'access_lanes': []
                     }
                     
-                    # Get pedestrian access points if they exist
+                    # Get pedestrian access points
                     for access in stop.findall('access'):
                         stop_info['access_lanes'].append({
                             'lane': access.get('lane'),
-                            'pos': float(access.get('pos', 0)),
-                            'length': float(access.get('length', 10))
+                            'pos': float(access.get('pos', 0))
                         })
                     
-                    # Add all train stops, even those without access (we'll use fallback routing)
                     train_stops.append(stop_info)
         
         return train_stops
@@ -143,8 +140,16 @@ class PassengerGenerator:
             passengers_per_train: Number of passengers per train
             output_file: Output file path
         """
+        root = ET.Element('routes')
+        root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+        root.set('xsi:noNamespaceSchemaLocation', 'http://sumo.dlr.de/xsd/routes_file.xsd')
+        
+        # Define person type
+        vtype = ET.SubElement(root, 'vType')
+        vtype.set('id', 'passenger')
+        vtype.set('vClass', 'pedestrian')
+        
         person_id = 0
-        passengers = []  # Collect all passengers first
         
         # For each train arrival, create passengers
         for train in self.train_schedules:
@@ -157,50 +162,34 @@ class PassengerGenerator:
                 # Arrival time is when train arrives + random offset for alighting
                 arrival_time = stop_info['arrival']
                 
+                # Extract edge from platform lane (railway edge where train stops)
+                platform_edge = platform['lane'].rsplit('_', 1)[0] if '_' in platform['lane'] else platform['lane']
+                
                 # Create passengers for this train
                 for i in range(passengers_per_train):
                     person_id += 1
                     
-                    # Person departs slightly after train arrives (random spread)
+                    # Person appears after train arrives at the busStop
                     depart_time = arrival_time + random.uniform(10, 60)
                     
-                    # Start from an edge in the walking area (not from platform)
-                    # Pick a random edge in the concourse area
-                    start_edge = random.choice(['540275676#8', '540275676#9', '1112372126#0'])
+                    person = ET.SubElement(root, 'person')
+                    person.set('id', f'arriving_{person_id}')
+                    person.set('depart', f'{depart_time:.1f}')
+                    person.set('type', 'passenger')
                     
-                    # Walk through walking area to exit
-                    outside_dest = random.choice(self.outside_exit_edges)
+                    # Start on a random pedestrian access lane near the platform
+                    # This distributes passengers across different access points
+                    if platform['access_lanes']:
+                        access = random.choice(platform['access_lanes'])
+                        start_lane = access['lane']
+                        start_edge = start_lane.rsplit('_', 1)[0] if '_' in start_lane else start_lane
+                    else:
+                        start_edge = self.exit_edge  # Fallback
                     
-                    passengers.append({
-                        'id': f'arriving_{person_id}',
-                        'depart': depart_time,
-                        'from': start_edge,  # Start from walking area edge
-                        'to': outside_dest
-                    })
-        
-        # Sort passengers by departure time (REQUIRED by SUMO)
-        passengers.sort(key=lambda p: p['depart'])
-        
-        # Build XML
-        root = ET.Element('routes')
-        root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
-        root.set('xsi:noNamespaceSchemaLocation', 'http://sumo.dlr.de/xsd/routes_file.xsd')
-        
-        # Define person type
-        vtype = ET.SubElement(root, 'vType')
-        vtype.set('id', 'passenger')
-        vtype.set('vClass', 'pedestrian')
-        
-        # Add sorted passengers
-        for pax in passengers:
-            person = ET.SubElement(root, 'person')
-            person.set('id', pax['id'])
-            person.set('depart', f"{pax['depart']:.1f}")
-            person.set('type', 'passenger')
-            
-            walk = ET.SubElement(person, 'walk')
-            walk.set('from', pax['from'])  # Start from platform edge
-            walk.set('to', pax['to'])
+                    # Walk from access point through JuPedSim area to exit
+                    walk = ET.SubElement(person, 'walk')
+                    walk.set('from', start_edge)
+                    walk.set('to', self.exit_edge)
                     
         # Write XML
         tree = ET.ElementTree(root)
@@ -222,8 +211,11 @@ class PassengerGenerator:
             arrival_window: Time before train (seconds) passengers arrive at station
             output_file: Output file path
         """
+        root = ET.Element('routes')
+        root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+        root.set('xsi:noNamespaceSchemaLocation', 'http://sumo.dlr.de/xsd/routes_file.xsd')
+        
         person_id = 0
-        passengers = []  # Collect all passengers first
         
         # For each train departure, create passengers
         for train in self.train_schedules:
@@ -234,7 +226,10 @@ class PassengerGenerator:
                     continue
                 
                 # Train departure time
-                departure_time = stop_info['until']
+                departure_time = stop_info['arrival']
+                
+                # Extract edge from platform lane
+                platform_edge = platform['lane'].rsplit('_', 1)[0] if '_' in platform['lane'] else platform['lane']
                 
                 # Create passengers for this train
                 for i in range(passengers_per_train):
@@ -245,40 +240,23 @@ class PassengerGenerator:
                     if arrival_time < 0:
                         continue
                     
-                    # Choose random entry point outside station
-                    entry_edge = random.choice(self.entry_edges)
+                    person = ET.SubElement(root, 'person')
+                    person.set('id', f'departing_{person_id}')
+                    person.set('depart', f'{arrival_time:.1f}')
+                    person.set('type', 'passenger')
                     
-                    passengers.append({
-                        'id': f'departing_{person_id}',
-                        'depart': arrival_time,
-                        'from': entry_edge,
-                        'busStop': platform['id']
-                    })
-        
-        # Sort passengers by departure time (REQUIRED by SUMO)
-        passengers.sort(key=lambda p: p['depart'])
-        
-        # Build XML
-        root = ET.Element('routes')
-        root.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
-        root.set('xsi:noNamespaceSchemaLocation', 'http://sumo.dlr.de/xsd/routes_file.xsd')
-        
-        # Add sorted passengers
-        for pax in passengers:
-            person = ET.SubElement(root, 'person')
-            person.set('id', pax['id'])
-            person.set('depart', f"{pax['depart']:.1f}")
-            person.set('type', 'passenger')
-            
-            # Walk from outside station entrance to platform
-            walk = ET.SubElement(person, 'walk')
-            walk.set('from', pax['from'])
-            walk.set('busStop', pax['busStop'])
-            
-            # Wait for train at platform busStop
-            stop = ET.SubElement(person, 'stop')
-            stop.set('busStop', pax['busStop'])
-            stop.set('duration', '60')
+                    # Walk from entrance through JuPedSim area to random access point for this platform
+                    # This distributes passengers across different platform access points
+                    if platform['access_lanes']:
+                        access = random.choice(platform['access_lanes'])
+                        dest_lane = access['lane']
+                        dest_edge = dest_lane.rsplit('_', 1)[0] if '_' in dest_lane else dest_lane
+                    else:
+                        dest_edge = self.entrance_edge  # Fallback
+                    
+                    walk = ET.SubElement(person, 'walk')
+                    walk.set('from', self.entrance_edge)
+                    walk.set('to', dest_edge)
         
         # Write XML
         tree = ET.ElementTree(root)
@@ -292,7 +270,7 @@ class PassengerGenerator:
 if __name__ == "__main__":
     # Example usage
     generator = PassengerGenerator(
-        network_file='scenarios/station_sim/network/net_with_platforms.net.xml',
+        network_file='scenarios/station_sim/network/net.net.xml',
         stops_file='scenarios/station_sim/network/osm_stops.add.xml',
         pt_routes_file='scenarios/station_sim/network/osm_pt.rou.xml'
     )
