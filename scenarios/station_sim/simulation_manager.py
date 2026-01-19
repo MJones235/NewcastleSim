@@ -1,0 +1,189 @@
+"""
+Simulation manager for the station simulation.
+Extends the base simulation manager with station-specific functionality.
+"""
+
+import traci
+import sumolib
+from typing import Dict
+import sys
+import os
+
+# Add parent directory to path for base imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from base.manager_base import SimulationManagerBase
+from base.diagnostics import SimulationDiagnostics
+
+from agent import StationAgent
+from population_loader import PopulationLoader
+
+
+class StationSimulationManager(SimulationManagerBase):
+    """
+    Manages the station simulation, coordinating pedestrian agents and SUMO.
+    """
+    
+    def __init__(self, network_file: str, walking_areas_file: str):
+        super().__init__(network_file)
+        self.walking_areas_file = walking_areas_file
+        self.diagnostics = SimulationDiagnostics()
+        
+        # Station-specific tracking
+        self.pedestrian_edges = []
+        self.platform_stops = {}
+        self.agents_to_spawn = []  # Queue of agents waiting to spawn
+        self.spawn_edge = None  # Edge to use for initial spawn
+    
+    def load_network(self):
+        """Load the SUMO network and identify pedestrian infrastructure"""
+        super().load_network()
+        
+        if self.network:
+            # Find all pedestrian-accessible edges
+            self.pedestrian_edges = [
+                edge for edge in self.network.getEdges() 
+                if edge.allows("pedestrian")
+            ]
+            print(f"Found {len(self.pedestrian_edges)} pedestrian edges")
+    
+    def add_agent(self, agent: StationAgent):
+        """Register an agent in the simulation"""
+        agent.diagnostics = self.diagnostics  # Link diagnostics
+        self.agents[agent.id] = agent
+        
+        # Reduced logging - only log every 10th agent for small populations
+        if len(self.agents) % 10 == 0:
+            print(f"Added {len(self.agents)} agents...")
+    
+    def load_population(self, num_agents: int = 100):
+        """
+        Load pedestrian population placed randomly in walking areas.
+        
+        Args:
+            num_agents: Number of agents to create
+        """
+        print(f"Loading population of {num_agents} agents...")
+        
+        loader = PopulationLoader(self.walking_areas_file)
+        agents = loader.create_agents(num_agents)
+        
+        for agent in agents:
+            self.add_agent(agent)
+        
+        print(f"Loaded {len(self.agents)} agents into simulation")
+    
+    def spawn_agents(self):
+        """
+        Queue agents for gradual spawning into SUMO.
+        Agents will be spawned one per time step to avoid JuPedSim distance violations.
+        """
+        print("Queueing agents for spawning...")
+        
+
+        # Queue all unspawned agents
+        self.agents_to_spawn = [agent for agent in self.agents.values() if not agent.is_spawned]
+        print(f"Queued {len(self.agents_to_spawn)} agents for gradual spawning (1 per step)")
+    
+    def step(self, sim_time: int):
+        """Execute one simulation step"""
+        self.current_time = sim_time
+        
+        # Spawn one agent per step if any are waiting
+        if self.agents_to_spawn:
+            agent = self.agents_to_spawn.pop(0)
+            try:
+                agent.spawn_in_sumo(self.network)
+                print(f"Spawned {agent.id} at entrance {agent.entrance_node}, walking to {agent.destination}")
+                print(f"  Person ID: {agent.person_id}")
+            except Exception as e:
+                print(f"Failed to spawn {agent.id}: {e}")
+                self.diagnostics.failed_insertions += 1
+        
+        # Every 10 seconds, check on spawned agents
+        if int(sim_time) % 10 == 0 and sim_time > 0:
+            try:
+                person_list = traci.person.getIDList()
+                if person_list:
+                    print(f"\n[Time {sim_time:.1f}s] {len(person_list)} person(s) in simulation:")
+                    for person_id in person_list:
+                        pos = traci.person.getPosition(person_id)
+                        road = traci.person.getRoadID(person_id)
+                        lane = traci.person.getLaneID(person_id)
+                        speed = traci.person.getSpeed(person_id)
+                        remaining_stages = traci.person.getRemainingStages(person_id)
+                        next_edge = traci.person.getNextEdge(person_id)
+                        
+                        # Check if on walkingarea (these have ':' in the name)
+                        location_type = "walkingarea" if ":w" in road else ("crossing" if ":c" in road else "edge")
+                        
+                        print(f"  {person_id}:")
+                        print(f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})")
+                        print(f"    Road: {road} (type: {location_type})")
+                        print(f"    Lane: {lane}")
+                        print(f"    Speed: {speed:.2f} m/s")
+                        print(f"    Remaining stages: {remaining_stages}")
+                        print(f"    Next edge: {next_edge}")
+                else:
+                    print(f"[Time {sim_time:.1f}s] No persons in simulation")
+            except Exception as e:
+                print(f"Error querying persons: {e}")
+        
+        # Update all agents
+        for agent in self.agents.values():
+            agent.update(sim_time)
+    
+    def _find_nearest_pedestrian_edge(self, position: tuple) -> sumolib.net.edge.Edge:
+        """Find the nearest pedestrian edge to a given (x, y) position"""
+        if not self.pedestrian_edges:
+            return None
+        
+        x, y = position
+        min_dist = float('inf')
+        nearest_edge = None
+        
+        for edge in self.pedestrian_edges:
+            # Get edge shape (list of coordinates)
+            shape = edge.getShape()
+            
+            # Calculate distance to first point of edge (simplified)
+            edge_x, edge_y = shape[0]
+            dist = ((x - edge_x) ** 2 + (y - edge_y) ** 2) ** 0.5
+            
+            if dist < min_dist:
+                min_dist = dist
+                nearest_edge = edge
+        
+        return nearest_edge
+    
+    def get_simulation_statistics(self) -> dict:
+        """Get station simulation statistics"""
+        active_count = sum(1 for agent in self.agents.values() if not agent.is_complete())
+        completed_count = sum(1 for agent in self.agents.values() if agent.is_complete())
+        
+        return {
+            'total_agents': self.get_agent_count(),
+            'active_agents': active_count,
+            'completed_agents': completed_count,
+            'spawned_agents': self.diagnostics.trip_starts,
+            'trip_completions': self.diagnostics.trip_completions,
+            'failed_insertions': self.diagnostics.failed_insertions
+        }
+    
+    def print_status(self):
+        """Print current simulation status"""
+        stats = self.get_simulation_statistics()
+        hours = int(self.current_time // 3600)
+        minutes = int((self.current_time % 3600) // 60)
+        seconds = int(self.current_time % 60)
+        
+        print(f"\n[{hours:02d}:{minutes:02d}:{seconds:02d}] Station Simulation Status:")
+        print(f"  Total agents: {stats['total_agents']}")
+        print(f"  Active agents: {stats['active_agents']}")
+        print(f"  Completed: {stats['completed_agents']}")
+        
+        # Only query TraCI if connection is active
+        try:
+            person_count = len(traci.person.getIDList())
+            print(f"  In SUMO: {person_count}")
+        except:
+            pass

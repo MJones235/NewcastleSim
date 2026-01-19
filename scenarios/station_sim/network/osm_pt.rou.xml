@@ -158,163 +158,163 @@
         <stop busStop="4492377635" duration="20.00" until="91.00"/>
     </route>
     <!-- Vehicles, persons and containers (sorted by depart) -->
-    <flow id="pt_train_GR_C:0" type="pt_train" begin="3.00" end="3603.00" period="600" line="GR_C:0" route="pt_train_GR_C:0">
+    <flow id="pt_train_GR_C:0" type="pt_train" begin="120.00" end="7200.00" period="3600" line="GR_C:0" route="pt_train_GR_C:0">
         <param key="completeness" value="0.10"/>
         <param key="name" value="London King&apos;s Cross =&gt; Edinburgh Waverley (most stops)"/>
     </flow>
-    <flow id="pt_train_NR_04:0" type="pt_train" begin="47.00" end="3647.00" period="600" line="NR_04:0" route="pt_train_NR_04:0">
+    <flow id="pt_train_NR_04:0" type="pt_train" begin="280.00" end="7200.00" period="3600" line="NR_04:0" route="pt_train_NR_04:0">
         <param key="completeness" value="0.08"/>
         <param key="name" value="NR02: Saltburn =&gt; Carlisle"/>
     </flow>
-    <flow id="pt_train_NR_02:0" type="pt_train" begin="52.00" end="3652.00" period="600" line="NR_02:0" route="pt_train_NR_02:0">
+    <flow id="pt_train_NR_02:0" type="pt_train" begin="450.00" end="7200.00" period="3600" line="NR_02:0" route="pt_train_NR_02:0">
         <param key="completeness" value="0.06"/>
         <param key="name" value="Train NR02: Battersby =&gt; Metrocentre"/>
     </flow>
-    <flow id="pt_train_NR_02:1" type="pt_train" begin="58.00" end="3658.00" period="600" line="NR_02:1" route="pt_train_NR_02:1">
+    <flow id="pt_train_NR_02:1" type="pt_train" begin="620.00" end="7200.00" period="3600" line="NR_02:1" route="pt_train_NR_02:1">
         <param key="completeness" value="0.05"/>
         <param key="name" value="NR02: Hexham =&gt; Nunthorpe"/>
     </flow>
-    <flow id="pt_train_NR_02:2" type="pt_train" begin="60.00" end="3660.00" period="600" line="NR_02:2" route="pt_train_NR_02:2">
+    <flow id="pt_train_NR_02:2" type="pt_train" begin="780.00" end="7200.00" period="3600" line="NR_02:2" route="pt_train_NR_02:2">
         <param key="completeness" value="0.06"/>
         <param key="name" value="NR02: Newcastle =&gt; Saltburn"/>
     </flow>
-    <flow id="pt_train_NR_04:2" type="pt_train" begin="133.00" end="3733.00" period="600" line="NR_04:2" route="pt_train_NR_04:2">
+    <flow id="pt_train_NR_04:2" type="pt_train" begin="960.00" end="7200.00" period="3600" line="NR_04:2" route="pt_train_NR_04:2">
         <param key="completeness" value="0.03"/>
         <param key="name" value="Train NR04: Whitby → Carlisle"/>
     </flow>
-    <flow id="pt_train_GR_C:1" type="pt_train" begin="151.00" end="3751.00" period="600" line="GR_C:1" route="pt_train_GR_C:1">
+    <flow id="pt_train_GR_C:1" type="pt_train" begin="1140.00" end="7200.00" period="3600" line="GR_C:1" route="pt_train_GR_C:1">
         <param key="completeness" value="0.10"/>
         <param key="name" value="London King&apos;s Cross =&gt; Edinburgh Waverley"/>
     </flow>
-    <flow id="pt_train_NR_02:3" type="pt_train" begin="186.00" end="3786.00" period="600" line="NR_02:3" route="pt_train_NR_02:3">
+    <flow id="pt_train_NR_02:3" type="pt_train" begin="1320.00" end="7200.00" period="3600" line="NR_02:3" route="pt_train_NR_02:3">
         <param key="completeness" value="0.06"/>
         <param key="name" value="NR02: Metrocentre =&gt; Saltburn"/>
     </flow>
-    <flow id="pt_train_NR_02:4" type="pt_train" begin="239.00" end="3839.00" period="600" line="NR_02:4" route="pt_train_NR_02:4">
+    <flow id="pt_train_NR_02:4" type="pt_train" begin="1500.00" end="7200.00" period="3600" line="NR_02:4" route="pt_train_NR_02:4">
         <param key="completeness" value="0.03"/>
         <param key="name" value="NR02: Whitby =&gt; Hexham"/>
     </flow>
-    <flow id="pt_train_GR_C:2" type="pt_train" begin="299.00" end="3899.00" period="600" line="GR_C:2" route="pt_train_GR_C:2">
+    <flow id="pt_train_GR_C:2" type="pt_train" begin="1680.00" end="7200.00" period="3600" line="GR_C:2" route="pt_train_GR_C:2">
         <param key="completeness" value="0.11"/>
         <param key="name" value="Doncaster =&gt; Edinburgh Waverley"/>
     </flow>
-    <flow id="pt_train_NR_02:5" type="pt_train" begin="320.00" end="3920.00" period="600" line="NR_02:5" route="pt_train_NR_02:5">
+    <flow id="pt_train_NR_02:5" type="pt_train" begin="1860.00" end="7200.00" period="3600" line="NR_02:5" route="pt_train_NR_02:5">
         <param key="completeness" value="0.04"/>
         <param key="name" value="Train NR02: Hexham =&gt; Battersby"/>
     </flow>
-    <flow id="pt_train_NR_01:3" type="pt_train" begin="326.00" end="3926.00" period="600" line="NR_01:3" route="pt_train_NR_01:3">
+    <flow id="pt_train_NR_01:3" type="pt_train" begin="2040.00" end="7200.00" period="3600" line="NR_01:3" route="pt_train_NR_01:3">
         <param key="completeness" value="0.25"/>
         <param key="name" value="Train NR01: Ashington -&gt; Newcastle"/>
     </flow>
-    <flow id="pt_train_NR_02:8" type="pt_train" begin="345.00" end="3945.00" period="600" line="NR_02:8" route="pt_train_NR_02:8">
+    <flow id="pt_train_NR_02:8" type="pt_train" begin="2220.00" end="7200.00" period="3600" line="NR_02:8" route="pt_train_NR_02:8">
         <param key="completeness" value="0.05"/>
         <param key="name" value="Train NR02: Battersby =&gt; Prudhoe"/>
     </flow>
-    <flow id="pt_train_GR_D:0" type="pt_train" begin="371.00" end="3971.00" period="600" line="GR_D:0" route="pt_train_GR_D:0">
+    <flow id="pt_train_GR_D:0" type="pt_train" begin="2400.00" end="7200.00" period="3600" line="GR_D:0" route="pt_train_GR_D:0">
         <param key="completeness" value="0.12"/>
         <param key="name" value="London King&apos;s Cross =&gt; Newcastle Central"/>
     </flow>
-    <flow id="pt_train_GR_B:1" type="pt_train" begin="383.00" end="3983.00" period="600" line="GR_B:1" route="pt_train_GR_B:1">
+    <flow id="pt_train_GR_B:1" type="pt_train" begin="2580.00" end="7200.00" period="3600" line="GR_B:1" route="pt_train_GR_B:1">
         <param key="completeness" value="0.07"/>
         <param key="name" value="Aberdeen =&gt; London King&apos;s Cross (fast)"/>
     </flow>
-    <flow id="pt_train_NR_01:4" type="pt_train" begin="407.00" end="4007.00" period="600" line="NR_01:4" route="pt_train_NR_01:4">
+    <flow id="pt_train_NR_01:4" type="pt_train" begin="2760.00" end="7200.00" period="3600" line="NR_01:4" route="pt_train_NR_01:4">
         <param key="completeness" value="0.25"/>
         <param key="name" value="Train NR01: Newcastle -&gt; Ashington"/>
     </flow>
-    <flow id="pt_train_TP_N:0" type="pt_train" begin="409.00" end="4009.00" period="600" line="TP_N:0" route="pt_train_TP_N:0">
+    <flow id="pt_train_TP_N:0" type="pt_train" begin="2940.00" end="7200.00" period="3600" line="TP_N:0" route="pt_train_TP_N:0">
         <param key="completeness" value="0.05"/>
         <param key="name" value="North Transpennine: Liverpool Lime Street =&gt; Edinburgh"/>
     </flow>
-    <flow id="pt_train_GR_D:1" type="pt_train" begin="418.00" end="4018.00" period="600" line="GR_D:1" route="pt_train_GR_D:1">
+    <flow id="pt_train_GR_D:1" type="pt_train" begin="3120.00" end="7200.00" period="3600" line="GR_D:1" route="pt_train_GR_D:1">
         <param key="completeness" value="0.12"/>
         <param key="name" value="Newcastle Central =&gt; London King&apos;s Cross"/>
     </flow>
-    <flow id="pt_train_TP_N:1" type="pt_train" begin="422.00" end="4022.00" period="600" line="TP_N:1" route="pt_train_TP_N:1">
+    <flow id="pt_train_TP_N:1" type="pt_train" begin="3300.00" end="7200.00" period="3600" line="TP_N:1" route="pt_train_TP_N:1">
         <param key="completeness" value="0.06"/>
         <param key="name" value="North Transpennine: Newcastle =&gt; Liverpool Lime Street"/>
     </flow>
-    <flow id="pt_train_GR_C:3" type="pt_train" begin="447.00" end="4047.00" period="600" line="GR_C:3" route="pt_train_GR_C:3">
+    <flow id="pt_train_GR_C:3" type="pt_train" begin="180.00" end="7200.00" period="3600" line="GR_C:3" route="pt_train_GR_C:3">
         <param key="completeness" value="0.17"/>
         <param key="name" value="Newcastle =&gt; Edinburgh Waverley"/>
     </flow>
-    <flow id="pt_train_NR_01:2" type="pt_train" begin="451.00" end="4051.00" period="600" line="NR_01:2" route="pt_train_NR_01:2">
+    <flow id="pt_train_NR_01:2" type="pt_train" begin="360.00" end="7200.00" period="3600" line="NR_01:2" route="pt_train_NR_01:2">
         <param key="completeness" value="0.07"/>
         <param key="name" value="Train NR01: Chathill → Carlisle"/>
     </flow>
-    <flow id="pt_train_NR_02:6" type="pt_train" begin="454.00" end="4054.00" period="600" line="NR_02:6" route="pt_train_NR_02:6">
+    <flow id="pt_train_NR_02:6" type="pt_train" begin="540.00" end="7200.00" period="3600" line="NR_02:6" route="pt_train_NR_02:6">
         <param key="completeness" value="0.03"/>
         <param key="name" value="NR02: Hexham =&gt; Whitby"/>
     </flow>
-    <flow id="pt_train_GR_C:6" type="pt_train" begin="486.00" end="4086.00" period="600" line="GR_C:6" route="pt_train_GR_C:6">
+    <flow id="pt_train_GR_C:6" type="pt_train" begin="720.00" end="7200.00" period="3600" line="GR_C:6" route="pt_train_GR_C:6">
         <param key="completeness" value="0.17"/>
         <param key="name" value="Edinburgh Waverley =&gt; London King&apos;s Cross (fast)"/>
     </flow>
-    <flow id="pt_train_GR_NL:0" type="pt_train" begin="535.00" end="4135.00" period="600" line="GR_NL:0" route="pt_train_GR_NL:0">
+    <flow id="pt_train_GR_NL:0" type="pt_train" begin="900.00" end="7200.00" period="3600" line="GR_NL:0" route="pt_train_GR_NL:0">
         <param key="completeness" value="0.07"/>
         <param key="name" value="The Northern Lights (London King&apos;s Cross =&gt; Aberdeen)"/>
     </flow>
-    <flow id="pt_train_NR_02:9" type="pt_train" begin="557.00" end="4157.00" period="600" line="NR_02:9" route="pt_train_NR_02:9">
+    <flow id="pt_train_NR_02:9" type="pt_train" begin="1080.00" end="7200.00" period="3600" line="NR_02:9" route="pt_train_NR_02:9">
         <param key="completeness" value="0.05"/>
         <param key="name" value="NR02: Middlesbrough =&gt; Hexham"/>
     </flow>
-    <flow id="pt_train_NR_04:1" type="pt_train" begin="578.00" end="4178.00" period="600" line="NR_04:1" route="pt_train_NR_04:1">
+    <flow id="pt_train_NR_04:1" type="pt_train" begin="1260.00" end="7200.00" period="3600" line="NR_04:1" route="pt_train_NR_04:1">
         <param key="completeness" value="0.07"/>
         <param key="name" value="NR03: Saltburn =&gt; Newcastle"/>
     </flow>
-    <flow id="pt_train_NR_04:3" type="pt_train" begin="588.00" end="4188.00" period="600" line="NR_04:3" route="pt_train_NR_04:3">
+    <flow id="pt_train_NR_04:3" type="pt_train" begin="1440.00" end="7200.00" period="3600" line="NR_04:3" route="pt_train_NR_04:3">
         <param key="completeness" value="0.03"/>
         <param key="name" value="Train NR04: Carlisle → Nunthorpe"/>
     </flow>
-    <flow id="pt_train_GR_C:7" type="pt_train" begin="622.00" end="4222.00" period="600" line="GR_C:7" route="pt_train_GR_C:7">
+    <flow id="pt_train_GR_C:7" type="pt_train" begin="1620.00" end="7200.00" period="3600" line="GR_C:7" route="pt_train_GR_C:7">
         <param key="completeness" value="0.10"/>
         <param key="name" value="Edinburgh Waverley =&gt; London King&apos;s Cross (semi-fast)"/>
     </flow>
-    <flow id="pt_train_NR_02:10" type="pt_train" begin="664.00" end="4264.00" period="600" line="NR_02:10" route="pt_train_NR_02:10">
+    <flow id="pt_train_NR_02:10" type="pt_train" begin="1800.00" end="7200.00" period="3600" line="NR_02:10" route="pt_train_NR_02:10">
         <param key="completeness" value="0.05"/>
         <param key="name" value="NR02: Nunthorpe =&gt; Hexham"/>
     </flow>
-    <flow id="pt_train_NR_01:0" type="pt_train" begin="683.00" end="4283.00" period="600" line="NR_01:0" route="pt_train_NR_01:0">
+    <flow id="pt_train_NR_01:0" type="pt_train" begin="1980.00" end="7200.00" period="3600" line="NR_01:0" route="pt_train_NR_01:0">
         <param key="completeness" value="0.05"/>
         <param key="name" value="Train NR01: Carlisle → Morpeth"/>
     </flow>
-    <flow id="pt_train_NR_04:4" type="pt_train" begin="722.00" end="4322.00" period="600" line="NR_04:4" route="pt_train_NR_04:4">
+    <flow id="pt_train_NR_04:4" type="pt_train" begin="2160.00" end="7200.00" period="3600" line="NR_04:4" route="pt_train_NR_04:4">
         <param key="completeness" value="0.10"/>
         <param key="name" value="NR04: Hexham =&gt; Newcastle"/>
     </flow>
-    <flow id="pt_train_XC:0" type="pt_train" begin="758.00" end="4358.00" period="600" line="XC:0" route="pt_train_XC:0">
+    <flow id="pt_train_XC:0" type="pt_train" begin="2340.00" end="7200.00" period="3600" line="XC:0" route="pt_train_XC:0">
         <param key="completeness" value="0.05"/>
         <param key="name" value="Cross Country: Edinburgh =&gt; Plymouth"/>
     </flow>
-    <flow id="pt_train_NR_01:1" type="pt_train" begin="831.00" end="4431.00" period="600" line="NR_01:1" route="pt_train_NR_01:1">
+    <flow id="pt_train_NR_01:1" type="pt_train" begin="2520.00" end="7200.00" period="3600" line="NR_01:1" route="pt_train_NR_01:1">
         <param key="completeness" value="0.06"/>
         <param key="name" value="Train NR01: Carlisle → Chathill"/>
     </flow>
-    <flow id="pt_train_NR_04:7" type="pt_train" begin="842.00" end="4442.00" period="600" line="NR_04:7" route="pt_train_NR_04:7">
+    <flow id="pt_train_NR_04:7" type="pt_train" begin="2700.00" end="7200.00" period="3600" line="NR_04:7" route="pt_train_NR_04:7">
         <param key="completeness" value="0.08"/>
         <param key="name" value="Train NR04: Middlesbrough → Carlisle"/>
     </flow>
-    <flow id="pt_train_NR_02:7" type="pt_train" begin="856.00" end="4456.00" period="600" line="NR_02:7" route="pt_train_NR_02:7">
+    <flow id="pt_train_NR_02:7" type="pt_train" begin="2880.00" end="7200.00" period="3600" line="NR_02:7" route="pt_train_NR_02:7">
         <param key="completeness" value="0.04"/>
         <param key="name" value="NR02: Hexham =&gt; Saltburn"/>
     </flow>
-    <flow id="pt_train_GR_A:0" type="pt_train" begin="894.00" end="4494.00" period="600" line="GR_A:0" route="pt_train_GR_A:0">
+    <flow id="pt_train_GR_A:0" type="pt_train" begin="3060.00" end="7200.00" period="3600" line="GR_A:0" route="pt_train_GR_A:0">
         <param key="completeness" value="0.07"/>
         <param key="name" value="Inverness =&gt; London King&apos;s Cross (fast)"/>
     </flow>
-    <flow id="pt_train_NR_04:9" type="pt_train" begin="895.00" end="4495.00" period="600" line="NR_04:9" route="pt_train_NR_04:9">
+    <flow id="pt_train_NR_04:9" type="pt_train" begin="3240.00" end="7200.00" period="3600" line="NR_04:9" route="pt_train_NR_04:9">
         <param key="completeness" value="0.07"/>
         <param key="name" value="Train NR04: Newcastle → Carlisle (Full)"/>
     </flow>
-    <flow id="pt_train_NR_04:5" type="pt_train" begin="974.00" end="4574.00" period="600" line="NR_04:5" route="pt_train_NR_04:5">
+    <flow id="pt_train_NR_04:5" type="pt_train" begin="3420.00" end="7200.00" period="3600" line="NR_04:5" route="pt_train_NR_04:5">
         <param key="completeness" value="0.03"/>
         <param key="name" value="Train NR04: Carlisle → Whitby"/>
     </flow>
-    <flow id="pt_train_GR_C:4" type="pt_train" begin="979.00" end="4579.00" period="600" line="GR_C:4" route="pt_train_GR_C:4">
+    <flow id="pt_train_GR_C:4" type="pt_train" begin="60.00" end="7200.00" period="3600" line="GR_C:4" route="pt_train_GR_C:4">
         <param key="completeness" value="0.17"/>
         <param key="name" value="London King&apos;s Cross =&gt; Edinburgh Waverley (fast)"/>
     </flow>
-    <flow id="pt_train_NR_04:10" type="pt_train" begin="981.00" end="4581.00" period="600" line="NR_04:10" route="pt_train_NR_04:10">
+    <flow id="pt_train_NR_04:10" type="pt_train" begin="240.00" end="7200.00" period="3600" line="NR_04:10" route="pt_train_NR_04:10">
         <param key="completeness" value="0.17"/>
         <param key="name" value="Train NR04: Newcastle → Carlisle (Day x:23)"/>
     </flow>
@@ -322,31 +322,31 @@
         <param key="completeness" value="0.08"/>
         <param key="name" value="Train NR04: Newcastle → Carlisle (Morning)"/>
     </flow>
-    <flow id="pt_train_NR_04:6" type="pt_train" begin="1108.00" end="4708.00" period="600" line="NR_04:6" route="pt_train_NR_04:6">
+    <flow id="pt_train_NR_04:6" type="pt_train" begin="420.00" end="7200.00" period="3600" line="NR_04:6" route="pt_train_NR_04:6">
         <param key="completeness" value="0.03"/>
         <param key="name" value="Train NR04: Carlisle → Whitby"/>
     </flow>
-    <flow id="pt_train_GR_B:0" type="pt_train" begin="1127.00" end="4727.00" period="600" line="GR_B:0" route="pt_train_GR_B:0">
+    <flow id="pt_train_GR_B:0" type="pt_train" begin="600.00" end="7200.00" period="3600" line="GR_B:0" route="pt_train_GR_B:0">
         <param key="completeness" value="0.07"/>
         <param key="name" value="London King&apos;s Cross =&gt; Aberdeen"/>
     </flow>
-    <flow id="pt_train_NR_04:12" type="pt_train" begin="1152.00" end="4752.00" period="600" line="NR_04:12" route="pt_train_NR_04:12">
+    <flow id="pt_train_NR_04:12" type="pt_train" begin="840.00" end="7200.00" period="3600" line="NR_04:12" route="pt_train_NR_04:12">
         <param key="completeness" value="0.06"/>
         <param key="name" value="Train NR04: Middlesbrough → Carlisle"/>
     </flow>
-    <flow id="pt_train_NR_04:8" type="pt_train" begin="1242.00" end="4842.00" period="600" line="NR_04:8" route="pt_train_NR_04:8">
+    <flow id="pt_train_NR_04:8" type="pt_train" begin="1020.00" end="7200.00" period="3600" line="NR_04:8" route="pt_train_NR_04:8">
         <param key="completeness" value="0.06"/>
         <param key="name" value="Train NR04: Carlisle → Newcastle (Full)"/>
     </flow>
-    <flow id="pt_train_GR_C:5" type="pt_train" begin="1275.00" end="4875.00" period="600" line="GR_C:5" route="pt_train_GR_C:5">
+    <flow id="pt_train_GR_C:5" type="pt_train" begin="1200.00" end="7200.00" period="3600" line="GR_C:5" route="pt_train_GR_C:5">
         <param key="completeness" value="0.11"/>
         <param key="name" value="London King&apos;s Cross =&gt; Edinburgh Waverley (semi-fast)"/>
     </flow>
-    <flow id="pt_train_XC:1" type="pt_train" begin="1423.00" end="5023.00" period="600" line="XC:1" route="pt_train_XC:1">
+    <flow id="pt_train_XC:1" type="pt_train" begin="1380.00" end="7200.00" period="3600" line="XC:1" route="pt_train_XC:1">
         <param key="completeness" value="0.04"/>
         <param key="name" value="CrossCountry: Plymouth =&gt; Edinburgh"/>
     </flow>
-    <flow id="pt_train_GR_HC:0" type="pt_train" begin="1571.00" end="5171.00" period="600" line="GR_HC:0" route="pt_train_GR_HC:0">
+    <flow id="pt_train_GR_HC:0" type="pt_train" begin="1560.00" end="7200.00" period="3600" line="GR_HC:0" route="pt_train_GR_HC:0">
         <param key="completeness" value="0.07"/>
         <param key="name" value="The Highland Chieftain (London King&apos;s Cross =&gt; Inverness)"/>
     </flow>

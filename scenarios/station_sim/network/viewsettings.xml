@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<viewsettings>
+    <scheme name="real world">
+        <opengl disableDither="1" antialiase="0"/>
+        <background backgroundColor="0.99,0.99,0.99" showGrid="0" gridXSize="100.00" gridYSize="100.00"/>
+        
+        <!-- Pedestrian visualization settings -->
+        <persons personMode="2" personQuality="2" person_minSize="1.0" person_exaggeration="5.0" personName_show="0" showPedestrianNetwork="0"/>
+            
+        <vehicles vehicleQuality="2" minVehicleSize="1.0" vehicleName_show="0"/>
+        <junctions junctionMode="2" drawLinkTLIndex="0" drawLinkJunctionIndex="0" junctionName_show="0"/>
+        <additionals addMode="0" addSize="1.0" addName_show="0"/>
+        <pois poiSize="0.0" poiDetail="0"/>
+        <legend showSizeLegend="1"/>
+    </scheme>
+</viewsettings>
