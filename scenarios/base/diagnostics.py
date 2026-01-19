@@ -1,5 +1,6 @@
 """
-Diagnostic tools for understanding simulation behavior
+Diagnostic tools for understanding simulation behavior.
+Generic enough to be used across different simulation types.
 """
 
 import traci

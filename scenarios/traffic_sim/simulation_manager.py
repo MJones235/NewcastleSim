@@ -1,38 +1,28 @@
 """
-Simulation manager that coordinates agents and SUMO.
+Simulation manager that coordinates agents and SUMO for traffic simulation.
+Extends the base simulation manager with traffic-specific functionality.
 """
 
-import traci
-import sumolib
-from typing import Dict
-from agent import Agent, Activity, ActivityType
+import sys
+import os
+
+# Add parent directory to path for base imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from base.manager_base import SimulationManagerBase
+from base.diagnostics import SimulationDiagnostics
+
+from agent import Agent
 from population_loader import PopulationLoader
-from diagnostics import SimulationDiagnostics
 
 
-class SimulationManager:
+class SimulationManager(SimulationManagerBase):
     """
-    Manages the overall simulation, coordinating agents and SUMO.
+    Manages the traffic simulation, coordinating agents and SUMO.
     """
     
     def __init__(self, network_file: str):
-        self.network_file = network_file
-        self.network = None
-        self.agents: Dict[str, Agent] = {}
-        self.current_time = 0
+        super().__init__(network_file)
         self.diagnostics = SimulationDiagnostics()
-        self.screenshot_enabled = False
-        self.screenshot_interval = 10
-        self.screenshot_prefix = "output/frame_"
-        
-    def load_network(self):
-        """Load the SUMO network for analysis"""
-        try:
-            self.network = sumolib.net.readNet(self.network_file)
-            print(f"Loaded network with {len(self.network.getEdges())} edges")
-        except Exception as e:
-            print(f"Warning: Could not load network: {e}")
-            # #TODO: Handle network loading failures
     
     def add_agent(self, agent: Agent):
         """Register an agent in the simulation"""
@@ -61,25 +51,13 @@ class SimulationManager:
         for agent in agents:
             self.add_agent(agent)
     
-        
-    def step(self):
-        """Execute one simulation step"""
-        traci.simulationStep()
-        self.current_time += 1
-        
-        # Update all agents
-        for agent in self.agents.values():
-            agent.update(self.current_time)
-        
-        # Take screenshot if recording is enabled
-        if self.screenshot_enabled and self.current_time % self.screenshot_interval == 0:
-            try:
-                filename = f"{self.screenshot_prefix}{self.current_time:06d}.png"
-                traci.gui.screenshot(traci.gui.DEFAULT_VIEW, filename)
-            except:
-                pass  # Silently fail if GUI not available
-            
-    def broadcast_event(self, event: dict):
-        """Send an event to all agents"""
-        for agent in self.agents.values():
-            agent.receive_message(event)
+    def get_simulation_statistics(self) -> dict:
+        """Get traffic simulation statistics"""
+        return {
+            'total_agents': self.get_agent_count(),
+            'active_agents': self.get_active_agent_count(),
+            'trip_starts': self.diagnostics.trip_starts,
+            'trip_completions': self.diagnostics.trip_completions,
+            'teleports': self.diagnostics.teleports,
+            'failed_insertions': self.diagnostics.failed_insertions
+        }

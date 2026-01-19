@@ -1,11 +1,18 @@
 """
-Agent class for Newcastle simulation.
+Agent class for Newcastle traffic simulation.
 Each agent represents a person with a daily schedule and demographic information.
+Extends the base agent class with traffic-specific behavior.
 """
 
 from enum import Enum
 from typing import List, Optional
 import traci
+import sys
+import os
+
+# Add parent directory to path for base imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from base.agent_base import AgentBase
 
 
 class TransportMode(Enum):
@@ -43,32 +50,31 @@ class Activity:
         return f"Activity({self.type.value}, {self.location}, {self.start_time}-{self.end_time})"
 
 
-class Agent:
+class Agent(AgentBase):
     """
-    Represents a single person in the simulation.
+    Represents a single person in the traffic simulation.
     Manages daily schedule and interfaces with SUMO for movement.
     """
     
     def __init__(self, agent_id: str, demographics: dict, home_location: str):
-        self.id = agent_id
-        self.demographics = demographics
+        super().__init__(agent_id, demographics)
         self.home = home_location
-        
-        self.schedule: List[Activity] = []
-        self.current_activity_idx = 0
         self.current_location = home_location
         
+        # Schedule management (traffic-specific)
+        self.schedule: List[Activity] = []
+        self.current_activity_idx = 0
+        
+        # Trip state
         self.vehicle_id: Optional[str] = None
         self.in_transit = False
-        
-        self.needs_replan = False
-        self.messages = []
-        
-        # For diagnostics
-        self.diagnostics = None  # Will be set by simulation manager
+    
+    def get_current_location(self) -> str:
+        """Get the agent's current edge location"""
+        return self.current_location
     
     def add_activity(self, activity: Activity):
-        """Add an activity to the agent's daily schedule"""
+        """Add a traffic-specific activity to the schedule"""
         self.schedule.append(activity)
     
     def get_current_activity(self) -> Optional[Activity]:
@@ -283,11 +289,6 @@ class Agent:
     def _advance_to_next_activity(self):
         """Move to the next activity in the schedule"""
         self.current_activity_idx += 1
-    
-    def receive_message(self, message: dict):
-        """Receive event notification"""
-        self.messages.append(message)
-        self.needs_replan = True
     
     def replan_schedule(self, event: dict):
         """Generate new schedule in response to an event"""

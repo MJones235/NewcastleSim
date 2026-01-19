@@ -1,152 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-01-12T15:27:57.212317+00:00 by Eclipse SUMO netconvert v1_25_0+0923-4ecd63a3490
-<netconvertConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/netconvertConfiguration.xsd">
-
-    <input>
-        <type-files value="${SUMO_HOME}/data/typemap/osmNetconvert.typ.xml,${SUMO_HOME}/data/typemap/osmNetconvertUrbanDe.typ.xml,${SUMO_HOME}/data/typemap/osmNetconvertPedestrians.typ.xml,${SUMO_HOME}/data/typemap/osmNetconvertBicycle.typ.xml,${SUMO_HOME}/data/typemap/osmNetconvertAerialway.typ.xml"/>
-        <osm-files value="osm_bbox.osm.xml.gz"/>
-    </input>
-
-    <output>
-        <output-file value="osm.net.xml.gz"/>
-        <output.street-names value="true"/>
-        <output.original-names value="true"/>
-        <ptstop-output value="osm_stops.add.xml"/>
-        <ptline-output value="osm_ptlines.xml"/>
-        <ptline-clean-up value="true"/>
-    </output>
-
-    <projection>
-        <proj.utm value="true"/>
-    </projection>
-
-    <processing>
-        <geometry.remove value="true"/>
-        <lefthand value="true"/>
-    </processing>
-
-    <tls_building>
-        <tls.discard-simple value="true"/>
-        <tls.join value="true"/>
-        <tls.guess-signals value="true"/>
-        <tls.default-type value="actuated"/>
-    </tls_building>
-
-    <ramp_guessing>
-        <ramps.guess value="true"/>
-    </ramp_guessing>
-
-    <junctions>
-        <junctions.join value="true"/>
-    </junctions>
-
-    <pedestrian>
-        <crossings.guess value="true"/>
-    </pedestrian>
-
-    <railway>
-        <railway.topology.repair value="true"/>
-    </railway>
-
-    <formats>
-        <osm.bike-access value="true"/>
-        <osm.sidewalks value="true"/>
-    </formats>
-
-</netconvertConfiguration>
+<!-- generated on 2026-01-19T12:26:22.943840+00:00 by Eclipse SUMO netedit v1_25_0+0923-4ecd63a3490
 -->
 
 <additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
-    <busStop id="12608716282" name="Newcastle" lane="41129361_0" startPos="0.00" endPos="166.15" friendlyPos="true" lines="NR 01">
-        <access lane="-94541123_0" pos="69.14" length="48.47" friendlyPos="1"/>
-        <access lane="13715475#1_0" pos="29.79" length="40.84" friendlyPos="1"/>
-        <access lane="13715475#3_0" pos="0.00" length="42.85" friendlyPos="1"/>
-        <access lane="184492367#0_0" pos="73.55" length="18.04" friendlyPos="1"/>
-        <access lane="184492373_0" pos="57.22" length="40.91" friendlyPos="1"/>
+    <!-- StoppingPlaces -->
+    <busStop id="12608716282" name="Newcastle" lane="41129361_0" startPos="88.98" endPos="288.98" friendlyPos="1" lines="NR 01"/>
+    <busStop id="1754217408" name="Newcastle" lane="28872267#3_0" startPos="0.00" endPos="62.91" friendlyPos="1" lines="NR 01">
+        <access lane="400897429_0" pos="22.09" friendlyPos="1" length="123.73"/>
+        <access lane="400897430_0" pos="0.00" friendlyPos="1" length="163.57"/>
+        <access lane="540275666#1_0" pos="50.58" friendlyPos="1" length="160.68"/>
     </busStop>
-    <busStop id="1754217408" name="Newcastle" lane="28872267#3_0" startPos="0.00" endPos="36.04" friendlyPos="true" lines="NR 01">
-        <access lane="-1419036281_0" pos="0.00" length="33.65" friendlyPos="1"/>
-        <access lane="1419036281_0" pos="92.62" length="28.85" friendlyPos="1"/>
-        <access lane="1419036289#0_0" pos="3.32" length="77.58" friendlyPos="1"/>
-        <access lane="400897429_0" pos="11.65" length="71.11" friendlyPos="1"/>
-        <access lane="870902660#3_0" pos="0.00" length="71.84" friendlyPos="1"/>
+    <busStop id="317392095" name="Newcastle" lane="41129361_0" startPos="0.00" endPos="200.00" friendlyPos="1">
+        <access lane="540275676#8_0" pos="70.49" friendlyPos="1" length="114.13"/>
+        <access lane="540275677_0" pos="23.03" friendlyPos="1" length="114.54"/>
+        <access lane="540275676#9_0" pos="213.98" friendlyPos="1" length="13.00"/>
     </busStop>
-    <busStop id="317392095" name="Newcastle" lane="41129361_0" startPos="0.00" endPos="166.15" friendlyPos="true">
-        <access lane="-193232825_0" pos="0.00" length="58.32" friendlyPos="1"/>
-        <access lane="193232825_0" pos="28.46" length="56.54" friendlyPos="1"/>
-        <access lane="44394826#1_0" pos="21.51" length="63.41" friendlyPos="1"/>
-        <access lane="540275676#8_0" pos="38.37" length="66.76" friendlyPos="1"/>
-        <access lane="540275676#9_0" pos="122.00" length="7.46" friendlyPos="1"/>
+    <busStop id="4267618249" name="Newcastle" lane="135711908#1_0" startPos="58.93" endPos="258.93" friendlyPos="1">
+        <access lane="44393706#1_0" pos="13.70" friendlyPos="1" length="159.26"/>
+        <access lane="540275666#0_0" pos="35.22" friendlyPos="1" length="173.22"/>
+        <access lane="540275676#9_0" pos="433.82" friendlyPos="1" length="143.25"/>
     </busStop>
-    <busStop id="317395907" name="Central Station" lane="28872794_0" startPos="0.00" endPos="197.65" friendlyPos="true" lines="Green Yellow">
-        <access lane="1078920102_0" pos="5.24" length="34.56" friendlyPos="1"/>
-        <access lane="1112372126#1_0" pos="1.97" length="37.21" friendlyPos="1"/>
-        <access lane="540275676#8_0" pos="22.70" length="5.42" friendlyPos="1"/>
-        <access lane="540275676#9_0" pos="175.57" length="27.96" friendlyPos="1"/>
-        <access lane="540275677_0" pos="12.11" length="28.47" friendlyPos="1"/>
+    <busStop id="4270733515" name="Newcastle" lane="427909534#1_0" startPos="39.28" endPos="239.28" friendlyPos="1" lines="GR D">
+        <access lane="258625791_0" pos="37.59" friendlyPos="1" length="48.77"/>
+        <access lane="400897429_0" pos="0.00" friendlyPos="1" length="71.11"/>
+        <access lane="540275666#1_0" pos="30.35" friendlyPos="1" length="58.63"/>
     </busStop>
-    <busStop id="4267618249" name="Newcastle" lane="135711908#1_0" startPos="0.00" endPos="135.32" friendlyPos="true">
-        <access lane="-271489062_0" pos="37.11" length="79.33" friendlyPos="1"/>
-        <access lane="1320102901_0" pos="29.21" length="84.13" friendlyPos="1"/>
-        <access lane="44393706#1_0" pos="6.81" length="91.49" friendlyPos="1"/>
-        <access lane="540275665_0" pos="11.94" length="84.38" friendlyPos="1"/>
-        <access lane="540275676#9_0" pos="248.50" length="82.35" friendlyPos="1"/>
+    <busStop id="4270757351" name="Newcastle" lane="1017842484_0" startPos="0.00" endPos="140.24" friendlyPos="1" lines="GR B GR C XC GR A">
+        <access lane="258625791_0" pos="0.00" friendlyPos="1" length="35.86"/>
+        <access lane="540275665_0" pos="13.07" friendlyPos="1" length="23.14"/>
+        <access lane="540275666#0_0" pos="58.11" friendlyPos="1" length="21.71"/>
+        <access lane="540275676#9_0" pos="423.97" friendlyPos="1" length="36.72"/>
     </busStop>
-    <busStop id="4270733515" name="Newcastle" lane="427909534#1_0" startPos="0.00" endPos="137.47" friendlyPos="true" lines="GR D">
-        <access lane="258625791_0" pos="20.58" length="27.99" friendlyPos="1"/>
-        <access lane="400897429_0" pos="0.00" length="42.26" friendlyPos="1"/>
-        <access lane="400897430_0" pos="20.06" length="19.31" friendlyPos="1"/>
-        <access lane="540275666#1_0" pos="16.36" length="33.72" friendlyPos="1"/>
-        <access lane="540275667_0" pos="33.56" length="34.29" friendlyPos="1"/>
+    <busStop id="4346939128" name="Newcastle" lane="1017842487_0" startPos="0.00" endPos="200.00" friendlyPos="1" lines="NR 02 NR 04">
+        <access lane="400897430_0" pos="47.87" friendlyPos="1" length="81.56"/>
     </busStop>
-    <busStop id="4270757351" name="Newcastle" lane="1017842484_0" startPos="0.00" endPos="80.55" friendlyPos="true" lines="GR B GR C XC GR A">
-        <access lane="258625791_0" pos="0.00" length="21.91" friendlyPos="1"/>
-        <access lane="540275665_0" pos="6.43" length="13.28" friendlyPos="1"/>
-        <access lane="540275666#0_0" pos="32.27" length="12.48" friendlyPos="1"/>
-        <access lane="540275666#1_0" pos="0.00" length="21.67" friendlyPos="1"/>
-        <access lane="540275676#9_0" pos="242.70" length="21.08" friendlyPos="1"/>
+    <busStop id="4492377635" name="Newcastle" lane="1017842485_0" startPos="0.00" endPos="57.29" friendlyPos="1" lines="GR C GR NL NR 01 GR B XC GR HC">
+        <access lane="540275666#0_0" pos="46.96" friendlyPos="1" length="31.07"/>
+        <access lane="540275676#9_0" pos="428.80" friendlyPos="1" length="19.86"/>
     </busStop>
-    <busStop id="4346939128" name="Newcastle" lane="1017842487_0" startPos="0.00" endPos="153.89" friendlyPos="true" lines="NR 02 NR 04">
-        <access lane="-1279889581_0" pos="39.71" length="58.98" friendlyPos="1"/>
-        <access lane="258625791_0" pos="29.26" length="56.65" friendlyPos="1"/>
-        <access lane="400897430_0" pos="26.46" length="46.90" friendlyPos="1"/>
-        <access lane="540275667_0" pos="33.56" length="39.15" friendlyPos="1"/>
-        <access lane="870902660#4_0" pos="35.32" length="44.88" friendlyPos="1"/>
-    </busStop>
-    <busStop id="4492377635" name="Newcastle" lane="1017842485_0" startPos="0.00" endPos="32.79" friendlyPos="true" lines="GR C GR NL NR 01 GR B XC GR HC">
-        <access lane="258625791_0" pos="0.00" length="32.54" friendlyPos="1"/>
-        <access lane="540275665_0" pos="10.49" length="22.46" friendlyPos="1"/>
-        <access lane="540275666#0_0" pos="25.86" length="17.87" friendlyPos="1"/>
-        <access lane="540275666#1_0" pos="0.00" length="32.66" friendlyPos="1"/>
-        <access lane="540275676#9_0" pos="245.49" length="11.39" friendlyPos="1"/>
-    </busStop>
-    <busStop id="4523747621" name="Central Station" lane="1107847842#1_0" startPos="114.08" endPos="314.08" friendlyPos="true" lines="Green Yellow">
-        <access lane="-165456826_0" pos="7.04" length="33.30" friendlyPos="1"/>
-        <access lane="-502706940_0" pos="57.70" length="22.70" friendlyPos="1"/>
-        <access lane="165456826_0" pos="56.90" length="30.30" friendlyPos="1"/>
-        <access lane="30278393_0" pos="0.00" length="35.55" friendlyPos="1"/>
-        <access lane="502706940_0" pos="0.00" length="24.35" friendlyPos="1"/>
-    </busStop>
-    <busStop id="502599366" name="Central Station Neville Street" lane="258625107#0_1" startPos="43.97" endPos="58.97" friendlyPos="true" lines="97">
-        <access lane="-454897318_0" pos="1.84" length="21.22" friendlyPos="1"/>
-        <access lane="258625106#0_0" pos="49.77" length="11.37" friendlyPos="1"/>
-        <access lane="258625106#1_0" pos="0.00" length="28.01" friendlyPos="1"/>
-        <access lane="271489060_0" pos="0.00" length="25.07" friendlyPos="1"/>
-        <access lane="454897318_0" pos="0.00" length="16.54" friendlyPos="1"/>
-    </busStop>
-    <busStop id="5086156615" name="Newcastle" lane="704349277#2_0" startPos="0.00" endPos="107.73" friendlyPos="true" lines="NR 04 NR 02">
-        <access lane="-1279889581_0" pos="14.39" length="33.21" friendlyPos="1"/>
-        <access lane="-13715475#0_0" pos="58.53" length="53.14" friendlyPos="1"/>
-        <access lane="-171959848#0_0" pos="0.57" length="45.35" friendlyPos="1"/>
-        <access lane="13715475#0_0" pos="0.00" length="45.52" friendlyPos="1"/>
-        <access lane="870902660#4_0" pos="60.32" length="19.11" friendlyPos="1"/>
-    </busStop>
-    <busStop id="8441804769" lane="258625107#0_1" startPos="43.97" endPos="58.97" friendlyPos="true" lines="97">
-        <access lane="-454897318_0" pos="1.84" length="16.16" friendlyPos="1"/>
-        <access lane="258625106#0_0" pos="57.45" length="22.94" friendlyPos="1"/>
-        <access lane="258625106#1_0" pos="0.00" length="24.81" friendlyPos="1"/>
-        <access lane="271489060_0" pos="0.00" length="27.76" friendlyPos="1"/>
-        <access lane="454897318_0" pos="0.00" length="15.23" friendlyPos="1"/>
+    <busStop id="5086156615" name="Newcastle" lane="704349277#2_0" startPos="0.00" endPos="187.72" friendlyPos="1" lines="NR 04 NR 02">
+        <access lane="400897430_0" pos="47.87" friendlyPos="1" length="150.23"/>
     </busStop>
 </additional>

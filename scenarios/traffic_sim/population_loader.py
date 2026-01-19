@@ -9,7 +9,6 @@ import random
 from typing import Dict, List, Tuple
 from collections import defaultdict
 import sumolib
-import traci
 from agent import Agent, Activity, ActivityType, TransportMode
 
 

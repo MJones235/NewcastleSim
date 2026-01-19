@@ -7,7 +7,6 @@ Changes flows to appropriate frequencies to avoid congestion.
 """
 
 import xml.etree.ElementTree as ET
-import sys
 
 def fix_pt_schedule(input_file, output_file, start_time=19800, end_time=86400):
     """
