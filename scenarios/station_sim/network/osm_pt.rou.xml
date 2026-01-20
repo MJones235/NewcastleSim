@@ -71,7 +71,7 @@
         <stop busStop="317392095" duration="20.00" until="55.00"/>
     </route>
     <route id="pt_train_NR_01:4" edges="41129361 735299055#1">
-        <stop busStop="12608716282" duration="20.00" until="69.00"/>
+        <stop busStop="317392095" duration="20.00" until="69.00"/>
     </route>
     <route id="pt_train_NR_02:0" edges="704349277#0 704349277#1 704349277#2 28872267#0 28872267#1 28872267#2 28872267#3 28872267#4">
         <stop busStop="5086156615" duration="20.00" until="121.00"/>

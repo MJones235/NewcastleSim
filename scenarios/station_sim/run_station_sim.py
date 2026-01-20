@@ -9,12 +9,13 @@ def main():
     # Initialize simulation manager
     sim_manager = StationSimulationManager(
         network_file='scenarios/station_sim/network/station_network.net.xml',
-        walking_areas_file='scenarios/station_sim/network/walking_areas.add.xml'
+        walking_areas_file='scenarios/station_sim/network/walking_areas.add.xml',
+        stops_file='scenarios/station_sim/network/osm_stops.add.xml'
     )
     sim_manager.load_network()
     
-    # Load population - 1 agent entering at an entrance node
-    sim_manager.load_population(num_agents=1)
+    # Load population - 100 agents with staggered spawning
+    sim_manager.load_population(num_agents=500)
 
     # Configure SUMO
     sumo_cmd = [

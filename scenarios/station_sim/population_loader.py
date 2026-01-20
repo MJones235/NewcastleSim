@@ -4,9 +4,12 @@ Load pedestrian population and place them within station walking areas.
 
 import xml.etree.ElementTree as ET
 import random
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 from shapely.geometry import Polygon, Point
 from agent import StationAgent
+
+if TYPE_CHECKING:
+    from station_network import StationNetwork
 
 
 class PopulationLoader:
@@ -84,34 +87,36 @@ class PopulationLoader:
         # Fallback: return centroid
         return (polygon.centroid.x, polygon.centroid.y)
     
-    def create_agents(self, num_agents: int) -> List[StationAgent]:
+    def create_agents(self, num_agents: int, station_network: 'StationNetwork') -> List[StationAgent]:
         """
-        Create agents at entrance nodes with platform destinations.
+        Create agents at random entrance edges with random platform destinations.
         
         Args:
-            num_agents: Number of agents to create (currently only creates 1)
+            num_agents: Number of agents to create
+            station_network: StationNetwork instance for querying entrances and platforms
             
         Returns:
             List of StationAgent objects
         """
         agents = []
         
-        # Fixed routing: entrance junction 3608883591, destination busStop 4270733515
-        entrance = '3608883591'
-        destination = '4270733515'
-        
-        # Use dummy position for now - will be set when spawning
-        agent = StationAgent(
-            agent_id=f"agent_0",
-            start_position=(0.0, 0.0),
-            destination=destination,
-            destination_type="platform"
-        )
-        
-        # Store entrance node for spawning
-        agent.entrance_node = entrance
-        
-        agents.append(agent)
-        print(f"Created 1 agent entering at junction {entrance}, going to busStop {destination}")
+        for i in range(num_agents):
+            # Select random entrance and platform
+            entrance_edge = station_network.get_random_entrance_edge()
+            platform_id = station_network.get_random_platform()
+            access_edge = station_network.get_platform_access_edge(platform_id)
+            spawn_position = station_network.get_entrance_spawn_position(entrance_edge)
+            
+            agent = StationAgent(
+                agent_id=f"agent_{i}",
+                entrance_edge=entrance_edge,
+                destination=platform_id,
+                access_edge=access_edge,
+                spawn_position=spawn_position,
+                destination_type="platform"
+            )
+            
+            agents.append(agent)
+            print(f"Created agent_{i}: entrance={entrance_edge}, platform={platform_id}, access={access_edge}")
         
         return agents

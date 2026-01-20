@@ -16,6 +16,7 @@ from base.diagnostics import SimulationDiagnostics
 
 from agent import StationAgent
 from population_loader import PopulationLoader
+from station_network import StationNetwork
 
 
 class StationSimulationManager(SimulationManagerBase):
@@ -23,20 +24,28 @@ class StationSimulationManager(SimulationManagerBase):
     Manages the station simulation, coordinating pedestrian agents and SUMO.
     """
     
-    def __init__(self, network_file: str, walking_areas_file: str):
+    def __init__(self, network_file: str, walking_areas_file: str, stops_file: str):
         super().__init__(network_file)
         self.walking_areas_file = walking_areas_file
+        self.stops_file = stops_file
         self.diagnostics = SimulationDiagnostics()
+        
+        # Station network metadata
+        self.station_network = None
         
         # Station-specific tracking
         self.pedestrian_edges = []
-        self.platform_stops = {}
         self.agents_to_spawn = []  # Queue of agents waiting to spawn
-        self.spawn_edge = None  # Edge to use for initial spawn
+        self.spawn_interval = 1.0  # Seconds between spawns
+        self.last_spawn_time = -999  # Time of last spawn (start far in past)
     
     def load_network(self):
         """Load the SUMO network and identify pedestrian infrastructure"""
         super().load_network()
+        
+        # Initialize station network metadata
+        self.station_network = StationNetwork(self.stops_file)
+        print(f"Loaded station network: {self.station_network}")
         
         if self.network:
             # Find all pedestrian-accessible edges
@@ -65,7 +74,7 @@ class StationSimulationManager(SimulationManagerBase):
         print(f"Loading population of {num_agents} agents...")
         
         loader = PopulationLoader(self.walking_areas_file)
-        agents = loader.create_agents(num_agents)
+        agents = loader.create_agents(num_agents, self.station_network)
         
         for agent in agents:
             self.add_agent(agent)
@@ -75,59 +84,29 @@ class StationSimulationManager(SimulationManagerBase):
     def spawn_agents(self):
         """
         Queue agents for gradual spawning into SUMO.
-        Agents will be spawned one per time step to avoid JuPedSim distance violations.
+        Agents will be spawned with minimum interval to avoid JuPedSim distance violations.
         """
         print("Queueing agents for spawning...")
         
 
         # Queue all unspawned agents
         self.agents_to_spawn = [agent for agent in self.agents.values() if not agent.is_spawned]
-        print(f"Queued {len(self.agents_to_spawn)} agents for gradual spawning (1 per step)")
+        print(f"Queued {len(self.agents_to_spawn)} agents for gradual spawning ({self.spawn_interval}s interval)")
     
     def step(self, sim_time: int):
         """Execute one simulation step"""
         self.current_time = sim_time
         
-        # Spawn one agent per step if any are waiting
-        if self.agents_to_spawn:
+        # Spawn one agent if interval has passed and any are waiting
+        if self.agents_to_spawn and (sim_time - self.last_spawn_time >= self.spawn_interval):
             agent = self.agents_to_spawn.pop(0)
             try:
                 agent.spawn_in_sumo(self.network)
-                print(f"Spawned {agent.id} at entrance {agent.entrance_node}, walking to {agent.destination}")
-                print(f"  Person ID: {agent.person_id}")
+                self.last_spawn_time = sim_time
             except Exception as e:
                 print(f"Failed to spawn {agent.id}: {e}")
                 self.diagnostics.failed_insertions += 1
-        
-        # Every 10 seconds, check on spawned agents
-        if int(sim_time) % 10 == 0 and sim_time > 0:
-            try:
-                person_list = traci.person.getIDList()
-                if person_list:
-                    print(f"\n[Time {sim_time:.1f}s] {len(person_list)} person(s) in simulation:")
-                    for person_id in person_list:
-                        pos = traci.person.getPosition(person_id)
-                        road = traci.person.getRoadID(person_id)
-                        lane = traci.person.getLaneID(person_id)
-                        speed = traci.person.getSpeed(person_id)
-                        remaining_stages = traci.person.getRemainingStages(person_id)
-                        next_edge = traci.person.getNextEdge(person_id)
-                        
-                        # Check if on walkingarea (these have ':' in the name)
-                        location_type = "walkingarea" if ":w" in road else ("crossing" if ":c" in road else "edge")
-                        
-                        print(f"  {person_id}:")
-                        print(f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})")
-                        print(f"    Road: {road} (type: {location_type})")
-                        print(f"    Lane: {lane}")
-                        print(f"    Speed: {speed:.2f} m/s")
-                        print(f"    Remaining stages: {remaining_stages}")
-                        print(f"    Next edge: {next_edge}")
-                else:
-                    print(f"[Time {sim_time:.1f}s] No persons in simulation")
-            except Exception as e:
-                print(f"Error querying persons: {e}")
-        
+                
         # Update all agents
         for agent in self.agents.values():
             agent.update(sim_time)
@@ -168,22 +147,4 @@ class StationSimulationManager(SimulationManagerBase):
             'trip_completions': self.diagnostics.trip_completions,
             'failed_insertions': self.diagnostics.failed_insertions
         }
-    
-    def print_status(self):
-        """Print current simulation status"""
-        stats = self.get_simulation_statistics()
-        hours = int(self.current_time // 3600)
-        minutes = int((self.current_time % 3600) // 60)
-        seconds = int(self.current_time % 60)
-        
-        print(f"\n[{hours:02d}:{minutes:02d}:{seconds:02d}] Station Simulation Status:")
-        print(f"  Total agents: {stats['total_agents']}")
-        print(f"  Active agents: {stats['active_agents']}")
-        print(f"  Completed: {stats['completed_agents']}")
-        
-        # Only query TraCI if connection is active
-        try:
-            person_count = len(traci.person.getIDList())
-            print(f"  In SUMO: {person_count}")
-        except:
-            pass
+            
