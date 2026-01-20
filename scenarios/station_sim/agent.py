@@ -5,7 +5,7 @@ Extends the base agent class with station-specific behavior.
 """
 
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import traci
 import sys
 import os
@@ -32,14 +32,14 @@ class StationAgent(AgentBase):
     """
     
     def __init__(self, agent_id: str, entrance_edge: str, 
-                 destination: str, access_edge: str, spawn_position: float = -1.0,
+                 destination: str, route: List[str], spawn_position: float = -1.0,
                  destination_type: str = "platform"):
         super().__init__(agent_id)
         
         # Spatial state (station-specific)
         self.entrance_edge = entrance_edge  # Edge to spawn at
         self.spawn_position = spawn_position  # Position on entrance edge (0.0=start, -1=end)
-        self.access_edge = access_edge  # Edge leading to platform
+        self.route = route  # Full edge sequence from entrance to platform
         self.destination = destination  # busStop ID
         self.destination_type = destination_type  # "platform", "exit"
         self.position = (0.0, 0.0)  # Will be updated from SUMO
@@ -61,17 +61,15 @@ class StationAgent(AgentBase):
         self.person_id = f"person_{self.id}"
         
         try:
-            # Add person at entrance edge at specified position (-1 = end of edge)
+            # Add person at entrance edge at specified position
             traci.person.add(self.person_id, self.entrance_edge, self.spawn_position)
-                        
-            edges_to_walk = [
-                self.entrance_edge,  # Start edge (already on it)
-                self.access_edge     # Access edge to platform
-            ]
+            
+            print(f"  Agent {self.id}: route = {' → '.join(self.route)}")
+            print(f"  Destination: busStop {self.destination}")
                         
             traci.person.appendWalkingStage(
                 self.person_id, 
-                edges_to_walk, 
+                self.route,  # Full route including footbridge edges if needed
                 0.0,  # Arrival position (0 = busStop location)
                 stopID=self.destination
             )

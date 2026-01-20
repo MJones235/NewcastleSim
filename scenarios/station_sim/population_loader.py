@@ -104,19 +104,21 @@ class PopulationLoader:
             # Select random entrance and platform
             entrance_edge = station_network.get_random_entrance_edge()
             platform_id = station_network.get_random_platform()
-            access_edge = station_network.get_platform_access_edge(platform_id)
             spawn_position = station_network.get_entrance_spawn_position(entrance_edge)
+            
+            # Compute full route from entrance to platform (handles footbridge routing)
+            route = station_network.get_route(entrance_edge, platform_id)
             
             agent = StationAgent(
                 agent_id=f"agent_{i}",
                 entrance_edge=entrance_edge,
                 destination=platform_id,
-                access_edge=access_edge,
+                route=route,
                 spawn_position=spawn_position,
                 destination_type="platform"
             )
             
             agents.append(agent)
-            print(f"Created agent_{i}: entrance={entrance_edge}, platform={platform_id}, access={access_edge}")
+            print(f"Created agent_{i}: {entrance_edge} → {platform_id} (zone {station_network.get_location_side(entrance_edge)}→{station_network.get_location_side(platform_id)})")
         
         return agents

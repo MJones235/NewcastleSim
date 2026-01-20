@@ -4,7 +4,8 @@ Station network metadata - tracks entrances, exits, and platform access points.
 
 import xml.etree.ElementTree as ET
 import random
-from typing import Dict, List, Optional
+import networkx as nx
+from typing import Dict, List, Optional, Union
 
 
 class StationNetwork:
@@ -34,8 +35,57 @@ class StationNetwork:
         # Platform access mapping: {busStop_id: access_edge_id}
         self.platform_access: Dict[str, str] = {}
         
+        # Routing configuration
+        self._init_routing_config()
+        
         # Load platform access information from stops file
         self._load_platform_access(stops_file)
+    
+    def _init_routing_config(self):
+        """Initialize routing configuration for footbridge and platform access"""
+        
+        # Zone A: Main entrance side
+        self.platforms_zone_a = {'317392095', '4492377635', '4267618249'}
+        
+        # Zone B: Northern platforms (across footbridge, north exit)
+        self.platforms_zone_b = {'4270757351', '4270733515'}
+        
+        # Zone C: Southern platforms (across footbridge, south exit)
+        self.platforms_zone_c = {'4346939128', '1754217408', '5086156615'}
+        
+        # Location zone mapping (for future extension to facilities, etc.)
+        self.entrance_zones = {
+            '258625111': 'A',
+            'E8': 'A',
+            '1078920102': 'A'
+        }
+        
+        # Build zone routing graph
+        self.zone_graph = nx.DiGraph()
+        
+        # A → B: Enter footbridge, exit north
+        self.zone_graph.add_edge('A', 'B', edges=['E10', '540275666#0'], 
+                                exit_choices=['540275665', '258625791'])
+        
+        # A → C: Enter footbridge, continue to south
+        self.zone_graph.add_edge('A', 'C', edges=['E10', '540275666#0', '540275666#1'],
+                                exit_choices=['400897429', '400897430'])
+        
+        # B → A: Reverse footbridge path from north to entrance
+        self.zone_graph.add_edge('B', 'A', edges=['-540275666#0', '-E10'],
+                                exit_choices=['258625111', 'E8', '1078920102'])
+        
+        # C → A: Reverse footbridge path from south to entrance
+        self.zone_graph.add_edge('C', 'A', edges=['-540275666#1', '-540275666#0', '-E10'],
+                                exit_choices=['258625111', 'E8', '1078920102'])
+        
+        # B → C: Continue on footbridge from north to south
+        self.zone_graph.add_edge('B', 'C', edges=['540275666#1'],
+                                exit_choices=['400897429', '400897430'])
+        
+        # C → B: Reverse footbridge from south to north
+        self.zone_graph.add_edge('C', 'B', edges=['-540275666#1'],
+                                exit_choices=['540275665', '258625791'])
     
     def _load_platform_access(self, stops_file: str):
         """Parse osm_stops.add.xml to extract platform access edges"""
@@ -89,6 +139,114 @@ class StationNetwork:
     def get_random_platform(self) -> str:
         """Get a random platform busStop ID"""
         return random.choice(list(self.platform_access.keys()))
+    
+    def get_location_side(self, location_id: str) -> Optional[str]:
+        """
+        Determine which zone of the station a location is in.
+        
+        Args:
+            location_id: Platform busStop ID, entrance edge ID, or other location ID
+            
+        Returns:
+            'A', 'B', or 'C' for the zone, None if unknown
+        """
+        # Check entrances
+        if location_id in self.entrance_zones:
+            return self.entrance_zones[location_id]
+        
+        # Check platforms
+        if location_id in self.platforms_zone_a:
+            return 'A'
+        elif location_id in self.platforms_zone_b:
+            return 'B'
+        elif location_id in self.platforms_zone_c:
+            return 'C'
+        
+        return None
+    
+    def requires_footbridge(self, from_location: str, to_location: str) -> bool:
+        """
+        Check if footbridge crossing is required between two locations.
+        Footbridge connects zones: A ↔ B ↔ C
+        
+        Args:
+            from_location: Origin location ID (entrance, platform, facility, etc.)
+            to_location: Destination location ID
+            
+        Returns:
+            True if footbridge crossing needed, False otherwise
+        """
+        from_zone = self.get_location_side(from_location)
+        to_zone = self.get_location_side(to_location)
+        
+        # If we can't determine zones, assume bridge not needed
+        if from_zone is None or to_zone is None:
+            return False
+        
+        # Bridge needed if zones differ (A↔B, A↔C, B↔C all require bridge)
+        return from_zone != to_zone
+    
+    def get_route(self, from_location: str, to_location: str) -> List[str]:
+        """
+        Compute the edge sequence between two locations using zone graph.
+        
+        Args:
+            from_location: Starting location ID (entrance edge, platform ID, etc.)
+            to_location: Destination location ID (typically platform busStop ID)
+            
+        Returns:
+            List of edge IDs to traverse
+        """
+        route = [from_location]
+        
+        from_zone = self.get_location_side(from_location)
+        to_zone = self.get_location_side(to_location)
+        
+        # Same zone - direct route
+        if from_zone == to_zone:
+            access_edge = self.get_platform_access_edge(to_location)
+            if access_edge and access_edge != from_location:
+                route.append(access_edge)
+            return route
+        
+        # Different zones - find path through zone graph
+        if from_zone is None or to_zone is None:
+            print(f"Warning: Cannot determine zones for {from_location} → {to_location}")
+            return route
+        
+        try:
+            # Find zone path using networkx
+            zone_path = nx.shortest_path(self.zone_graph, from_zone, to_zone)
+            
+            # Build edge sequence by following zone path
+            for i in range(len(zone_path) - 1):
+                current_zone = zone_path[i]
+                next_zone = zone_path[i + 1]
+                
+                # Get edge data for this zone transition
+                edge_data = self.zone_graph.get_edge_data(current_zone, next_zone)
+                if edge_data:
+                    # Add footbridge edges
+                    route.extend(edge_data['edges'])
+                    
+                    # Add exit choice (random selection from options)
+                    if 'exit_choices' in edge_data:
+                        exit_edge = random.choice(edge_data['exit_choices'])
+                        route.append(exit_edge)
+            
+            # Add final platform access edge
+            access_edge = self.get_platform_access_edge(to_location)
+            if access_edge and access_edge != route[-1]:
+                route.append(access_edge)
+                
+        except nx.NetworkXNoPath:
+            print(f"Warning: No path from zone {from_zone} to {to_zone}")
+            # Fallback: just add access edge
+            access_edge = self.get_platform_access_edge(to_location)
+            if access_edge:
+                route.append(access_edge)
+        
+        return route
     
     def __repr__(self):
         return (f"StationNetwork(entrances={len(self.entrance_edges)}, "
