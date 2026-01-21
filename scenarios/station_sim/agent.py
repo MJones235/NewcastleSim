@@ -54,7 +54,7 @@ class StationAgent(AgentBase):
         return self.position
     
     def spawn_in_sumo(self, network):
-        """Create this agent as a person in SUMO and give them a walking stage with specific routing"""
+        """Create this agent as a person in SUMO with walk + ride stages"""
         if self.is_spawned:
             return
                 
@@ -67,11 +67,26 @@ class StationAgent(AgentBase):
             print(f"  Agent {self.id}: route = {' → '.join(self.route)}")
             print(f"  Destination: busStop {self.destination}")
                         
+            # Stage 1: Walk to platform busStop (via access lane)
+            # SUMO will automatically insert an access stage to get from access edge to platform
             traci.person.appendWalkingStage(
                 self.person_id, 
-                self.route,  # Full route including footbridge edges if needed
-                0.0,  # Arrival position (0 = busStop location)
-                stopID=self.destination
+                self.route,  # Full route to access edge
+                0.0,  # Arrival position
+                stopID=self.destination  # Walk TO this busStop
+            )
+            
+            # Stage 2: Ride any train that stops at this busStop
+            # Person will wait at the busStop for a vehicle to arrive
+            # Must provide a valid destination edge for the ride
+            # Get the edge where the busStop is located (not the access edge!)
+            busstop_edge = traci.busstop.getLaneID(self.destination).rsplit('_', 1)[0]
+            
+            traci.person.appendDrivingStage(
+                self.person_id,
+                toEdge=busstop_edge,  # Ride to the edge where busStop is located
+                lines="ANY",  # Board any vehicle line
+                stopID=self.destination  # Alight at this busStop
             )
                         
             self.is_spawned = True
