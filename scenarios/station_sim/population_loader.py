@@ -4,6 +4,7 @@ Load pedestrian population and place them within station walking areas.
 
 import xml.etree.ElementTree as ET
 import random
+import numpy as np
 from typing import List, Tuple, TYPE_CHECKING
 from shapely.geometry import Polygon, Point
 from agent import StationAgent
@@ -36,13 +37,20 @@ class PopulationLoader:
             # Compute full route from entrance to platform (handles footbridge routing)
             route = station_network.get_route(entrance_edge, platform_id)
             
+            # Sample preferred walking speed from normal distribution
+            # Mean: 1.34 m/s, Std Dev: 0.37 m/s
+            walking_speed = np.random.normal(1.34, 0.37)
+            # Ensure speed is positive and reasonable (0.5 - 2.5 m/s)
+            walking_speed = max(0.5, min(2.5, walking_speed))
+            
             agent = StationAgent(
                 agent_id=f"agent_{i}",
                 entrance_edge=entrance_edge,
                 destination=platform_id,
                 route=route,
                 spawn_position=spawn_position,
-                destination_type="platform"
+                destination_type="platform",
+                walking_speed=walking_speed
             )
             
             agents.append(agent)

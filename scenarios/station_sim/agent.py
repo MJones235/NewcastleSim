@@ -33,7 +33,7 @@ class StationAgent(AgentBase):
     
     def __init__(self, agent_id: str, entrance_edge: str, 
                  destination: str, route: List[str], spawn_position: float = -1.0,
-                 destination_type: str = "platform"):
+                 destination_type: str = "platform", walking_speed: float = 1.34):
         super().__init__(agent_id)
         
         # Spatial state (station-specific)
@@ -43,6 +43,7 @@ class StationAgent(AgentBase):
         self.destination = destination  # busStop ID
         self.destination_type = destination_type  # "platform", "exit"
         self.position = (0.0, 0.0)  # Will be updated from SUMO
+        self.walking_speed = walking_speed  # Preferred walking speed in m/s
         
         # Movement state
         self.state = AgentState.ENTERING
@@ -62,10 +63,15 @@ class StationAgent(AgentBase):
         
         try:
             # Add person at entrance edge at specified position
-            traci.person.add(self.person_id, self.entrance_edge, self.spawn_position)
+            # For JuPedSim, set typeID to enable proper pedestrian dynamics
+            traci.person.add(self.person_id, self.entrance_edge, self.spawn_position, typeID="DEFAULT_PEDTYPE")
+            
+            # Set individual desired speed for this pedestrian (JuPedSim parameter)
+            traci.person.setSpeed(self.person_id, self.walking_speed)
             
             print(f"  Agent {self.id}: route = {' → '.join(self.route)}")
             print(f"  Destination: busStop {self.destination}")
+            print(f"  Walking speed: {self.walking_speed:.2f} m/s")
                         
             # Stage 1: Walk to platform busStop (via access lane)
             # SUMO will automatically insert an access stage to get from access edge to platform
