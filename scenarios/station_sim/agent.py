@@ -14,6 +14,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from base.agent_base import AgentBase
 from base.decision_maker_base import DecisionMakerBase, Decision
+from station_network import StationNetwork
 
 
 class AgentState(Enum):
@@ -31,7 +32,8 @@ class StationAgent(AgentBase):
     def __init__(self, agent_id: str, entrance_edge: str, 
                  destination: str, route: List[str], spawn_position: float = -1.0,
                  destination_type: str = "platform", walking_speed: float = 1.34,
-                 decision_maker: Optional[DecisionMakerBase] = None):
+                 decision_maker: Optional[DecisionMakerBase] = None,
+                 station_network: Optional[StationNetwork] = None):
         super().__init__(agent_id)
         
         # Spatial state (station-specific)
@@ -42,11 +44,13 @@ class StationAgent(AgentBase):
         self.destination_type = destination_type  # "platform", "exit"
         self.position = (0.0, 0.0)  # Will be updated from SUMO
         self.walking_speed = walking_speed  # Preferred walking speed in m/s
+        self.station_network = station_network
         
         # Decision making
         self.decision_maker = decision_maker  # Strategy for decision making
         self.current_decision: Optional[Decision] = None
         self.is_evacuating = False
+        self._last_message_index = 0
         
         # Movement state
         self.state = AgentState.WALKING
@@ -120,8 +124,12 @@ class StationAgent(AgentBase):
         if not self.messages or not self.decision_maker:
             return
         
-        # Process each new message (in practice, you might want to track which are new)
-        for message in self.messages:
+        # Process only new messages
+        new_messages = self.messages[self._last_message_index:]
+        if not new_messages:
+            return
+
+        for message in new_messages:
             # Prepare agent state for decision maker
             agent_state = {
                 'destination': self.destination,
@@ -141,6 +149,9 @@ class StationAgent(AgentBase):
                         
             # Handle the decision
             self.handle_decision(decision)
+
+        # Mark messages as processed
+        self._last_message_index = len(self.messages)
             
     def handle_decision(self, decision: Decision):
         """Execute the action corresponding to a decision"""
@@ -148,11 +159,64 @@ class StationAgent(AgentBase):
         
         if decision == Decision.EVACUATE:
             self.is_evacuating = True
+            self._reroute_to_entrance()
     
     def _update_walking(self, sim_time: int):
         """Update when agent is walking to destination"""
         # TODO: Check if agent has reached destination
         pass
+
+    def _reroute_to_entrance(self):
+        """Reroute the agent from its current (x, y) position to an entrance edge."""
+        if not self.person_id or not self.is_spawned or not self.station_network:
+            return
+
+        # Ensure the person exists in SUMO before rerouting
+        try:
+            if self.person_id not in traci.person.getIDList():
+                return
+        except traci.exceptions.TraCIException:
+            return
+
+        try:
+            x, y = traci.person.getPosition(self.person_id)
+            self.position = (x, y)
+
+            route = self.station_network.get_route_from_xy_to_entrance(x, y)
+
+            # Get person's current edge
+            current_edge = None
+            try:
+                current_edge = traci.person.getRoadID(self.person_id)
+            except traci.exceptions.TraCIException:
+                current_edge = None
+
+            if not current_edge:
+                try:
+                    current_edge, _, _ = traci.simulation.convertRoad(x, y, False, "pedestrian")
+                except traci.exceptions.TraCIException:
+                    pass
+
+            if current_edge and (not route or route[0] != current_edge):
+                route = [current_edge] + route
+
+            if not route:
+                return
+
+            arrival_pos = self.station_network.get_entrance_spawn_position(route[-1])
+
+            # Remove all stages and create new evacuation route
+            traci.person.removeStages(self.person_id)
+            
+            traci.person.appendWalkingStage(
+                self.person_id,
+                route,
+                arrival_pos,
+                speed=self.walking_speed
+            )
+
+        except traci.exceptions.TraCIException as e:
+            print(f"Failed to reroute agent {self.id} to entrance: {e}")
     
     def _remove_from_simulation(self):
         """Remove this agent's person from SUMO"""

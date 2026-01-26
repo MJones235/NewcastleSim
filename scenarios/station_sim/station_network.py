@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import random
 import networkx as nx
 from typing import Dict, List, Optional, Union
+from shapely.geometry import Point, Polygon
 
 
 class StationNetwork:
@@ -14,7 +15,7 @@ class StationNetwork:
     Provides methods to query and route between different station locations.
     """
     
-    def __init__(self, stops_file: str):
+    def __init__(self, stops_file: str, walking_areas_file: Optional[str] = None):
         """
         Initialize station network metadata.
         
@@ -38,8 +39,15 @@ class StationNetwork:
         # Routing configuration
         self._init_routing_config()
         
+        # Walkable area polygons for zone lookup
+        self.zone_polygons: Dict[str, Polygon] = {}
+
         # Load platform access information from stops file
         self._load_platform_access(stops_file)
+
+        # Load walkable area polygons for zone lookup
+        if walking_areas_file:
+            self._load_walkable_zones(walking_areas_file)
     
     def _init_routing_config(self):
         """Initialize routing configuration for footbridge and platform access"""
@@ -109,6 +117,42 @@ class StationNetwork:
             
         except Exception as e:
             print(f"Warning: Could not load platform access data: {e}")
+
+    def _load_walkable_zones(self, walking_areas_file: str):
+        """Load walkable area polygons and map them to zones A/B/C."""
+        try:
+            tree = ET.parse(walking_areas_file)
+            root = tree.getroot()
+
+            zone_name_map = {
+                'entrance': 'A',
+                'platform_3_to_4': 'B',
+                'platform_5_to_7': 'C'
+            }
+
+            for poly in root.findall('.//poly'):
+                name = poly.get('name')
+                poly_type = poly.get('type')
+                shape = poly.get('shape')
+
+                if poly_type != 'jupedsim.walkable_area' or not name or not shape:
+                    continue
+
+                if name not in zone_name_map:
+                    continue
+
+                coords = []
+                for pair in shape.split():
+                    x_str, y_str = pair.split(',')
+                    coords.append((float(x_str), float(y_str)))
+
+                zone = zone_name_map[name]
+                self.zone_polygons[zone] = Polygon(coords)
+
+            print(f"Loaded zone polygons: {list(self.zone_polygons.keys())}")
+
+        except Exception as e:
+            print(f"Warning: Could not load walking area zones: {e}")
     
     def get_random_entrance_edge(self) -> str:
         """Get a random entrance edge"""
@@ -163,6 +207,69 @@ class StationNetwork:
             return 'C'
         
         return None
+
+    def get_zone_for_xy(self, x: float, y: float) -> Optional[str]:
+        """
+        Determine zone (A/B/C) from x,y coordinates using walking area polygons.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+
+        Returns:
+            'A', 'B', or 'C' for the zone, None if unknown
+        """
+        if not self.zone_polygons:
+            return None
+
+        point = Point(x, y)
+        for zone, polygon in self.zone_polygons.items():
+            if polygon.contains(point):
+                return zone
+
+        return None
+
+    def get_route_from_xy_to_entrance(self, x: float, y: float) -> List[str]:
+        """
+        Build a zone-based route from arbitrary x,y coordinates to an entrance edge.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+
+        Returns:
+            List of edge IDs to reach an entrance edge
+        """
+        from_zone = self.get_zone_for_xy(x, y)
+        entrance_edge = self.get_random_entrance_edge()
+
+        if from_zone is None:
+            return [entrance_edge]
+
+        # Already in zone A - head directly to an entrance edge
+        if from_zone == 'A':
+            return [entrance_edge]
+
+        route: List[str] = []
+
+        try:
+            zone_path = nx.shortest_path(self.zone_graph, from_zone, 'A')
+
+            for i in range(len(zone_path) - 1):
+                current_zone = zone_path[i]
+                next_zone = zone_path[i + 1]
+
+                edge_data = self.zone_graph.get_edge_data(current_zone, next_zone)
+                if edge_data:
+                    route.extend(edge_data['edges'])
+                    if 'exit_choices' in edge_data:
+                        route.append(random.choice(edge_data['exit_choices']))
+
+        except nx.NetworkXNoPath:
+            pass
+
+        route.append(entrance_edge)
+        return route
     
     def requires_footbridge(self, from_location: str, to_location: str) -> bool:
         """

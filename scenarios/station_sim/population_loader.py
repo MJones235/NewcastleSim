@@ -61,7 +61,8 @@ class PopulationLoader:
                 spawn_position=spawn_position,
                 destination_type="platform",
                 walking_speed=walking_speed,
-                decision_maker=decision_maker
+                decision_maker=decision_maker,
+                station_network=station_network
             )
             
             agents.append(agent)

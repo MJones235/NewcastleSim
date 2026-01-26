@@ -49,7 +49,7 @@ class StationSimulationManager(SimulationManagerBase):
         super().load_network()
         
         # Initialize station network metadata
-        self.station_network = StationNetwork(self.stops_file)
+        self.station_network = StationNetwork(self.stops_file, self.walking_areas_file)
         print(f"Loaded station network: {self.station_network}")
         
         if self.network:

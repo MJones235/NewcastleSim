@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-01-20T11:53:57.119135+00:00 by Eclipse SUMO netedit v1_25_0+0923-4ecd63a3490
+<!-- generated on 2026-01-26T20:50:11.346665+00:00 by Eclipse SUMO netedit v1_25_0+0923-4ecd63a3490
 <neteditConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/neteditConfiguration.xsd">
 
     <input>
-        <additional-files value="/home/michael/NewcastleSim/scenarios/station_sim/network/osm_stops.add.xml,/home/michael/NewcastleSim/scenarios/station_sim/network/walking_areas.add.xml"/>
         <sumo-net-file value="/home/michael/NewcastleSim/scenarios/station_sim/network/station_network.net.xml"/>
     </input>
 
@@ -225,7 +224,7 @@
         <lane id=":2639589132_w0_0" index="0" allow="pedestrian" speed="2.78" length="4.03" width="2.00" shape="253.30,430.74 252.68,432.64 251.84,432.54 251.49,432.65 251.20,432.87 250.97,433.19 250.78,433.61 248.88,432.98 248.99,432.14 248.88,431.80 248.67,431.51 248.35,431.28 247.93,431.09 248.55,429.19"/>
     </edge>
     <edge id=":2639595884_w0" function="walkingarea">
-        <lane id=":2639595884_w0_0" index="0" allow="pedestrian" speed="2.78" length="4.11" width="2.00" shape="268.22,283.35 270.13,283.95 270.02,284.83 270.13,285.18 270.34,285.48 270.66,285.72 271.08,285.90 270.48,287.80 269.54,287.70 269.13,287.82 268.78,288.05 268.46,288.39 268.20,288.85 266.39,287.99 266.59,287.18 266.52,286.84 266.34,286.55 266.04,286.30 265.63,286.10 266.35,284.23 267.19,284.38 267.53,284.28 267.81,284.08 268.04,283.77"/>
+        <lane id=":2639595884_w0_0" index="0" allow="pedestrian" speed="2.78" length="4.10" width="2.00" shape="268.22,283.35 270.13,283.95 270.02,284.83 270.13,285.18 270.34,285.48 270.66,285.72 271.08,285.90 270.48,287.80 269.54,287.70 269.14,287.82 268.79,288.05 268.48,288.39 268.22,288.84 266.41,288.00 266.61,287.18 266.53,286.85 266.35,286.55 266.05,286.30 265.64,286.10 266.36,284.23 267.19,284.38 267.53,284.28 267.81,284.08 268.04,283.77"/>
     </edge>
     <edge id=":317392528_0" function="internal">
         <lane id=":317392528_0_0" index="0" allow="rail rail_electric rail_fast" speed="0.10" length="0.10" shape="44.73,74.12 44.73,74.12"/>
@@ -258,7 +257,7 @@
         <lane id=":501963367_2_0" index="0" allow="rail rail_electric rail_fast" speed="31.16" length="2.80" shape="545.39,324.43 548.14,324.95"/>
     </edge>
     <edge id=":501986366_w0" function="walkingarea">
-        <lane id=":501986366_w0_0" index="0" allow="pedestrian" speed="2.78" length="5.26" width="3.20" shape="236.09,351.84 237.90,352.70 236.92,355.14 236.72,356.07 236.70,356.79 236.86,357.31 237.22,357.63 236.34,359.43 234.93,357.81 234.77,356.88 234.62,355.94 234.19,355.07 233.21,354.31 234.11,352.52 234.92,352.75 235.28,352.69 235.59,352.52 235.86,352.23"/>
+        <lane id=":501986366_w0_0" index="0" allow="pedestrian" speed="2.78" length="4.35" width="3.20" shape="236.42,352.59 238.24,353.43 238.04,354.25 238.11,354.59 238.29,354.89 238.59,355.14 239.00,355.35 237.80,358.32 233.19,356.50 234.34,353.52 235.20,353.65 235.56,353.55 235.89,353.34 236.18,353.02"/>
     </edge>
     <edge id=":5255000236_0" function="internal">
         <lane id=":5255000236_0_0" index="0" allow="rail rail_electric rail_fast" speed="0.10" length="0.10" shape="180.34,334.73 180.34,334.73"/>
@@ -698,12 +697,12 @@
         </lane>
     </edge>
     <edge id="540275665" from="2639595884" to="5227156627" priority="1" type="highway.steps" spreadType="center">
-        <lane id="540275665_0" index="0" allow="pedestrian" speed="1.39" length="22.66" width="2.00" shape="265.99,285.17 244.84,277.04">
+        <lane id="540275665_0" index="0" allow="pedestrian" speed="1.39" length="22.67" width="2.00" shape="266.00,285.17 244.84,277.04">
             <param key="origId" value="540275665"/>
         </lane>
     </edge>
-    <edge id="540275666#0" from="501986366" to="2639595884" priority="1" type="highway.footway" spreadType="center" shape="235.23,355.99 268.40,286.09">
-        <lane id="540275666#0_0" index="0" allow="pedestrian" speed="2.78" length="70.67" width="2.00" shape="237.00,352.27 267.29,288.42">
+    <edge id="540275666#0" from="501986366" to="2639595884" priority="1" type="highway.footway" spreadType="center" shape="237.01,353.70 268.40,286.09">
+        <lane id="540275666#0_0" index="0" allow="pedestrian" speed="2.78" length="71.21" width="2.00" shape="237.33,353.01 267.32,288.42">
             <param key="origId" value="540275666"/>
         </lane>
     </edge>
@@ -788,8 +787,8 @@
     <edge id="E1" from="J2" to="J3" priority="-1">
         <lane id="E1_0" index="0" speed="13.89" length="8.03" shape="268.16,322.67 275.62,325.63"/>
     </edge>
-    <edge id="E10" from="501986366" to="J18" priority="1" type="highway.footway" spreadType="roadCenter" shape="235.23,355.99 246.75,361.61">
-        <lane id="E10_0" index="0" allow="pedestrian" speed="2.78" length="10.31" shape="236.78,358.53 246.05,363.05"/>
+    <edge id="E10" from="501986366" to="J18" priority="1" type="highway.footway" spreadType="roadCenter" shape="237.73,354.84 244.19,357.45">
+        <lane id="E10_0" index="0" allow="pedestrian" speed="2.78" length="5.60" shape="238.40,356.84 243.59,358.93"/>
     </edge>
     <edge id="E2" from="J4" to="J5" priority="-1" type="highway.footway">
         <lane id="E2_0" index="0" allow="pedestrian" speed="13.89" length="10.05" width="2.00" shape="203.42,309.46 212.21,314.33"/>
@@ -812,8 +811,8 @@
     <edge id="E8" from="2639589132" to="J16" priority="-1" type="highway.footway" spreadType="center" shape="250.62,430.92 245.75,445.60 241.11,459.59">
         <lane id="E8_0" index="0" allow="pedestrian" speed="2.78" length="27.70" width="2.00" shape="249.83,433.30 245.75,445.60 241.11,459.59"/>
     </edge>
-    <edge id="E9" from="501986366" to="J17" priority="1" type="highway.footway" spreadType="roadCenter" shape="235.23,355.99 227.31,352.04">
-        <lane id="E9_0" index="0" allow="pedestrian" speed="2.78" length="6.30" shape="233.66,353.42 228.02,350.61"/>
+    <edge id="E9" from="501986366" to="J17" priority="1" type="highway.footway" spreadType="roadCenter" shape="233.29,356.54 226.72,354.00">
+        <lane id="E9_0" index="0" allow="pedestrian" speed="2.78" length="6.94" shape="233.77,355.01 227.30,352.51"/>
     </edge>
 
     <junction id="11226522" type="priority" x="64.29" y="72.93" incLanes="163751271_0 -239586708#1_0 239586708#0_0" intLanes=":11226522_0_0 :11226522_1_0 :11226522_2_0 :11226522_3_0" shape="84.89,109.75 82.04,111.20 81.94,111.25 78.98,112.48 62.23,72.02 65.22,70.88 68.68,79.48 71.57,85.69 74.25,90.67 77.11,95.57 80.53,101.55">
@@ -942,7 +941,7 @@
     </junction>
     <junction id="2639589131" type="dead_end" x="312.25" y="451.00" incLanes="" intLanes="" shape="311.94,451.95 312.56,450.05"/>
     <junction id="2639589132" type="dead_end" x="250.62" y="430.92" incLanes="1078920102_0 258625111_0" intLanes="" shape="253.30,430.74 252.68,432.64 251.84,432.54 251.49,432.65 251.20,432.87 250.97,433.19 250.78,433.61 248.88,432.98 248.99,432.14 248.88,431.80 248.67,431.51 248.35,431.28 247.93,431.09 248.55,429.19"/>
-    <junction id="2639595884" type="dead_end" x="268.40" y="286.09" incLanes="540275666#0_0" intLanes="" shape="268.22,283.35 270.13,283.95 270.02,284.83 270.13,285.18 270.34,285.48 270.66,285.72 271.08,285.90 270.48,287.80 269.54,287.70 269.13,287.82 268.78,288.05 268.46,288.39 268.20,288.85 266.39,287.99 266.59,287.18 266.52,286.84 266.34,286.55 266.04,286.30 265.63,286.10 266.35,284.23 267.19,284.38 267.53,284.28 267.81,284.08 268.04,283.77"/>
+    <junction id="2639595884" type="dead_end" x="268.40" y="286.09" incLanes="540275666#0_0" intLanes="" shape="268.22,283.35 270.13,283.95 270.02,284.83 270.13,285.18 270.34,285.48 270.66,285.72 271.08,285.90 270.48,287.80 269.54,287.70 269.14,287.82 268.79,288.05 268.48,288.39 268.22,288.84 266.41,288.00 266.61,287.18 266.53,286.85 266.35,286.55 266.05,286.30 265.64,286.10 266.36,284.23 267.19,284.38 267.53,284.28 267.81,284.08 268.04,283.77"/>
     <junction id="2639595885" type="dead_end" x="321.30" y="301.98" incLanes="258625791_0" intLanes="" shape="321.03,302.94 321.57,301.02"/>
     <junction id="317392528" type="priority" x="44.73" y="74.12" incLanes="135711909_0" intLanes=":317392528_0_0" shape="46.27,73.70 43.19,74.54 46.27,73.70 43.19,74.54">
         <request index="0" response="0" foes="0" cont="0"/>
@@ -968,7 +967,7 @@
         <request index="1" response="000" foes="000" cont="0"/>
         <request index="2" response="001" foes="001" cont="0"/>
     </junction>
-    <junction id="501986366" type="dead_end" x="235.52" y="355.89" incLanes="" intLanes="" shape="236.09,351.84 237.90,352.70 236.92,355.14 236.72,356.07 236.70,356.79 236.86,357.31 237.22,357.63 236.34,359.43 234.93,357.81 234.62,355.94 234.19,355.07 233.21,354.31 234.11,352.52 234.92,352.75 235.28,352.69 235.59,352.52 235.86,352.23"/>
+    <junction id="501986366" type="dead_end" x="235.52" y="355.89" incLanes="" intLanes="" shape="236.42,352.59 238.24,353.43 238.04,354.25 238.11,354.59 238.29,354.89 238.59,355.14 239.00,355.35 237.80,358.32 233.19,356.50 234.34,353.52 235.20,353.65 235.56,353.55 235.89,353.34 236.18,353.02"/>
     <junction id="5227156627" type="dead_end" x="244.84" y="277.04" incLanes="540275665_0" intLanes="" shape="245.20,276.11 244.48,277.97"/>
     <junction id="5255000236" type="priority" x="180.34" y="334.73" incLanes="-735299063_0" intLanes=":5255000236_0_0" shape="179.43,336.04 181.25,333.42 179.43,336.04 181.25,333.42" fringe="inner">
         <request index="0" response="0" foes="0" cont="0"/>
@@ -1036,8 +1035,8 @@
     <junction id="J14" type="dead_end" x="169.22" y="171.34" incLanes="" intLanes="" shape="169.22,171.34 168.00,172.92"/>
     <junction id="J15" type="dead_end" x="175.28" y="176.03" incLanes="E7_0" intLanes="" shape="174.06,177.61 175.28,176.03"/>
     <junction id="J16" type="dead_end" x="241.11" y="459.59" incLanes="E8_0" intLanes="" shape="240.16,459.28 242.06,459.90"/>
-    <junction id="J17" type="dead_end" x="227.31" y="352.04" incLanes="E9_0" intLanes="" shape="228.47,349.71 227.58,351.50"/>
-    <junction id="J18" type="dead_end" x="246.75" y="361.61" incLanes="E10_0" intLanes="" shape="245.61,363.95 246.49,362.15"/>
+    <junction id="J17" type="dead_end" x="226.72" y="354.00" incLanes="E9_0" intLanes="" shape="227.87,351.02 226.72,354.00"/>
+    <junction id="J18" type="dead_end" x="244.19" y="357.45" incLanes="E10_0" intLanes="" shape="242.99,360.42 244.19,357.45"/>
     <junction id="J2" type="dead_end" x="268.75" y="321.18" incLanes="" intLanes="" shape="268.75,321.18 267.57,324.15"/>
     <junction id="J3" type="dead_end" x="276.21" y="324.14" incLanes="E1_0" intLanes="" shape="275.03,327.11 276.21,324.14"/>
     <junction id="J4" type="dead_end" x="203.90" y="308.59" incLanes="" intLanes="" shape="203.90,308.59 202.93,310.34"/>

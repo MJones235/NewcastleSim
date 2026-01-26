@@ -19,7 +19,7 @@ def main():
     # Load population with decision makers
     # Configure evacuation probability: RULE_BASED_DEFAULT, RULE_BASED_HIGH_COMPLIANCE, or RULE_BASED_LOW_COMPLIANCE
     sim_manager.load_population(
-        num_agents=500,
+        num_agents=10,
         decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
     )
 

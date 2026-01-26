@@ -49,12 +49,13 @@ class RuleBasedDecisionMaker(DecisionMakerBase):
         
         # Check for evacuation keywords
         if any(keyword in message_lower for keyword in self.evacuation_keywords):
-            if random.random() < self.evacuation_probability:
-                self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
-                return Decision.EVACUATE
-            else:
-                self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
-                return Decision.IGNORE
+            return Decision.EVACUATE
+            #if random.random() < self.evacuation_probability:
+            #    self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
+            #    return Decision.EVACUATE
+            #else:
+            #    self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
+            #    return Decision.IGNORE
         
         # Default: ignore messages without evacuation keywords
         self.last_reasoning = "No evacuation keywords. Ignoring."
