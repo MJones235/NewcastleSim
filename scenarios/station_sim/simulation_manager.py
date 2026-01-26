@@ -73,7 +73,7 @@ class StationSimulationManager(SimulationManagerBase):
         """
         print(f"Loading population of {num_agents} agents...")
         
-        loader = PopulationLoader(self.walking_areas_file)
+        loader = PopulationLoader()
         agents = loader.create_agents(num_agents, self.station_network)
         
         for agent in agents:
