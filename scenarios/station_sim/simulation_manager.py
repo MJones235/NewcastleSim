@@ -17,6 +17,7 @@ from base.diagnostics import SimulationDiagnostics
 from agent import StationAgent
 from population_loader import PopulationLoader
 from station_network import StationNetwork
+from message_ui import MessageUI
 
 
 class StationSimulationManager(SimulationManagerBase):
@@ -38,6 +39,10 @@ class StationSimulationManager(SimulationManagerBase):
         self.agents_to_spawn = []  # Queue of agents waiting to spawn
         self.spawn_interval = 1.0  # Seconds between spawns
         self.last_spawn_time = -999  # Time of last spawn (start far in past)
+        
+        # Message UI
+        self.message_ui = MessageUI(on_message_callback=self.broadcast_message)
+        self.message_ui.run()
     
     def load_network(self):
         """Load the SUMO network and identify pedestrian infrastructure"""
@@ -64,16 +69,17 @@ class StationSimulationManager(SimulationManagerBase):
         if len(self.agents) % 10 == 0:
             print(f"Added {len(self.agents)} agents...")
     
-    def load_population(self, num_agents: int = 100):
+    def load_population(self, num_agents: int = 100, decision_maker_config: dict = None):
         """
         Load pedestrian population placed randomly in walking areas.
         
         Args:
             num_agents: Number of agents to create
+            decision_maker_config: Configuration for decision makers (e.g., {'evacuation_probability': 0.5})
         """
-        print(f"Loading population of {num_agents} agents...")
+        print(f"Loading population of {num_agents} agents with rule-based decision makers...")
         
-        loader = PopulationLoader()
+        loader = PopulationLoader(decision_maker_config=decision_maker_config)
         agents = loader.create_agents(num_agents, self.station_network)
         
         for agent in agents:
@@ -133,6 +139,12 @@ class StationSimulationManager(SimulationManagerBase):
                 nearest_edge = edge
         
         return nearest_edge
+    
+    def broadcast_message(self, message: str):
+        """Broadcast a message to all agents"""
+        print(f"Broadcasting message to {len(self.agents)} agents: '{message}'")
+        for agent in self.agents.values():
+            agent.receive_message(message)
     
     def get_simulation_statistics(self) -> dict:
         """Get station simulation statistics"""

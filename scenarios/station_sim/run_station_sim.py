@@ -1,6 +1,7 @@
 import traci
 import sumolib
 from simulation_manager import StationSimulationManager
+import decision_maker_configs
 
 use_gui = True
 sumo_binary = sumolib.checkBinary("sumo-gui" if use_gui else "sumo")
@@ -15,7 +16,12 @@ def main():
     )
     sim_manager.load_network()
 
-    sim_manager.load_population(num_agents=500)
+    # Load population with decision makers
+    # Configure evacuation probability: RULE_BASED_DEFAULT, RULE_BASED_HIGH_COMPLIANCE, or RULE_BASED_LOW_COMPLIANCE
+    sim_manager.load_population(
+        num_agents=500,
+        decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
+    )
 
     # Configure SUMO
     sumo_cmd = [
@@ -76,7 +82,6 @@ def main():
         print("\nSimulation interrupted by user")
     finally:
         print("\nSimulation ended")
-        sim_manager.print_status()
         traci.close()
 
 

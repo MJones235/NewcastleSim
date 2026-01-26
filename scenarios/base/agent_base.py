@@ -26,14 +26,14 @@ class AgentBase(ABC):
         self.demographics = demographics or {}
         
         # For receiving events/messages
-        self.messages = []
+        self.messages: list[str] = []  # String array of messages
         self.needs_replan = False
         
         # For diagnostics (set by simulation manager)
         self.diagnostics = None
     
-    def receive_message(self, message: dict):
-        """Receive event notification"""
+    def receive_message(self, message: str):
+        """Receive a message string"""
         self.messages.append(message)
         self.needs_replan = True
     

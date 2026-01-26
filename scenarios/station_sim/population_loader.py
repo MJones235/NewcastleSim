@@ -2,18 +2,25 @@
 Load pedestrian population and place them within station walking areas.
 """
 
-import xml.etree.ElementTree as ET
-import random
 import numpy as np
-from typing import List, Tuple, TYPE_CHECKING
-from shapely.geometry import Polygon, Point
+from typing import List, TYPE_CHECKING
 from agent import StationAgent
+from rule_based_decision_maker import RuleBasedDecisionMaker
 
 if TYPE_CHECKING:
     from station_network import StationNetwork
 
 
 class PopulationLoader:
+    
+    def __init__(self, decision_maker_config: dict = None):
+        """
+        Initialize population loader with decision maker configuration.
+        
+        Args:
+            decision_maker_config: Configuration for rule-based decision makers
+        """
+        self.decision_maker_config = decision_maker_config or {}
         
     def create_agents(self, num_agents: int, station_network: 'StationNetwork') -> List[StationAgent]:
         """
@@ -43,6 +50,9 @@ class PopulationLoader:
             # Ensure speed is positive and reasonable (0.5 - 2.5 m/s)
             walking_speed = max(0.5, min(2.5, walking_speed))
             
+            # Create decision maker for this agent
+            decision_maker = RuleBasedDecisionMaker(self.decision_maker_config)
+            
             agent = StationAgent(
                 agent_id=f"agent_{i}",
                 entrance_edge=entrance_edge,
@@ -50,7 +60,8 @@ class PopulationLoader:
                 route=route,
                 spawn_position=spawn_position,
                 destination_type="platform",
-                walking_speed=walking_speed
+                walking_speed=walking_speed,
+                decision_maker=decision_maker
             )
             
             agents.append(agent)

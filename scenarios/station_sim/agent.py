@@ -13,6 +13,7 @@ import os
 # Add parent directory to path for base imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from base.agent_base import AgentBase
+from base.decision_maker_base import DecisionMakerBase, Decision
 
 
 class AgentState(Enum):
@@ -33,7 +34,8 @@ class StationAgent(AgentBase):
     
     def __init__(self, agent_id: str, entrance_edge: str, 
                  destination: str, route: List[str], spawn_position: float = -1.0,
-                 destination_type: str = "platform", walking_speed: float = 1.34):
+                 destination_type: str = "platform", walking_speed: float = 1.34,
+                 decision_maker: Optional[DecisionMakerBase] = None):
         super().__init__(agent_id)
         
         # Spatial state (station-specific)
@@ -44,6 +46,11 @@ class StationAgent(AgentBase):
         self.destination_type = destination_type  # "platform", "exit"
         self.position = (0.0, 0.0)  # Will be updated from SUMO
         self.walking_speed = walking_speed  # Preferred walking speed in m/s
+        
+        # Decision making
+        self.decision_maker = decision_maker  # Strategy for decision making
+        self.current_decision: Optional[Decision] = None
+        self.is_evacuating = False
         
         # Movement state
         self.state = AgentState.ENTERING
@@ -68,11 +75,7 @@ class StationAgent(AgentBase):
             
             # Set individual desired speed for this pedestrian (JuPedSim parameter)
             traci.person.setSpeed(self.person_id, self.walking_speed)
-            
-            print(f"  Agent {self.id}: route = {' → '.join(self.route)}")
-            print(f"  Destination: busStop {self.destination}")
-            print(f"  Walking speed: {self.walking_speed:.2f} m/s")
-                        
+                                    
             # Stage 1: Walk to platform busStop (via access lane)
             # SUMO will automatically insert an access stage to get from access edge to platform
             traci.person.appendWalkingStage(
@@ -111,12 +114,49 @@ class StationAgent(AgentBase):
         if not self.is_spawned:
             return
         
+        # Process any new messages
+        self.process_messages(sim_time)
+        
         if self.state == AgentState.WALKING:
             self._update_walking(sim_time)
         elif self.state == AgentState.WAITING:
             self._update_waiting(sim_time)
         elif self.state == AgentState.BOARDING:
             self._update_boarding(sim_time)
+    
+    def process_messages(self, sim_time: int):
+        """Process any unprocessed messages using the decision maker"""
+        if not self.messages or not self.decision_maker:
+            return
+        
+        # Process each new message (in practice, you might want to track which are new)
+        for message in self.messages:
+            # Prepare agent state for decision maker
+            agent_state = {
+                'destination': self.destination,
+                'position': self.position,
+                'state': self.state.value,
+                'is_spawned': self.is_spawned,
+                'walking_speed': self.walking_speed
+            }
+            
+            # Prepare context
+            context = {
+                'sim_time': sim_time
+            }
+            
+            # Make decision
+            decision = self.decision_maker.make_decision(message, agent_state, context)
+                        
+            # Handle the decision
+            self.handle_decision(decision)
+            
+    def handle_decision(self, decision: Decision):
+        """Execute the action corresponding to a decision"""
+        self.current_decision = decision
+        
+        if decision == Decision.EVACUATE:
+            self.is_evacuating = True
     
     def _update_walking(self, sim_time: int):
         """Update when agent is walking to destination"""
