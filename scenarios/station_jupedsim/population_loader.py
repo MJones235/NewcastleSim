@@ -98,5 +98,100 @@ def create_agents_in_zone(
     print(f"Created {len([a for a in agent_list if a.initial_zone == zone_name])} agents in zone '{zone_name}'")
 
 
+def create_agents_from_entrances(
+    simulation: jps.Simulation,
+    movement_provider: JuPedSimMovementProvider,
+    entrance_areas: dict,
+    platform_stages: dict,
+    platform_journeys: dict,
+    num_agents: int,
+    agent_list: List[StationAgent]
+) -> None:
+    """
+    Create agents at entrance locations with random platform destinations.
+    
+    Args:
+        simulation: JuPedSim simulation object
+        movement_provider: JuPedSim movement provider
+        entrance_areas: Dictionary of entrance name -> entrance polygon
+        platform_stages: Dictionary of platform name -> stage_id for that platform
+        platform_journeys: Dictionary of platform name -> journey_id for that platform
+        num_agents: Total number of agents to create
+        agent_list: List to append created StationAgent objects to
+    """
+    if not entrance_areas:
+        print("Warning: No entrance areas defined, cannot spawn agents")
+        return
+    
+    if not platform_stages:
+        print("Warning: No platform stages defined, cannot create agents")
+        return
+    
+    # Get list of platform names and stage IDs
+    platform_names = list(platform_stages.keys())
+    
+    # Distribute agents across entrances
+    entrance_names = list(entrance_areas.keys())
+    agents_per_entrance = num_agents // len(entrance_names)
+    remaining = num_agents % len(entrance_names)
+    
+    for idx, entrance_name in enumerate(entrance_names):
+        entrance_polygon = entrance_areas[entrance_name]
+        
+        # Distribute count - give remaining agents to first entrances
+        count = agents_per_entrance + (1 if idx < remaining else 0)
+        
+        if count == 0:
+            continue
+        
+        # Distribute agent positions within entrance area
+        positions = jps.distribute_by_number(
+            polygon=entrance_polygon,
+            number_of_agents=count,
+            distance_to_agents=0.5,
+            distance_to_polygon=0.3,  # Smaller distance for entrance areas
+            seed=42 + idx
+        )
+        
+        # Create each agent
+        for pos in positions:
+            # Assign random platform destination
+            platform_name = np.random.choice(platform_names)
+            platform_stage_id = platform_stages[platform_name]
+            platform_journey_id = platform_journeys[platform_name]
+            
+            # Sample walking speed
+            walking_speed = sample_walking_speed()
+            
+            # Create decision maker
+            evac_prob = np.random.uniform(0.3, 0.7)
+            config = {'evacuation_probability': evac_prob}
+            decision_maker = RuleBasedDecisionMaker(config=config)
+            
+            # Create unified agent
+            agent_id = f"agent_{len(agent_list)}"
+            spawn_params = {
+                'position': pos,
+                'journey_id': platform_journey_id,
+                'stage_id': platform_stage_id
+            }
+            
+            agent = StationAgent(
+                agent_id=agent_id,
+                walking_speed=walking_speed,
+                decision_maker=decision_maker,
+                movement_provider=movement_provider,
+                initial_zone=entrance_name,
+                destination=platform_name,
+                spawn_params=spawn_params
+            )
+            
+            # Spawn in simulation
+            if agent.spawn():
+                agent_list.append(agent)
+        
+        print(f"Created {count} agents at entrance '{entrance_name}'")
+
+
 if __name__ == "__main__":
     print("Population loader module ready")

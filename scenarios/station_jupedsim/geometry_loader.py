@@ -53,6 +53,64 @@ def load_walkable_areas(xml_path: str) -> Dict[str, Polygon]:
     return walkable_areas
 
 
+def load_entrance_areas(xml_path: str) -> Dict[str, Polygon]:
+    """
+    Load entrance areas from SUMO walking_areas.add.xml file.
+    Entrance areas are small zones where agents spawn.
+    
+    Args:
+        xml_path: Path to walking_areas.add.xml
+        
+    Returns:
+        Dictionary mapping entrance names to Shapely Polygon objects
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    
+    entrance_areas = {}
+    
+    for poly in root.findall('.//poly[@type="jupedsim.entrance"]'):
+        poly_id = poly.get('id')
+        entrance_name = poly.get('name', poly_id)
+        shape_str = poly.get('shape')
+        
+        if shape_str:
+            coords = parse_shape_string(shape_str)
+            polygon = Polygon(coords)
+            entrance_areas[entrance_name] = polygon
+            
+    return entrance_areas
+
+
+def load_platform_areas(xml_path: str) -> Dict[str, Polygon]:
+    """
+    Load platform areas from SUMO walking_areas.add.xml file.
+    Platform areas are zones where agents wait (e.g., for trains).
+    
+    Args:
+        xml_path: Path to walking_areas.add.xml
+        
+    Returns:
+        Dictionary mapping platform names to Shapely Polygon objects
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    
+    platform_areas = {}
+    
+    for poly in root.findall('.//poly[@type="jupedsim.platform"]'):
+        poly_id = poly.get('id')
+        platform_name = poly.get('name', poly_id)
+        shape_str = poly.get('shape')
+        
+        if shape_str:
+            coords = parse_shape_string(shape_str)
+            polygon = Polygon(coords)
+            platform_areas[platform_name] = polygon
+            
+    return platform_areas
+
+
 def load_obstacles(xml_path: str) -> List[Polygon]:
     """
     Load obstacle polygons from SUMO walking_areas.add.xml file.
@@ -121,6 +179,11 @@ if __name__ == "__main__":
     for name, polygon in walkable_areas.items():
         print(f"  {name}: {len(polygon.exterior.coords)} vertices, area={polygon.area:.2f}")
     
+    entrance_areas = load_entrance_areas(xml_path)
+    print(f"\nLoaded {len(entrance_areas)} entrance areas:")
+    for name, polygon in entrance_areas.items():
+        print(f"  {name}: {len(polygon.exterior.coords)} vertices, area={polygon.area:.2f}")
+    
     obstacles = load_obstacles(xml_path)
     print(f"\nLoaded {len(obstacles)} obstacles")
     for idx, obs in enumerate(obstacles):
@@ -130,3 +193,4 @@ if __name__ == "__main__":
     print(f"\nAccessible geometry type: {type(accessible).__name__}")
     if excluded:
         print(f"Excluded geometry type: {type(excluded).__name__}")
+

@@ -111,6 +111,30 @@ class StageManager:
         
         return stage_id
     
+    def create_waiting_stage(
+        self,
+        name: str,
+        position: Tuple[float, float],
+        distance: float = 5.0
+    ) -> int:
+        """
+        Create a waiting area (waypoint) at a specific position.
+        Agents will walk to this position and wait (remain there).
+        
+        Args:
+            name: Name for the waiting stage (for tracking)
+            position: (x, y) center position for the waiting area
+            distance: Distance threshold for considering stage reached (agents stop when within this distance)
+            
+        Returns:
+            Stage ID of created waiting stage
+        """
+        # Waypoint takes a position tuple and distance threshold
+        stage_id = self.simulation.add_waypoint_stage(position, distance)
+        self.waypoints[name] = stage_id
+        
+        return stage_id
+    
     def create_journey(
         self,
         journey_name: str,

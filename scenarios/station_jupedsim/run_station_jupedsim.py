@@ -9,13 +9,15 @@ import sys
 import time
 from pathlib import Path
 from typing import List
+import jupedsim as jps
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from simulation import StationSimulation
-from population_loader import create_agents_in_zone
+from population_loader import create_agents_from_entrances
 from movement_jupedsim import JuPedSimMovementProvider
+from geometry_loader import load_entrance_areas, load_platform_areas
 
 # Import common agent
 sys.path.append(str(Path(__file__).parent.parent))
@@ -41,13 +43,42 @@ def main():
     sim = StationSimulation(str(network_path), dt=0.05, output_file=str(trajectory_file))
     print(f"  Trajectory output: {trajectory_file}")
     
-    # Setup stages
-    print("[2/4] Setting up stages...")
-    exit_id = sim.setup_stages()
+    # Load entrance and platform areas
+    walking_areas_file = network_path / "walking_areas.add.xml"
+    entrance_areas = load_entrance_areas(str(walking_areas_file))
+    platform_areas = load_platform_areas(str(walking_areas_file))
+    print(f"Loaded {len(entrance_areas)} entrances, {len(platform_areas)} platforms")
     
-    # Create simple journey (all zones -> exit)
-    journey_id = sim.create_simple_journey('all_zones', exit_id)
-    print(f"Created journey {journey_id}: all zones -> exit")
+    # Setup platform stages (waiting areas at each platform)
+    print("\n[2/4] Setting up platform stages...")
+    platform_stages = {}
+    platform_journeys = {}
+    
+    for platform_name, platform_polygon in platform_areas.items():
+        # Get representative point (guaranteed to be inside polygon, unlike centroid)
+        point = platform_polygon.representative_point()
+        position = (point.x, point.y)
+        
+        # Try to create waiting stage, skip if position is outside walkable area
+        try:
+            stage_id = sim.stage_manager.create_waiting_stage(
+                name=platform_name,
+                position=position
+            )
+            platform_stages[platform_name] = stage_id
+            
+            # Create journey for this platform (single-stage journey to the waypoint)
+            journey = jps.JourneyDescription([stage_id])
+            journey_id = sim.simulation.add_journey(journey)
+            platform_journeys[platform_name] = journey_id
+            
+            print(f"  Created waiting stage for platform '{platform_name}' (stage_id={stage_id}, journey_id={journey_id})")
+        except RuntimeError as e:
+            print(f"  Warning: Skipped platform '{platform_name}' - position outside walkable area")
+    
+    if not platform_stages:
+        print("Error: No valid platform stages created!")
+        return
     
     # Create agents
     print("\n[3/4] Creating agent population...")
@@ -56,31 +87,17 @@ def main():
     # Create movement provider for JuPedSim
     movement_provider = JuPedSimMovementProvider(sim.simulation, sim.zones)
     
-    # Distribute agents across all platforms
-    agent_distribution = {
-        'platform_5_to_7': 15,
-        'platform_3_to_4': 15,
-        'foot_bridge': 10,
-        'entrance': 20
-    }
-    
-    for zone_name, num_agents in agent_distribution.items():
-        if zone_name in sim.zones:
-            zone_polygon = sim.zones[zone_name]
-            create_agents_in_zone(
-                simulation=sim.simulation,
-                movement_provider=movement_provider,
-                zone_name=zone_name,
-                zone_polygon=zone_polygon,
-                num_agents=num_agents,
-                journey_id=journey_id,
-                stage_id=exit_id,
-                agent_list=agents,
-                zones_with_obstacles=sim.zones_with_obstacles,
-                destination="main_exit"
-            )
-        else:
-            print(f"Warning: Zone '{zone_name}' not found")
+    # Create agents at entrances with random platform destinations
+    num_agents = 60
+    create_agents_from_entrances(
+        simulation=sim.simulation,
+        movement_provider=movement_provider,
+        entrance_areas=entrance_areas,
+        platform_stages=platform_stages,
+        platform_journeys=platform_journeys,
+        num_agents=num_agents,
+        agent_list=agents
+    )
     
     print(f"\nTotal agents created: {len(agents)}")
     print(f"JuPedSim agent count: {sim.simulation.agent_count()}")
