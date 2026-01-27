@@ -29,6 +29,7 @@ from typing import List, Optional
 from scenarios.station_jupedsim.simulation import StationSimulation
 from scenarios.station_jupedsim.simulation_setup import setup_evacuation_exits, setup_platform_stages, load_geometry
 from scenarios.station_jupedsim.simulation_runner import SimulationRunner
+from scenarios.station_jupedsim.simulation_observer import GUIObserver, ConsoleObserver
 from scenarios.station_jupedsim.population_loader import create_agents_from_entrances
 from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
 from scenarios.station_jupedsim.event_system import EventManager
@@ -191,24 +192,30 @@ def main(config: Optional[Config] = None) -> int:
             for event in event_manager.events:
                 print(f"  t={event.time:6.1f}s: {event.action} - '{event.value}'")
         
-        # Initialize live viewer if requested
-        viewer = None
+        # Setup observers (GUI and console)
+        observers = []
+        
+        # Add console observer for progress updates
+        observers.append(ConsoleObserver(update_interval=100))
+        
+        # Add GUI observer if requested
         if config.visualization.enable_gui:
             print("\n[GUI] Initializing live viewer...")
             try:
                 viewer = LiveViewer(
-                    walkable_areas=sim.walkable_areas,
+                    walkable_areas=sim.zones,
                     obstacles=sim.obstacles,
                     platform_areas=platform_areas,
                     update_interval=config.visualization.gui_update_interval
                 )
+                gui_observer = GUIObserver(viewer, config.visualization.gui_update_interval)
+                observers.append(gui_observer)
                 print(f"[GUI] Live viewer ready (updating every {config.visualization.gui_update_interval}s)")
             except Exception as e:
                 print(f"WARNING: Failed to initialize GUI: {e}")
                 print("Continuing without live visualization...")
-                viewer = None
         
-        # Create simulation runner
+        # Create simulation runner with observers
         print("\n[5/5] Running simulation...")
         try:
             runner = SimulationRunner(
@@ -216,18 +223,15 @@ def main(config: Optional[Config] = None) -> int:
                 agents=agents,
                 event_manager=event_manager,
                 max_iterations=config.simulation.max_iterations,
-                spawn_interval=config.simulation.spawn_interval
+                spawn_interval=config.simulation.spawn_interval,
+                observers=observers
             )
         except Exception as e:
             raise SimulationError(f"Failed to create simulation runner: {e}")
         
         # Run simulation
         try:
-            stats = runner.run(
-                enable_gui=config.visualization.enable_gui,
-                gui_update_interval=config.visualization.gui_update_interval,
-                viewer=viewer
-            )
+            stats = runner.run()
         except KeyboardInterrupt:
             print("\n\nSimulation interrupted by user")
             return 1

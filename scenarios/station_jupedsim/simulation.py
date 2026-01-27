@@ -46,7 +46,7 @@ class StationSimulation:
             raise FileNotFoundError(f"Network path does not exist: {network_path}")
         
         # Load and process geometry
-        self.zones, self.zones_with_obstacles = self._load_and_process_geometry()
+        self.zones, self.zones_with_obstacles, self.obstacles = self._load_and_process_geometry()
         
         # Create JuPedSim simulation
         self.simulation = self._create_jupedsim_simulation()
@@ -60,12 +60,12 @@ class StationSimulation:
         # Iteration counter
         self.iteration = 0
     
-    def _load_and_process_geometry(self) -> Tuple[Dict[str, Polygon], Dict[str, Polygon]]:
+    def _load_and_process_geometry(self) -> Tuple[Dict[str, Polygon], Dict[str, Polygon], List[Polygon]]:
         """
         Load geometry from network files and integrate obstacles.
         
         Returns:
-            Tuple of (original zones dict, processed zones dict with obstacles)
+            Tuple of (original zones dict, processed zones dict with obstacles, obstacles list)
             
         Raises:
             FileNotFoundError: If required files are missing
@@ -99,7 +99,7 @@ class StationSimulation:
         print(f"Loaded geometry: {len(walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
         print(f"Obstacles integrated as polygon holes")
         
-        return walkable_areas, zones_with_obstacles
+        return walkable_areas, zones_with_obstacles, fixed_obstacles
     
     def _create_jupedsim_simulation(self) -> jps.Simulation:
         """

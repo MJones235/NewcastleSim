@@ -1,6 +1,7 @@
 """
 Main simulation runner for JuPedSim station simulation.
-Handles the simulation loop, event processing, and GUI updates.
+Handles the simulation loop, event processing, and observer notifications.
+Uses observer pattern to decouple GUI and other output mechanisms.
 """
 
 import time
@@ -10,11 +11,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from scenarios.station_jupedsim.event_system import EventManager
-from scenarios.station_jupedsim.visualization.live_viewer import LiveViewer
+from scenarios.station_jupedsim.simulation_observer import SimulationObserver
 
 
 class SimulationRunner:
-    """Manages the main simulation execution loop."""
+    """Manages the main simulation execution loop with observer pattern."""
     
     def __init__(
         self,
@@ -22,7 +23,8 @@ class SimulationRunner:
         agents: List,
         event_manager: EventManager,
         max_iterations: int = 3600,
-        spawn_interval: float = 2.0
+        spawn_interval: float = 2.0,
+        observers: Optional[List[SimulationObserver]] = None
     ):
         """
         Initialize simulation runner.
@@ -33,12 +35,14 @@ class SimulationRunner:
             event_manager: EventManager for handling timed events
             max_iterations: Maximum simulation iterations
             spawn_interval: Time between agent spawns in seconds
+            observers: Optional list of SimulationObserver instances
         """
         self.sim = sim
         self.agents = agents
         self.event_manager = event_manager
         self.max_iterations = max_iterations
         self.spawn_interval = spawn_interval
+        self.observers = observers or []
         
         # Queue agents for spawning - randomize order so entrances are mixed
         self.agents_to_spawn = list(agents)
@@ -49,29 +53,19 @@ class SimulationRunner:
         self.last_event_message = None
         self.last_event_time = -100.0
         
-    def run(
-        self,
-        enable_gui: bool = False,
-        gui_update_interval: float = 1.0,
-        viewer: Optional[LiveViewer] = None
-    ) -> dict:
+    def run(self) -> dict:
         """
         Execute the main simulation loop.
-        
-        Args:
-            enable_gui: Whether GUI is enabled
-            gui_update_interval: GUI update frequency in seconds
-            viewer: Optional LiveViewer instance
             
         Returns:
             Dictionary with simulation statistics
         """
-        print("\n[5/5] Running simulation...")
-        print("Press Ctrl+C to stop\n")
+        # Notify observers simulation is starting
+        for observer in self.observers:
+            observer.on_simulation_start(len(self.agents))
         
         # Start timer for real execution time
         start_time = time.time()
-        last_gui_update = 0.0
         
         try:
             while self.sim.iteration < self.max_iterations:
@@ -96,7 +90,7 @@ class SimulationRunner:
                 # Check and trigger events
                 triggered_events = self.event_manager.check_and_trigger_events(sim_time, self.agents)
                 
-                # Store latest event message for GUI display
+                # Store latest event message for observer notifications
                 if triggered_events:
                     self.last_event_message = triggered_events[-1].value
                     self.last_event_time = sim_time
@@ -106,46 +100,56 @@ class SimulationRunner:
                     if agent.is_spawned:
                         agent.update(sim_time)
                 
-                # Print progress every 100 steps (5 seconds)
-                if self.sim.iteration % 100 == 0:
-                    spawned_count = sum(1 for a in self.agents if a.is_spawned)
-                    print(f"t={sim_time:6.2f}s  agents={agent_count:3d}  spawned={spawned_count:3d}/{len(self.agents)}")
-                
-                # Update GUI at specified interval
-                if viewer and (sim_time - last_gui_update) >= gui_update_interval:
+                # Notify observers of simulation step
+                if self.observers:
                     # Get current agent positions directly from JuPedSim
                     agent_positions = []
                     for agent in self.sim.simulation.agents():
                         pos = agent.position
                         agent_positions.append((pos[0], pos[1]))
                     
-                    # Pass event message if it was recently triggered (within 5 seconds)
+                    # Prepare metadata
                     event_message = None
                     if self.last_event_message and (sim_time - self.last_event_time) < 5.0:
                         event_message = self.last_event_message
                     
-                    viewer.update(agent_positions, sim_time, agent_count, event_message)
-                    last_gui_update = sim_time
+                    spawned_count = sum(1 for a in self.agents if a.is_spawned)
+                    metadata = {
+                        'event_message': event_message,
+                        'spawned_count': spawned_count,
+                        'total_agents': len(self.agents)
+                    }
+                    
+                    for observer in self.observers:
+                        observer.on_simulation_step(
+                            sim_time, 
+                            self.sim.iteration,
+                            agent_count, 
+                            agent_positions,
+                            metadata
+                        )
                     
         except KeyboardInterrupt:
             print("\n\nSimulation interrupted by user")
-        finally:
-            # Close GUI if open
-            if viewer:
-                viewer.close()
         
         # Calculate statistics
         end_time = time.time()
         real_time_elapsed = end_time - start_time
         simulated_time = self.sim.get_simulation_time()
         
-        return {
+        stats = {
             'iterations': self.sim.iteration,
             'simulated_time': simulated_time,
             'real_time': real_time_elapsed,
             'remaining_agents': self.sim.simulation.agent_count(),
             'total_agents': len(self.agents)
         }
+        
+        # Notify observers simulation ended
+        for observer in self.observers:
+            observer.on_simulation_end(stats)
+        
+        return stats
     
     def save_events(self, output_dir: Path):
         """
