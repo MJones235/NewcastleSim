@@ -16,23 +16,53 @@ if str(project_root) not in sys.path:
 
 # Now import and run the main function
 from scenarios.station_jupedsim.run_station_jupedsim import main
+from scenarios.station_jupedsim.config import Config, load_config
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Run JuPedSim station simulation')
-    parser.add_argument('--gui', action='store_true', help='Enable real-time GUI visualization')
-    parser.add_argument('--gui-interval', type=float, default=1.0, 
-                        help='GUI update interval in seconds (default: 1.0)')
     
-    # Default to events.csv if it exists
-    scenario_dir = project_root / "scenarios" / "station_jupedsim"
-    default_events_file = scenario_dir / "events.csv"
-    default_events = str(default_events_file) if default_events_file.exists() else None
+    # Configuration file
+    parser.add_argument('--config', type=str, 
+                        help='Path to YAML configuration file (default: uses built-in defaults)')
     
-    parser.add_argument('--events', type=str, default=default_events,
-                        help=f'Path to events CSV file for mid-simulation injections (default: {default_events})')
+    # Override options
+    parser.add_argument('--gui', action='store_true', 
+                        help='Enable real-time GUI visualization (overrides config)')
+    parser.add_argument('--no-gui', action='store_true',
+                        help='Disable real-time GUI visualization (overrides config)')
+    parser.add_argument('--num-agents', type=int,
+                        help='Number of agents to create (overrides config)')
+    parser.add_argument('--events', type=str,
+                        help='Path to events CSV file (overrides config)')
     
     args = parser.parse_args()
     
-    main(enable_gui=args.gui, gui_update_interval=args.gui_interval, events_file=args.events)
+    # Load configuration
+    if args.config:
+        config = load_config(args.config)
+    else:
+        # Try to load default config.yaml if it exists
+        default_config = project_root / "scenarios" / "station_jupedsim" / "config.yaml"
+        config = load_config(str(default_config) if default_config.exists() else None)
+    
+    # Apply command-line overrides
+    if args.gui:
+        config.visualization.enable_gui = True
+    if args.no_gui:
+        config.visualization.enable_gui = False
+    if args.num_agents:
+        config.simulation.num_agents = args.num_agents
+    if args.events:
+        config.paths.events_file = args.events
+    
+    # Validate configuration
+    try:
+        config.validate()
+    except Exception as e:
+        print(f"Configuration error: {e}")
+        sys.exit(1)
+    
+    # Run simulation
+    sys.exit(main(config))

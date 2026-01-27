@@ -14,7 +14,8 @@ from scenarios.station_jupedsim.geometry import load_entrance_areas, load_platfo
 
 def setup_evacuation_exits(
     sim: StationSimulation,
-    entrance_areas: Dict[str, any]
+    entrance_areas: Dict[str, any],
+    exit_radius: float = 10.0
 ) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
     Create evacuation exit stages at entrance locations.
@@ -22,6 +23,7 @@ def setup_evacuation_exits(
     Args:
         sim: StationSimulation instance
         entrance_areas: Dictionary of entrance name -> polygon
+        exit_radius: Radius of circular exits in meters (default: 10.0)
         
     Returns:
         Tuple of (evacuation_exits, evacuation_journeys) dictionaries
@@ -45,7 +47,7 @@ def setup_evacuation_exits(
             position = (point.x, point.y)
             
             # Create circular exit (circles are convex)
-            exit_polygon = Point(position).buffer(10.0)  # 10m radius exit area
+            exit_polygon = Point(position).buffer(exit_radius)
             
             exit_id = sim.simulation.add_exit_stage(polygon=exit_polygon)
             evacuation_exits[entrance_name] = exit_id

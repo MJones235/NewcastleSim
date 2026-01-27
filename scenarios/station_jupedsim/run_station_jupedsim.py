@@ -17,6 +17,7 @@ from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvide
 from scenarios.station_jupedsim.event_system import EventManager
 from scenarios.station_jupedsim.visualization.live_viewer import LiveViewer
 from scenarios.common.station_agent import StationAgent
+from scenarios.station_jupedsim.config import Config, load_config
 
 
 class SimulationError(Exception):
@@ -24,18 +25,25 @@ class SimulationError(Exception):
     pass
 
 
-def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file: Optional[str] = None) -> int:
+def main(config: Optional[Config] = None) -> int:
     """Main simulation setup and execution.
+    
+    Args:
+        config: Configuration object. If None, uses defaults.
     
     Returns:
         0 on success, 1 on error
     """
     
+    # Use provided config or load defaults
+    if config is None:
+        config = Config()
+    
     try:
         # Setup paths
         scenario_dir = Path(__file__).parent
-        network_path = scenario_dir / ".." / "station_sim" / "network"
-        output_dir = scenario_dir / "output"
+        network_path = Path(config.paths.network_dir)
+        output_dir = Path(config.paths.output_dir)
         
         # Validate network path exists
         if not network_path.exists():
@@ -62,7 +70,11 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         # Initialize simulation
         print("\n[1/5] Initializing simulation...")
         try:
-            sim = StationSimulation(str(network_path), dt=0.05, output_file=str(trajectory_file))
+            sim = StationSimulation(
+                str(network_path), 
+                dt=config.simulation.dt, 
+                output_file=str(trajectory_file)
+            )
         except FileNotFoundError as e:
             raise SimulationError(f"Failed to load network files: {e}")
         except Exception as e:
@@ -86,7 +98,11 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         # Setup evacuation exits at entrances
         print("\n[3/5] Setting up evacuation exits...")
         try:
-            evacuation_exits, evacuation_journeys = setup_evacuation_exits(sim, entrance_areas)
+            evacuation_exits, evacuation_journeys = setup_evacuation_exits(
+                sim, 
+                entrance_areas,
+                exit_radius=config.simulation.exit_radius
+            )
             if not evacuation_exits:
                 raise SimulationError("Failed to create any evacuation exits")
         except Exception as e:
@@ -115,7 +131,6 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         movement_provider.evacuation_exits = evacuation_exits
         
         # Create agents at entrances with random platform destinations (but don't spawn yet)
-        num_agents = 60
         try:
             create_agents_from_entrances(
                 simulation=sim.simulation,
@@ -124,7 +139,7 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
                 platform_stages=platform_stages,
                 platform_journeys=platform_journeys,
                 platform_areas=platform_areas,
-                num_agents=num_agents,
+                num_agents=config.simulation.num_agents,
                 agent_list=agents,
                 spawn_immediately=False  # Don't spawn agents yet
             )
@@ -139,7 +154,7 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         
         # Initialize event manager
         try:
-            event_manager = EventManager(events_file)
+            event_manager = EventManager(config.paths.events_file)
         except FileNotFoundError as e:
             raise SimulationError(f"Events file not found: {e}")
         except Exception as e:
@@ -151,16 +166,16 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         
         # Initialize live viewer if requested
         viewer = None
-        if enable_gui:
+        if config.visualization.enable_gui:
             print("\n[GUI] Initializing live viewer...")
             try:
                 viewer = LiveViewer(
                     walkable_areas=sim.walkable_areas,
                     obstacles=sim.obstacles,
                     platform_areas=platform_areas,
-                    update_interval=gui_update_interval
+                    update_interval=config.visualization.gui_update_interval
                 )
-                print(f"[GUI] Live viewer ready (updating every {gui_update_interval}s)")
+                print(f"[GUI] Live viewer ready (updating every {config.visualization.gui_update_interval}s)")
             except Exception as e:
                 print(f"WARNING: Failed to initialize GUI: {e}")
                 print("Continuing without live visualization...")
@@ -173,8 +188,8 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
                 sim=sim,
                 agents=agents,
                 event_manager=event_manager,
-                max_iterations=3600,
-                spawn_interval=2.0
+                max_iterations=config.simulation.max_iterations,
+                spawn_interval=config.simulation.spawn_interval
             )
         except Exception as e:
             raise SimulationError(f"Failed to create simulation runner: {e}")
@@ -182,8 +197,8 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file
         # Run simulation
         try:
             stats = runner.run(
-                enable_gui=enable_gui,
-                gui_update_interval=gui_update_interval,
+                enable_gui=config.visualization.enable_gui,
+                gui_update_interval=config.visualization.gui_update_interval,
                 viewer=viewer
             )
         except KeyboardInterrupt:

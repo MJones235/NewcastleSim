@@ -1,0 +1,21 @@
+# Example Configuration: Small Test Simulation
+# Faster simulation with fewer agents for testing
+
+simulation:
+  dt: 0.05
+  max_iterations: 1200  # 60 seconds at dt=0.05
+  num_agents: 20  # Fewer agents for faster testing
+  spawn_interval: 1.0  # Faster spawning
+  exit_radius: 8.0  # Slightly smaller exits
+  trajectory_frame_interval: 4
+
+visualization:
+  enable_gui: false
+  gui_update_interval: 0.5  # Faster updates
+  animation_interval: 50
+  event_popup_duration: 5.0
+
+paths:
+  network_dir: scenarios/station_sim/network
+  output_dir: scenarios/station_jupedsim/output
+  events_file: null  # No events for quick testing
