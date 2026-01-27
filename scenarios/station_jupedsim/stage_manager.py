@@ -1,7 +1,16 @@
 """
 Stage management for JuPedSim simulations.
 
-Handles creation of exits, waypoints, and journeys.
+Handles creation of exits, waypoints, and journeys for routing agents through space.
+Provides a higher-level API for managing JuPedSim stages and journeys.
+
+Stages in JuPedSim:
+    - Exits: Terminal stages where agents leave the simulation
+    - Waypoints: Intermediate stages where agents pass through or wait
+    
+Journeys:
+    - Sequences of stages that define an agent's path through the simulation
+    - Agents follow journeys and can be switched to different journeys dynamically
 """
 
 import jupedsim as jps
@@ -174,13 +183,37 @@ class StageManager:
         return self.create_journey(journey_name, [exit_id])
     
     def get_exit_id(self, exit_name: str) -> int:
-        """Get stage ID for a named exit."""
+        """
+        Get stage ID for a named exit.
+        
+        Args:
+            exit_name: Name of the exit to retrieve
+            
+        Returns:
+            Stage ID, or None if exit not found
+        """
         return self.exits.get(exit_name)
     
     def get_waypoint_id(self, waypoint_name: str) -> int:
-        """Get stage ID for a named waypoint."""
+        """
+        Get stage ID for a named waypoint.
+        
+        Args:
+            waypoint_name: Name of the waypoint to retrieve
+            
+        Returns:
+            Stage ID, or None if waypoint not found
+        """
         return self.waypoints.get(waypoint_name)
     
     def get_journey_id(self, journey_name: str) -> int:
-        """Get journey ID for a named journey."""
+        """
+        Get journey ID for a named journey.
+        
+        Args:
+            journey_name: Name of the journey to retrieve
+            
+        Returns:
+            Journey ID, or None if journey not found
+        """
         return self.journeys.get(journey_name)

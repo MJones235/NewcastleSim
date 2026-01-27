@@ -1,5 +1,11 @@
 """
 Population loader for JuPedSim station simulation.
+Provides functions to create and spawn StationAgent instances in JuPedSim simulations.
+Supports both immediate spawning (agents created at t=0) and gradual spawning
+(agents created over time as simulation runs).
+
+Key Functions:
+    - create_agents_from_entrances: Create agents at entrance locations with
 """
 
 import jupedsim as jps
@@ -10,81 +16,6 @@ from scenarios.common.station_agent import StationAgent
 from scenarios.common.walking_speed import sample_walking_speed
 from scenarios.common.decision_makers.rule_based import RuleBasedDecisionMaker
 from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
-
-
-def create_agents_in_zone(
-    simulation: jps.Simulation,
-    movement_provider: JuPedSimMovementProvider,
-    zone_name: str,
-    zone_polygon,
-    num_agents: int,
-    journey_id: int,
-    stage_id: int,
-    agent_list: List[StationAgent],
-    zones_with_obstacles: dict = None,
-    destination: str = "exit"
-) -> None:
-    """
-    Create agents in a specific zone using unified StationAgent.
-    
-    Args:
-        simulation: JuPedSim simulation object
-        movement_provider: JuPedSim movement provider
-        zone_name: Name of the zone
-        zone_polygon: Shapely polygon defining the zone
-        num_agents: Number of agents to create
-        journey_id: Journey ID for these agents
-        stage_id: Initial stage ID
-        agent_list: List to append created StationAgent objects to
-        zones_with_obstacles: Optional dict of zone name -> polygon with obstacles cut out
-        destination: Destination name for agents
-    """
-    # Distribute agent positions within the zone
-    if zones_with_obstacles and zone_name in zones_with_obstacles:
-        distribution_polygon = zones_with_obstacles[zone_name]
-    else:
-        distribution_polygon = zone_polygon
-    
-    positions = jps.distribute_by_number(
-        polygon=distribution_polygon,
-        number_of_agents=num_agents,
-        distance_to_agents=0.5,
-        distance_to_polygon=0.5,
-        seed=42
-    )
-    
-    # Create each agent using unified StationAgent
-    for pos in positions:
-        # Sample walking speed
-        walking_speed = sample_walking_speed()
-        
-        # Create decision maker
-        decision_maker = RuleBasedDecisionMaker(config={'evacuation_probability': 0.5})
-        
-        # Create unified agent
-        agent_id = f"agent_{len(agent_list)}"
-        spawn_params = {
-            'position': pos,
-            'journey_id': journey_id,
-            'stage_id': stage_id
-        }
-        
-        agent = StationAgent(
-            agent_id=agent_id,
-            walking_speed=walking_speed,
-            decision_maker=decision_maker,
-            movement_provider=movement_provider,
-            initial_zone=zone_name,
-            destination=destination,
-            spawn_params=spawn_params
-        )
-        
-        # Spawn in simulation
-        if agent.spawn():
-            agent_list.append(agent)
-        
-    print(f"Created {len([a for a in agent_list if a.initial_zone == zone_name])} agents in zone '{zone_name}'")
-
 
 def create_agents_from_entrances(
     simulation: jps.Simulation,

@@ -1,6 +1,15 @@
 """
 JuPedSim-specific movement provider.
+
 Handles spawning, positioning, and routing for JuPedSim simulations.
+Implements the MovementProvider interface for JuPedSim pedestrian dynamics.
+
+This provider manages:
+    - Agent spawning with position and journey assignment
+    - Position queries and updates from JuPedSim simulation
+    - Journey/stage switching for agent rerouting
+    - Agent lifecycle (active checking, removal)
+    - Zone-based location queries
 """
 
 import jupedsim as jps
@@ -184,41 +193,37 @@ class JuPedSimMovementProvider(MovementProvider):
     
     def get_agent_location_info(self, agent: Any) -> Dict[str, Any]:
         """
-        Get detailed location information from JuPedSim.
+        Get agent's current position from JuPedSim.
         
         Args:
             agent: StationAgent with jps_agent_id
             
         Returns:
-            Dictionary with zone, position, etc.
+            Dictionary with position (x, y) tuple
         """
         if not hasattr(agent, 'jps_agent_id'):
-            return {'zone': 'unknown'}
+            return {'position': (0.0, 0.0)}
         
         try:
             position = self.simulation.agent_position(agent.jps_agent_id)
-            
-            # Determine which zone contains this position
-            from shapely.geometry import Point
-            point = Point(position[0], position[1])
-            
-            for zone_name, polygon in self.zones.items():
-                if polygon.contains(point):
-                    return {
-                        'zone': zone_name,
-                        'position': position
-                    }
-            
-            return {
-                'zone': 'unknown',
-                'position': position
-            }
+            return {'position': (position[0], position[1])}
         except:
-            return {'zone': 'unknown'}
+            return {'position': agent.position if hasattr(agent, 'position') else (0.0, 0.0)}
     
     def reroute_to_evacuation_exit(self, agent: Any, exit_name: str) -> bool:
         """
-        Reroute an agent to an evacuation exit.
+        Reroute agent to a specific evacuation exit.
+        
+        Switches the agent's journey to one that leads directly to the named exit.
+        Requires that evacuation journeys have been configured via the
+        evacuation_journeys dictionary.
+        
+        Args:
+            agent: StationAgent to reroute
+            exit_name: Name of evacuation exit to route to
+            
+        Returns:
+            True if successfully rerouted, False otherwise
         
         Args:
             agent: StationAgent to reroute

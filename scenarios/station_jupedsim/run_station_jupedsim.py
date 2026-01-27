@@ -1,7 +1,24 @@
 """
 Run the JuPedSim station simulation.
 
-This is the main entry point for the standalone JuPedSim implementation.
+This is the main orchestration script for the standalone JuPedSim implementation.
+Handles the complete simulation lifecycle from setup through execution to visualization.
+
+Workflow:
+    1. Load configuration (from YAML or defaults)
+    2. Initialize JuPedSim simulation with network geometry
+    3. Setup evacuation exits and platform stages
+    4. Create agent population with decision-making capabilities
+    5. Run simulation with gradual spawning and event system
+    6. Generate visualization of results
+
+Usage:
+    Called from run_jupedsim_station.py in project root:
+        python run_jupedsim_station.py --gui --events events.csv
+        
+Note:
+    This module should not be run directly. Use run_jupedsim_station.py
+    which properly handles Python path setup.
 """
 
 import argparse
@@ -28,11 +45,21 @@ class SimulationError(Exception):
 def main(config: Optional[Config] = None) -> int:
     """Main simulation setup and execution.
     
+    Orchestrates the complete simulation workflow:
+    1. Initialize JuPedSim simulation with geometry
+    2. Load entrance and platform geometry
+    3. Setup evacuation exits and platform stages
+    4. Create agent population with movement provider
+    5. Run simulation with event system and optional GUI
+    
     Args:
         config: Configuration object. If None, uses defaults.
     
     Returns:
         0 on success, 1 on error
+        
+    Raises:
+        SimulationError: For any simulation setup or execution errors
     """
     
     # Use provided config or load defaults
@@ -232,7 +259,18 @@ def main(config: Optional[Config] = None) -> int:
 
 
 def print_summary(stats: dict, trajectory_file: Path):
-    """Print simulation summary statistics."""
+    """Print simulation summary statistics.
+    
+    Displays key metrics about the completed simulation including:
+    - Total iterations and simulation time
+    - Real execution time and speed factor
+    - Agent statistics (remaining, exited)
+    - Output file location
+    
+    Args:
+        stats: Dictionary containing simulation statistics from runner
+        trajectory_file: Path to the trajectory output database
+    """
     print("\n" + "=" * 60)
     print("Simulation Complete")
     print("=" * 60)
@@ -247,7 +285,16 @@ def print_summary(stats: dict, trajectory_file: Path):
 
 
 def launch_visualization(trajectory_file: Path, network_path: Path):
-    """Launch post-run visualization."""
+    """Launch post-run visualization of simulation results.
+    
+    Attempts to automatically start the trajectory visualization tool
+    to replay the completed simulation. Falls back to printing manual
+    instructions if automatic launch fails.
+    
+    Args:
+        trajectory_file: Path to the trajectory database file
+        network_path: Path to the network directory with geometry files
+    """
     print("\n" + "=" * 60)
     print("Launching Visualization")
     print("=" * 60)

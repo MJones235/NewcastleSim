@@ -3,6 +3,13 @@ Event injection system for JuPedSim station simulation.
 
 Allows events to be triggered at specific simulation times to influence agent behavior.
 Events are loaded from a CSV file with format: time, action, value
+
+Supported Event Actions:
+    - broadcast_to_all: Send a message to all active agents (e.g., evacuation order)
+    
+Example CSV Format:
+    # time,action,value
+    30.0,broadcast_to_all,Evacuate the station immediately
 """
 
 import csv
@@ -98,7 +105,15 @@ class EventManager:
         print(f"Loaded {len(self.events)} events from {events_file}")
     
     def _parse_event_row(self, row: List[str]):
-        """Parse a single event row from CSV."""
+        """
+        Parse a single event row from CSV and add to events list.
+        
+        Handles malformed rows gracefully by logging warnings.
+        Strips quotes from values and validates event data.
+        
+        Args:
+            row: List of strings from CSV reader (time, action, value)
+        """
         if len(row) < 3:
             print(f"WARNING: Skipping malformed event row (need 3 columns): {row}")
             return
