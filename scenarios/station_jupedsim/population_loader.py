@@ -5,19 +5,11 @@ Population loader for JuPedSim station simulation.
 import jupedsim as jps
 import numpy as np
 from typing import List
-from pathlib import Path
-import sys
 
-# Import from parent modules
-sys.path.append(str(Path(__file__).parent.parent))
-from common.station_agent import StationAgent
-from common.walking_speed import sample_walking_speed
-from common.decision_makers.rule_based import RuleBasedDecisionMaker
-
-try:
-    from .movement_jupedsim import JuPedSimMovementProvider
-except ImportError:
-    from movement_jupedsim import JuPedSimMovementProvider
+from scenarios.common.station_agent import StationAgent
+from scenarios.common.walking_speed import sample_walking_speed
+from scenarios.common.decision_makers.rule_based import RuleBasedDecisionMaker
+from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
 
 
 def create_agents_in_zone(

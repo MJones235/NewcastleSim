@@ -4,25 +4,18 @@ Run the JuPedSim station simulation.
 This is the main entry point for the standalone JuPedSim implementation.
 """
 
-import sys
 import argparse
 from pathlib import Path
 from typing import List
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
-
-from simulation import StationSimulation
-from simulation_setup import setup_evacuation_exits, setup_platform_stages, load_geometry
-from simulation_runner import SimulationRunner
-from population_loader import create_agents_from_entrances
-from movement_jupedsim import JuPedSimMovementProvider
-from event_system import EventManager
-from visualization import LiveViewer
-
-# Import common agent
-sys.path.append(str(Path(__file__).parent.parent))
-from common.station_agent import StationAgent
+from scenarios.station_jupedsim.simulation import StationSimulation
+from scenarios.station_jupedsim.simulation_setup import setup_evacuation_exits, setup_platform_stages, load_geometry
+from scenarios.station_jupedsim.simulation_runner import SimulationRunner
+from scenarios.station_jupedsim.population_loader import create_agents_from_entrances
+from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
+from scenarios.station_jupedsim.event_system import EventManager
+from scenarios.station_jupedsim.visualization.live_viewer import LiveViewer
+from scenarios.common.station_agent import StationAgent
 
 
 def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file: str = None):
@@ -160,19 +153,10 @@ def launch_visualization(trajectory_file: Path, network_path: Path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run JuPedSim station simulation')
-    parser.add_argument('--gui', action='store_true', help='Enable real-time GUI visualization')
-    parser.add_argument('--gui-interval', type=float, default=1.0, 
-                        help='GUI update interval in seconds (default: 1.0)')
-    
-    # Default to events.csv if it exists
-    scenario_dir = Path(__file__).parent
-    default_events_file = scenario_dir / "events.csv"
-    default_events = str(default_events_file) if default_events_file.exists() else None
-    
-    parser.add_argument('--events', type=str, default=default_events,
-                        help=f'Path to events CSV file for mid-simulation injections (default: {default_events})')
-    
-    args = parser.parse_args()
-    
-    main(enable_gui=args.gui, gui_update_interval=args.gui_interval, events_file=args.events)
+    # This module can be imported, but for standalone execution,
+    # use the run_jupedsim_station.py script in the project root instead.
+    # That script properly handles Python path setup.
+    print("ERROR: Please run from project root using:")
+    print("  python run_jupedsim_station.py [--gui] [--events events.csv]")
+    import sys
+    sys.exit(1)

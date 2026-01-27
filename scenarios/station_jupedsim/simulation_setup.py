@@ -8,8 +8,8 @@ from pathlib import Path
 from shapely.geometry import Point
 from typing import Dict, Tuple
 
-from simulation import StationSimulation
-from geometry import load_entrance_areas, load_platform_areas
+from scenarios.station_jupedsim.simulation import StationSimulation
+from scenarios.station_jupedsim.geometry import load_entrance_areas, load_platform_areas
 
 
 def setup_evacuation_exits(

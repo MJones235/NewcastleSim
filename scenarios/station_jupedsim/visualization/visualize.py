@@ -9,17 +9,9 @@ import sqlite3
 import numpy as np
 import json
 from pathlib import Path
-import sys
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from geometry import load_walkable_areas, load_obstacles, load_platform_areas
-
-try:
-    from .viewer_common import draw_geometry, set_axis_limits
-except ImportError:
-    from viewer_common import draw_geometry, set_axis_limits
+from scenarios.station_jupedsim.geometry import load_walkable_areas, load_obstacles, load_platform_areas
+from scenarios.station_jupedsim.visualization.viewer_common import draw_geometry, set_axis_limits
 
 
 def load_trajectory_data(db_path):

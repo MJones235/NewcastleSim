@@ -9,8 +9,8 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
-from event_system import EventManager
-from visualization import LiveViewer
+from scenarios.station_jupedsim.event_system import EventManager
+from scenarios.station_jupedsim.visualization.live_viewer import LiveViewer
 
 
 class SimulationRunner:

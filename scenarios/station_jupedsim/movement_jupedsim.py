@@ -5,11 +5,8 @@ Handles spawning, positioning, and routing for JuPedSim simulations.
 
 import jupedsim as jps
 from typing import Any, Dict, Tuple
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from base.movement_provider import MovementProvider
+from scenarios.base.movement_provider import MovementProvider
 
 
 class JuPedSimMovementProvider(MovementProvider):
