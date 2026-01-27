@@ -10,12 +10,10 @@ from typing import Dict
 from shapely.geometry import Point
 
 try:
-    from .geometry_loader import load_walkable_areas, load_obstacles
-    from .geometry_processor import GeometryProcessor
+    from .geometry import load_walkable_areas, load_obstacles, GeometryProcessor
     from .stage_manager import StageManager
 except ImportError:
-    from geometry_loader import load_walkable_areas, load_obstacles
-    from geometry_processor import GeometryProcessor
+    from geometry import load_walkable_areas, load_obstacles, GeometryProcessor
     from stage_manager import StageManager
 
 

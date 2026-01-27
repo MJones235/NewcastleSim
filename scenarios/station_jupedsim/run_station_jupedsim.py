@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from simulation import StationSimulation
 from population_loader import create_agents_from_entrances
 from movement_jupedsim import JuPedSimMovementProvider
-from geometry_loader import load_entrance_areas, load_platform_areas
-from live_viewer import LiveViewer
+from geometry import load_entrance_areas, load_platform_areas
+from visualization import LiveViewer
 
 # Import common agent
 sys.path.append(str(Path(__file__).parent.parent))
@@ -210,12 +210,12 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
     print("=" * 60)
     
     try:
-        import visualize
+        from visualization import visualize
         visualize.visualize_simulation(str(trajectory_file), str(network_path))
     except Exception as e:
         print(f"Could not launch visualization: {e}")
         print("\nTo visualize manually, run:")
-        print(f"  .venv/bin/python scenarios/station_jupedsim/visualize.py {trajectory_file}")
+        print(f"  .venv/bin/python scenarios/station_jupedsim/visualization/visualize.py {trajectory_file}")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,13 @@ from matplotlib.animation import FuncAnimation
 import sqlite3
 import numpy as np
 from pathlib import Path
-from geometry_loader import load_walkable_areas, load_obstacles, load_platform_areas
-from viewer_common import draw_geometry, set_axis_limits
+import sys
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from geometry import load_walkable_areas, load_obstacles, load_platform_areas
+from .viewer_common import draw_geometry, set_axis_limits
 
 
 def load_trajectory_data(db_path):

@@ -11,7 +11,7 @@ from shapely.geometry import Polygon
 from typing import Dict, List, Optional
 import numpy as np
 
-from viewer_common import draw_geometry, set_axis_limits
+from .viewer_common import draw_geometry, set_axis_limits
 
 
 class LiveViewer:
