@@ -10,7 +10,8 @@ Key Functions:
 
 import jupedsim as jps
 import numpy as np
-from typing import List
+from typing import List, Dict, Any
+from shapely.geometry import Polygon
 
 from scenarios.common.station_agent import StationAgent
 from scenarios.common.walking_speed import sample_walking_speed
@@ -20,10 +21,10 @@ from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvide
 def create_agents_from_entrances(
     simulation: jps.Simulation,
     movement_provider: JuPedSimMovementProvider,
-    entrance_areas: dict,
-    platform_stages: dict,
-    platform_journeys: dict,
-    platform_areas: dict,
+    entrance_areas: Dict[str, Polygon],
+    platform_stages: Dict[str, int],
+    platform_journeys: Dict[str, int],
+    platform_areas: Dict[str, Polygon],
     num_agents: int,
     agent_list: List[StationAgent],
     spawn_immediately: bool = True

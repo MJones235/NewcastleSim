@@ -14,24 +14,24 @@ Journeys:
 """
 
 import jupedsim as jps
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 from shapely.geometry import Polygon
 
 
 class StageManager:
     """Manages stages (exits, waypoints) and journeys in JuPedSim simulations."""
     
-    def __init__(self, simulation: jps.Simulation):
+    def __init__(self, simulation: jps.Simulation) -> None:
         """
         Initialize stage manager.
         
         Args:
             simulation: JuPedSim simulation object
         """
-        self.simulation = simulation
-        self.exits = {}  # Map exit name -> stage ID
-        self.waypoints = {}  # Map waypoint name -> stage ID
-        self.journeys = {}  # Map journey name -> journey ID
+        self.simulation: jps.Simulation = simulation
+        self.exits: Dict[str, int] = {}  # Map exit name -> stage ID
+        self.waypoints: Dict[str, int] = {}  # Map waypoint name -> stage ID
+        self.journeys: Dict[str, int] = {}  # Map journey name -> journey ID
     
     def create_exit_at_zone_centroid(
         self, 

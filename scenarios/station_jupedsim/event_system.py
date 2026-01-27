@@ -14,7 +14,7 @@ Example CSV Format:
 
 import csv
 from pathlib import Path
-from typing import List, Set, Any
+from typing import List, Set, Any, Optional
 from dataclasses import dataclass
 
 
@@ -54,7 +54,7 @@ class EventManager:
     - (future: staff_direction, zone_closure, etc.)
     """
     
-    def __init__(self, events_file: str = None):
+    def __init__(self, events_file: Optional[str] = None) -> None:
         """
         Initialize event manager.
         
@@ -67,7 +67,7 @@ class EventManager:
         if events_file and Path(events_file).exists():
             self.load_events(events_file)
     
-    def load_events(self, events_file: str):
+    def load_events(self, events_file: str) -> None:
         """
         Load events from CSV file.
         
@@ -104,7 +104,7 @@ class EventManager:
         self.events.sort(key=lambda e: e.time)
         print(f"Loaded {len(self.events)} events from {events_file}")
     
-    def _parse_event_row(self, row: List[str]):
+    def _parse_event_row(self, row: List[str]) -> None:
         """
         Parse a single event row from CSV and add to events list.
         
@@ -134,7 +134,7 @@ class EventManager:
         except Exception as e:
             print(f"WARNING: Unexpected error parsing event row {row}: {e}")
     
-    def add_event(self, time: float, action: str, value: str):
+    def add_event(self, time: float, action: str, value: str) -> None:
         """
         Programmatically add an event.
         
@@ -169,7 +169,7 @@ class EventManager:
         
         return triggered
     
-    def _trigger_event(self, event: SimulationEvent, agents: List[Any], sim_time: float):
+    def _trigger_event(self, event: SimulationEvent, agents: List[Any], sim_time: float) -> None:
         """
         Execute a specific event.
         
@@ -183,7 +183,7 @@ class EventManager:
         else:
             print(f"Warning: Unknown event action '{event.action}' at time {event.time}")
     
-    def _broadcast_to_all(self, message: str, agents: List[Any], sim_time: float):
+    def _broadcast_to_all(self, message: str, agents: List[Any], sim_time: float) -> None:
         """
         Broadcast a message to all agents.
         
@@ -215,7 +215,7 @@ class EventManager:
         return [e for e in self.events 
                 if e not in self.triggered_events and e.time > sim_time]
     
-    def get_next_event_time(self, sim_time: float) -> float:
+    def get_next_event_time(self, sim_time: float) -> Optional[float]:
         """
         Get time of next pending event.
         

@@ -13,7 +13,8 @@ This provider manages:
 """
 
 import jupedsim as jps
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
+from shapely.geometry import Polygon
 
 from scenarios.base.movement_provider import MovementProvider
 
@@ -24,7 +25,7 @@ class JuPedSimMovementProvider(MovementProvider):
     Handles JuPedSim agent API calls and stage-based routing.
     """
     
-    def __init__(self, simulation: jps.Simulation, zones: Dict[str, Any]):
+    def __init__(self, simulation: jps.Simulation, zones: Dict[str, Polygon]) -> None:
         """
         Initialize JuPedSim movement provider.
         
@@ -32,10 +33,10 @@ class JuPedSimMovementProvider(MovementProvider):
             simulation: JuPedSim simulation object
             zones: Dictionary mapping zone names to polygons
         """
-        self.simulation = simulation
-        self.zones = zones
-        self.evacuation_journeys = {}  # Will be set by main script
-        self.evacuation_exits = {}  # Will be set by main script
+        self.simulation: jps.Simulation = simulation
+        self.zones: Dict[str, Polygon] = zones
+        self.evacuation_journeys: Dict[str, int] = {}  # Will be set by main script
+        self.evacuation_exits: Dict[str, int] = {}  # Will be set by main script
     
     def spawn_agent(self, agent: Any, spawn_params: Dict[str, Any]) -> bool:
         """
@@ -178,7 +179,7 @@ class JuPedSimMovementProvider(MovementProvider):
         except:
             return False
     
-    def remove_agent(self, agent: Any):
+    def remove_agent(self, agent: Any) -> None:
         """
         Remove agent from JuPedSim simulation.
         

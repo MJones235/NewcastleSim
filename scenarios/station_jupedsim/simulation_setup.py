@@ -5,7 +5,7 @@ Handles geometry loading, exit creation, and platform stage setup.
 
 import jupedsim as jps
 from pathlib import Path
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 from typing import Dict, Tuple
 
 from scenarios.station_jupedsim.simulation import StationSimulation
@@ -14,7 +14,7 @@ from scenarios.station_jupedsim.geometry import load_entrance_areas, load_platfo
 
 def setup_evacuation_exits(
     sim: StationSimulation,
-    entrance_areas: Dict[str, any],
+    entrance_areas: Dict[str, Polygon],
     exit_radius: float = 10.0
 ) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
@@ -70,7 +70,7 @@ def setup_evacuation_exits(
 
 def setup_platform_stages(
     sim: StationSimulation,
-    platform_areas: Dict[str, any]
+    platform_areas: Dict[str, Polygon]
 ) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
     Create waiting stages and journeys for each platform.

@@ -6,7 +6,7 @@ Orchestrates geometry processing, stage management, and simulation execution.
 
 import jupedsim as jps
 from pathlib import Path
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 from shapely.geometry import Point, Polygon
 
 try:
@@ -20,7 +20,7 @@ except ImportError:
 class StationSimulation:
     """Manages a standalone JuPedSim station simulation."""
     
-    def __init__(self, network_path: str, dt: float = 0.05, output_file: str = None):
+    def __init__(self, network_path: str, dt: float = 0.05, output_file: Optional[str] = None) -> None:
         """
         Initialize the simulation.
         
