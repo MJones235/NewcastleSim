@@ -1,13 +1,14 @@
-import traci
-import sumolib
 import sys
 from pathlib import Path
+
+import sumolib
+import traci
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from simulation_manager import StationSimulationManager
 from common.decision_makers import configs as decision_maker_configs
+from simulation_manager import StationSimulationManager
 
 use_gui = True
 sumo_binary = sumolib.checkBinary("sumo-gui" if use_gui else "sumo")
@@ -25,8 +26,7 @@ def main():
     # Load population with decision makers
     # Configure evacuation probability: RULE_BASED_DEFAULT, RULE_BASED_HIGH_COMPLIANCE, or RULE_BASED_LOW_COMPLIANCE
     sim_manager.load_population(
-        num_agents=10,
-        decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
+        num_agents=10, decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
     )
 
     # Configure SUMO
@@ -82,7 +82,9 @@ def main():
             # Print statistics every 10 seconds
             if sim_time - last_stats_time >= 10:
                 stats = sim_manager.get_simulation_statistics()
-                print(f"t={sim_time:.1f}s: spawned={stats['spawned_agents']}, active={stats['active_agents']}, completed={stats['completed_agents']}")
+                print(
+                    f"t={sim_time:.1f}s: spawned={stats['spawned_agents']}, active={stats['active_agents']}, completed={stats['completed_agents']}"
+                )
                 last_stats_time = sim_time
 
             # Check if all agents completed their journeys

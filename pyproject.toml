@@ -1,0 +1,141 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "newcastle-sim"
+version = "0.1.0"
+description = "Multi-modal transport simulation for Newcastle"
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = false
+strict_equality = true
+show_error_codes = true
+files = ["scenarios/station_jupedsim", "run_jupedsim_station.py"]
+exclude = [
+    "scenarios/base/",
+    "scenarios/station_sim/",
+    "scenarios/traffic_sim/",
+    "scenarios/common/",
+    "tests/",
+]
+
+# Start with relaxed settings, tighten over time
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+module = [
+    "jupedsim.*",
+    "sumolib.*",
+    "traci.*",
+    "shapely.*",
+    "matplotlib.*",
+    "pandas.*",
+    "numpy.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "scenarios.station_jupedsim.simulation",
+    "scenarios.station_jupedsim.stage_manager",
+    "scenarios.common.*",
+    "scenarios.station_sim.*",
+    "scenarios.traffic_sim.*",
+]
+# Ignore duplicate import errors from try/except fallback imports and issues in other modules
+disable_error_code = ["no-redef", "import-not-found", "no-any-return", "assignment", "operator", "unreachable", "return-value"]
+
+[[tool.mypy.overrides]]
+module = "scenarios.base.*"
+# Ignore all errors in base scenario infrastructure (not part of station_jupedsim)
+ignore_errors = true
+
+[tool.pylint.main]
+# Use multiple processes to speed up Pylint
+jobs = 0
+# Minimum Python version to use for version dependent checks
+py-version = "3.10"
+
+[tool.pylint.messages_control]
+# Disable some overly strict checks initially
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",  # We have comprehensive docstrings, but pylint is picky
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "fixme",  # Allow TODO comments
+    "invalid-name",  # Allow short variable names like dt, x, y
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+max-args = 10
+max-attributes = 15
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "B904",  # raise from - can add later for better error handling
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"run_jupedsim_station.py" = ["E402"]  # Module imports after sys.path manipulation

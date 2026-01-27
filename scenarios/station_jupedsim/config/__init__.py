@@ -3,19 +3,19 @@ Configuration management for JuPedSim station simulation.
 """
 
 from .config import (
+    Config,
+    PathConfig,
     SimulationConfig,
     VisualizationConfig,
-    PathConfig,
-    Config,
-    load_config,
     get_default_config,
+    load_config,
 )
 
 __all__ = [
-    'SimulationConfig',
-    'VisualizationConfig',
-    'PathConfig',
-    'Config',
-    'load_config',
-    'get_default_config',
+    "SimulationConfig",
+    "VisualizationConfig",
+    "PathConfig",
+    "Config",
+    "load_config",
+    "get_default_config",
 ]

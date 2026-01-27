@@ -4,35 +4,35 @@ Basic JuPedSim simulation setup for station scenario.
 Orchestrates geometry processing, stage management, and simulation execution.
 """
 
-import jupedsim as jps
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional
+
+import jupedsim as jps
 from shapely.geometry import Point, Polygon
 
 try:
-    from .geometry import load_walkable_areas, load_obstacles, GeometryProcessor
-    from .stage_manager import StageManager
+    from .geometry import GeometryProcessor, load_obstacles, load_walkable_areas
     from .logger import get_logger
+    from .stage_manager import StageManager
 except ImportError:
-    from geometry import load_walkable_areas, load_obstacles, GeometryProcessor
-    from stage_manager import StageManager
+    from geometry import GeometryProcessor, load_obstacles, load_walkable_areas
     from logger import get_logger
+    from stage_manager import StageManager
 
 logger = get_logger(__name__)
 
 
 class StationSimulation:
     """Manages a standalone JuPedSim station simulation."""
-    
-    def __init__(self, network_path: str, dt: float = 0.05, output_file: Optional[str] = None) -> None:
+
+    def __init__(self, network_path: str, dt: float = 0.05, output_file: str | None = None) -> None:
         """
         Initialize the simulation.
-        
+
         Args:
             network_path: Path to directory containing walking_areas.add.xml
             dt: Simulation time step in seconds (default 0.05s = 20 fps)
             output_file: Optional path to save trajectory data (sqlite)
-            
+
         Raises:
             FileNotFoundError: If network files are not found
             ValueError: If geometry is invalid or empty
@@ -40,181 +40,175 @@ class StationSimulation:
         """
         if dt <= 0:
             raise ValueError(f"Time step dt must be positive, got {dt}")
-        
+
         self.dt = dt
         self.network_path = Path(network_path)
         self.output_file = output_file
-        
+
         # Validate network path
         if not self.network_path.exists():
             raise FileNotFoundError(f"Network path does not exist: {network_path}")
-        
+
         # Load and process geometry
         self.zones, self.zones_with_obstacles, self.obstacles = self._load_and_process_geometry()
-        
+
         # Create JuPedSim simulation
         self.simulation = self._create_jupedsim_simulation()
-        
+
         # Initialize stage manager
         try:
             self.stage_manager = StageManager(self.simulation)
         except Exception as e:
             raise RuntimeError(f"Failed to create stage manager: {e}")
-        
+
         # Iteration counter
         self.iteration = 0
-    
-    def _load_and_process_geometry(self) -> Tuple[Dict[str, Polygon], Dict[str, Polygon], List[Polygon]]:
+
+    def _load_and_process_geometry(
+        self,
+    ) -> tuple[dict[str, Polygon], dict[str, Polygon], list[Polygon]]:
         """
         Load geometry from network files and integrate obstacles.
-        
+
         Returns:
             Tuple of (original zones dict, processed zones dict with obstacles, obstacles list)
-            
+
         Raises:
             FileNotFoundError: If required files are missing
             ValueError: If geometry is invalid or empty
             RuntimeError: If geometry processing fails
         """
         walking_areas_file = self.network_path / "walking_areas.add.xml"
-        
+
         if not walking_areas_file.exists():
             raise FileNotFoundError(f"Required file not found: {walking_areas_file}")
-        
+
         # Load raw geometry
         try:
             walkable_areas = load_walkable_areas(str(walking_areas_file))
             obstacles = load_obstacles(str(walking_areas_file))
         except Exception as e:
             raise RuntimeError(f"Failed to load geometry from {walking_areas_file}: {e}")
-        
+
         if not walkable_areas:
             raise ValueError(f"No walkable areas found in {walking_areas_file}")
-        
+
         # Process geometry: integrate obstacles into zones
         try:
             zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
-                walkable_areas, 
-                obstacles
+                walkable_areas, obstacles
             )
         except Exception as e:
             raise RuntimeError(f"Failed to process geometry: {e}")
-        
-        logger.info(f"Loaded geometry: {len(walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
-        logger.info(f"Obstacles integrated as polygon holes")
-        
+
+        logger.info(
+            f"Loaded geometry: {len(walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles"
+        )
+        logger.info("Obstacles integrated as polygon holes")
+
         return walkable_areas, zones_with_obstacles, fixed_obstacles
-    
+
     def _create_jupedsim_simulation(self) -> jps.Simulation:
         """
         Create the JuPedSim simulation object with processed geometry.
-        
+
         Returns:
             Configured JuPedSim simulation instance
-            
+
         Raises:
             ValueError: If no valid walkable areas remain after processing
             RuntimeError: If simulation creation fails
         """
         # Combine processed areas for JuPedSim
         processed_areas = list(self.zones_with_obstacles.values())
-        
+
         if not processed_areas:
             raise ValueError("No valid walkable areas after processing geometry")
-        
+
         try:
             geometry = GeometryProcessor.combine_geometry(processed_areas)
         except Exception as e:
             raise RuntimeError(f"Failed to combine geometry: {e}")
-        
+
         # Create JuPedSim simulation with CollisionFreeSpeedModel
         try:
             if self.output_file:
                 # Write trajectory every 4th frame for reasonable file size (0.2s intervals)
-                writer = jps.SqliteTrajectoryWriter(
-                    output_file=self.output_file, 
-                    every_nth_frame=4
-                )
+                writer = jps.SqliteTrajectoryWriter(output_file=self.output_file, every_nth_frame=4)
                 simulation = jps.Simulation(
                     model=jps.CollisionFreeSpeedModel(),
                     geometry=geometry,
                     dt=self.dt,
-                    trajectory_writer=writer
+                    trajectory_writer=writer,
                 )
             else:
                 simulation = jps.Simulation(
-                    model=jps.CollisionFreeSpeedModel(),
-                    geometry=geometry,
-                    dt=self.dt
+                    model=jps.CollisionFreeSpeedModel(), geometry=geometry, dt=self.dt
                 )
         except Exception as e:
             raise RuntimeError(f"Failed to create JuPedSim simulation: {e}")
-        
+
         return simulation
-        
+
     def setup_stages(self):
         """Define stages for the simulation (exits, waypoints)."""
         # Create exit at entrance zone centroid
-        entrance_polygon = self.zones['entrance']
+        entrance_polygon = self.zones["entrance"]
         exit_id = self.stage_manager.create_exit_at_zone_centroid(
-            zone_name='main_exit',
-            zone_polygon=entrance_polygon,
-            width=30,
-            height=30
+            zone_name="main_exit", zone_polygon=entrance_polygon, width=30, height=30
         )
-        
+
         return exit_id
-    
+
     def create_simple_journey(self, start_zone: str, exit_id: int) -> int:
         """
         Create a simple journey from start zone to exit.
-        
+
         Args:
             start_zone: Name of starting zone
             exit_id: Stage ID of exit
-            
+
         Returns:
             Journey ID
         """
         journey_id = self.stage_manager.create_simple_exit_journey(
-            journey_name=f"{start_zone}_to_exit",
-            exit_id=exit_id
+            journey_name=f"{start_zone}_to_exit", exit_id=exit_id
         )
         return journey_id
-    
+
     def get_zone_for_position(self, x: float, y: float) -> str:
         """
         Determine which zone contains the given position.
-        
+
         Args:
             x, y: Coordinates
-            
+
         Returns:
             Zone name, or 'unknown' if not in any zone
         """
         point = Point(x, y)
-        
+
         for zone_name, polygon in self.zones.items():
             if polygon.contains(point):
                 return zone_name
-                
-        return 'unknown'
-    
+
+        return "unknown"
+
     def step(self) -> bool:
         """
         Advance simulation by one time step.
-        
+
         Returns:
             True if simulation should continue, False if done
         """
         if self.simulation.agent_count() == 0:
             return False
-            
+
         self.simulation.iterate()
         self.iteration += 1
-        
+
         return True
-    
+
     def get_simulation_time(self) -> float:
         """Get current simulation time in seconds."""
         return self.iteration * self.dt
@@ -223,22 +217,19 @@ class StationSimulation:
 if __name__ == "__main__":
     # Test basic simulation setup
     import os
-    
-    network_path = os.path.join(
-        os.path.dirname(__file__),
-        "..", "station_sim", "network"
-    )
-    
+
+    network_path = os.path.join(os.path.dirname(__file__), "..", "station_sim", "network")
+
     print("Initializing simulation...")
     sim = StationSimulation(network_path)
-    
+
     print(f"\nLoaded {len(sim.zones)} zones:")
     for zone_name, polygon in sim.zones.items():
         print(f"  {zone_name}: area={polygon.area:.2f}")
-    
+
     print("\nSetting up stages...")
     sim.setup_stages()
-    
-    print(f"\nSimulation ready!")
+
+    print("\nSimulation ready!")
     print(f"  Time step: {sim.dt}s")
     print(f"  Agent count: {sim.simulation.agent_count()}")

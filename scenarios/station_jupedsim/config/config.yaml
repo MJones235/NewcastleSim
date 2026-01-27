@@ -4,41 +4,41 @@
 simulation:
   # Simulation timestep in seconds (0.05s = 20 fps)
   dt: 0.05
-  
+
   # Maximum simulation steps (3600 steps = 180 seconds at dt=0.05)
   max_iterations: 3600
-  
+
   # Number of agents to create
   num_agents: 60
-  
+
   # Time between agent spawns in seconds
   spawn_interval: 2.0
-  
+
   # Radius of circular evacuation exits in meters
   exit_radius: 10.0
-  
+
   # Save trajectory every Nth frame (4 = 0.2s intervals)
   trajectory_frame_interval: 4
 
 visualization:
   # Enable real-time GUI during simulation
   enable_gui: false
-  
+
   # GUI update frequency in seconds
   gui_update_interval: 1.0
-  
+
   # Animation frame interval in milliseconds
   animation_interval: 50
-  
+
   # Duration to show event popups in seconds
   event_popup_duration: 5.0
 
 paths:
   # Directory containing network files
   network_dir: scenarios/station_sim/network
-  
+
   # Output directory for trajectory and events
   output_dir: scenarios/station_jupedsim/output
-  
+
   # Path to events CSV file (null for no events)
   events_file: scenarios/station_jupedsim/data/events.csv
