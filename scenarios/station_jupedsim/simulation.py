@@ -6,8 +6,8 @@ Orchestrates geometry processing, stage management, and simulation execution.
 
 import jupedsim as jps
 from pathlib import Path
-from typing import Dict
-from shapely.geometry import Point
+from typing import Dict, Tuple, List
+from shapely.geometry import Point, Polygon
 
 try:
     from .geometry import load_walkable_areas, load_obstacles, GeometryProcessor
@@ -39,39 +39,79 @@ class StationSimulation:
         
         self.dt = dt
         self.network_path = Path(network_path)
+        self.output_file = output_file
         
+        # Validate network path
         if not self.network_path.exists():
             raise FileNotFoundError(f"Network path does not exist: {network_path}")
         
-        self.output_file = output_file
+        # Load and process geometry
+        self.zones, self.zones_with_obstacles = self._load_and_process_geometry()
         
-        # Load geometry
+        # Create JuPedSim simulation
+        self.simulation = self._create_jupedsim_simulation()
+        
+        # Initialize stage manager
+        try:
+            self.stage_manager = StageManager(self.simulation)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create stage manager: {e}")
+        
+        # Iteration counter
+        self.iteration = 0
+    
+    def _load_and_process_geometry(self) -> Tuple[Dict[str, Polygon], Dict[str, Polygon]]:
+        """
+        Load geometry from network files and integrate obstacles.
+        
+        Returns:
+            Tuple of (original zones dict, processed zones dict with obstacles)
+            
+        Raises:
+            FileNotFoundError: If required files are missing
+            ValueError: If geometry is invalid or empty
+            RuntimeError: If geometry processing fails
+        """
         walking_areas_file = self.network_path / "walking_areas.add.xml"
         
         if not walking_areas_file.exists():
             raise FileNotFoundError(f"Required file not found: {walking_areas_file}")
         
+        # Load raw geometry
         try:
-            self.walkable_areas = load_walkable_areas(str(walking_areas_file))
-            self.obstacles = load_obstacles(str(walking_areas_file))
+            walkable_areas = load_walkable_areas(str(walking_areas_file))
+            obstacles = load_obstacles(str(walking_areas_file))
         except Exception as e:
             raise RuntimeError(f"Failed to load geometry from {walking_areas_file}: {e}")
         
-        if not self.walkable_areas:
+        if not walkable_areas:
             raise ValueError(f"No walkable areas found in {walking_areas_file}")
-        
-        # Track zones by name (original polygons for reference)
-        self.zones = self.walkable_areas  # Map zone name -> Polygon (original)
         
         # Process geometry: integrate obstacles into zones
         try:
-            self.zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
-                self.zones, 
-                self.obstacles
+            zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
+                walkable_areas, 
+                obstacles
             )
         except Exception as e:
             raise RuntimeError(f"Failed to process geometry: {e}")
         
+        print(f"Loaded geometry: {len(walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
+        print(f"Obstacles integrated as polygon holes")
+        
+        return walkable_areas, zones_with_obstacles
+    
+    def _create_jupedsim_simulation(self) -> jps.Simulation:
+        """
+        Create the JuPedSim simulation object with processed geometry.
+        
+        Returns:
+            Configured JuPedSim simulation instance
+            
+        Raises:
+            ValueError: If no valid walkable areas remain after processing
+            RuntimeError: If simulation creation fails
+        """
         # Combine processed areas for JuPedSim
         processed_areas = list(self.zones_with_obstacles.values())
         
@@ -83,37 +123,30 @@ class StationSimulation:
         except Exception as e:
             raise RuntimeError(f"Failed to combine geometry: {e}")
         
-        print(f"Loaded geometry: {len(self.walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
-        print(f"Obstacles integrated as polygon holes")
-        
         # Create JuPedSim simulation with CollisionFreeSpeedModel
         try:
-            if output_file:
+            if self.output_file:
                 # Write trajectory every 4th frame for reasonable file size (0.2s intervals)
-                writer = jps.SqliteTrajectoryWriter(output_file=output_file, every_nth_frame=4)
-                self.simulation = jps.Simulation(
+                writer = jps.SqliteTrajectoryWriter(
+                    output_file=self.output_file, 
+                    every_nth_frame=4
+                )
+                simulation = jps.Simulation(
                     model=jps.CollisionFreeSpeedModel(),
                     geometry=geometry,
-                    dt=dt,
+                    dt=self.dt,
                     trajectory_writer=writer
                 )
             else:
-                self.simulation = jps.Simulation(
+                simulation = jps.Simulation(
                     model=jps.CollisionFreeSpeedModel(),
                     geometry=geometry,
-                    dt=dt
+                    dt=self.dt
                 )
         except Exception as e:
             raise RuntimeError(f"Failed to create JuPedSim simulation: {e}")
         
-        # Initialize stage manager
-        try:
-            self.stage_manager = StageManager(self.simulation)
-        except Exception as e:
-            raise RuntimeError(f"Failed to create stage manager: {e}")
-        
-        # Iteration counter
-        self.iteration = 0
+        return simulation
         
     def setup_stages(self):
         """Define stages for the simulation (exits, waypoints)."""
