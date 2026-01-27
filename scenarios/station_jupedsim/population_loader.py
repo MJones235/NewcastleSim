@@ -104,8 +104,10 @@ def create_agents_from_entrances(
     entrance_areas: dict,
     platform_stages: dict,
     platform_journeys: dict,
+    platform_areas: dict,
     num_agents: int,
-    agent_list: List[StationAgent]
+    agent_list: List[StationAgent],
+    spawn_immediately: bool = True
 ) -> None:
     """
     Create agents at entrance locations with random platform destinations.
@@ -116,8 +118,10 @@ def create_agents_from_entrances(
         entrance_areas: Dictionary of entrance name -> entrance polygon
         platform_stages: Dictionary of platform name -> stage_id for that platform
         platform_journeys: Dictionary of platform name -> journey_id for that platform
+        platform_areas: Dictionary of platform name -> platform polygon
         num_agents: Total number of agents to create
         agent_list: List to append created StationAgent objects to
+        spawn_immediately: If True, spawn agents immediately; if False, just create them
     """
     if not entrance_areas:
         print("Warning: No entrance areas defined, cannot spawn agents")
@@ -144,21 +148,23 @@ def create_agents_from_entrances(
         if count == 0:
             continue
         
-        # Distribute agent positions within entrance area
-        positions = jps.distribute_by_number(
-            polygon=entrance_polygon,
-            number_of_agents=count,
-            distance_to_agents=0.5,
-            distance_to_polygon=0.3,  # Smaller distance for entrance areas
-            seed=42 + idx
-        )
+        if spawn_immediately:
+            # Distribute agent positions within entrance area
+            positions = jps.distribute_by_number(
+                polygon=entrance_polygon,
+                number_of_agents=count,
+                distance_to_agents=0.5,
+                distance_to_polygon=0.3,  # Smaller distance for entrance areas
+                seed=42 + idx
+            )
+        else:
+            # For gradual spawning, create agents without positions yet
+            positions = [None] * count
         
         # Create each agent
         for pos in positions:
             # Assign random platform destination
             platform_name = np.random.choice(platform_names)
-            platform_stage_id = platform_stages[platform_name]
-            platform_journey_id = platform_journeys[platform_name]
             
             # Sample walking speed
             walking_speed = sample_walking_speed()
@@ -170,11 +176,26 @@ def create_agents_from_entrances(
             
             # Create unified agent
             agent_id = f"agent_{len(agent_list)}"
-            spawn_params = {
-                'position': pos,
-                'journey_id': platform_journey_id,
-                'stage_id': platform_stage_id
-            }
+            
+            # Store platform info - stage/journey will be created per agent later
+            # For gradual spawning, generate position at spawn time from entrance polygon
+            if pos is None:
+                # Store entrance polygon and platform info for later
+                spawn_params = {
+                    'entrance_polygon': entrance_polygon,
+                    'platform_name': platform_name,
+                    'platform_polygon': platform_areas[platform_name],
+                    'platform_stages': platform_stages,
+                    'platform_journeys': platform_journeys
+                }
+            else:
+                spawn_params = {
+                    'position': pos,
+                    'platform_name': platform_name,
+                    'platform_polygon': platform_areas[platform_name],
+                    'platform_stages': platform_stages,
+                    'platform_journeys': platform_journeys
+                }
             
             agent = StationAgent(
                 agent_id=agent_id,
@@ -186,8 +207,11 @@ def create_agents_from_entrances(
                 spawn_params=spawn_params
             )
             
-            # Spawn in simulation
-            if agent.spawn():
+            # Spawn immediately or add to list for later spawning
+            if spawn_immediately:
+                if agent.spawn():
+                    agent_list.append(agent)
+            else:
                 agent_list.append(agent)
         
         print(f"Created {count} agents at entrance '{entrance_name}'")

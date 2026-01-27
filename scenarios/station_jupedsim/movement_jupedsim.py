@@ -36,22 +36,61 @@ class JuPedSimMovementProvider(MovementProvider):
         Args:
             agent: StationAgent to spawn
             spawn_params: Must contain:
-                - position: (x, y) tuple for spawn location
-                - journey_id: JuPedSim journey ID
+                - position: (x, y) tuple OR entrance_polygon: Polygon for spawn location
+                - platform_polygon: Polygon for platform destination
+                - journey_id and stage_id OR create unique waypoint
                 
         Returns:
             True if spawn successful
         """
         try:
-            position = spawn_params['position']
-            journey_id = spawn_params['journey_id']
+            # Get or generate spawn position
+            if 'position' in spawn_params:
+                position = spawn_params['position']
+            elif 'entrance_polygon' in spawn_params:
+                # Generate a single position from the entrance polygon
+                entrance_polygon = spawn_params['entrance_polygon']
+                positions = jps.distribute_by_number(
+                    polygon=entrance_polygon,
+                    number_of_agents=1,
+                    distance_to_agents=0.5,
+                    distance_to_polygon=0.3,
+                    seed=None  # Random seed for variety
+                )
+                position = positions[0]
+            else:
+                raise ValueError("spawn_params must contain either 'position' or 'entrance_polygon'")
+            
+            # Generate unique waypoint position for this agent within their platform
+            if 'platform_polygon' in spawn_params:
+                platform_polygon = spawn_params['platform_polygon']
+                # Generate a random position within the platform for this agent's waypoint
+                waypoint_positions = jps.distribute_by_number(
+                    polygon=platform_polygon,
+                    number_of_agents=1,
+                    distance_to_agents=0.3,
+                    distance_to_polygon=0.2,
+                    seed=None
+                )
+                waypoint_pos = waypoint_positions[0]
+                
+                # Create unique waypoint stage for this agent
+                stage_id = self.simulation.add_waypoint_stage(waypoint_pos, distance=2.0)
+                
+                # Create unique journey for this agent
+                journey = jps.JourneyDescription([stage_id])
+                journey_id = self.simulation.add_journey(journey)
+            else:
+                # Use provided journey and stage
+                journey_id = spawn_params['journey_id']
+                stage_id = spawn_params.get('stage_id')
             
             # Add agent to JuPedSim with journey
             jps_id = self.simulation.add_agent(
                 jps.CollisionFreeSpeedModelAgentParameters(
                     position=position,
                     journey_id=journey_id,
-                    stage_id=spawn_params.get('stage_id'),
+                    stage_id=stage_id,
                     v0=agent.walking_speed
                 )
             )

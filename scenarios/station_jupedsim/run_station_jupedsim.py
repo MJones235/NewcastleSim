@@ -7,8 +7,10 @@ This is the main entry point for the standalone JuPedSim implementation.
 import os
 import sys
 import time
+import argparse
+import random
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import jupedsim as jps
 
 # Add parent directory to path for imports
@@ -18,13 +20,14 @@ from simulation import StationSimulation
 from population_loader import create_agents_from_entrances
 from movement_jupedsim import JuPedSimMovementProvider
 from geometry_loader import load_entrance_areas, load_platform_areas
+from live_viewer import LiveViewer
 
 # Import common agent
 sys.path.append(str(Path(__file__).parent.parent))
 from common.station_agent import StationAgent
 
 
-def main():
+def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
     """Main simulation loop."""
     
     # Setup paths
@@ -87,7 +90,7 @@ def main():
     # Create movement provider for JuPedSim
     movement_provider = JuPedSimMovementProvider(sim.simulation, sim.zones)
     
-    # Create agents at entrances with random platform destinations
+    # Create agents at entrances with random platform destinations (but don't spawn yet)
     num_agents = 60
     create_agents_from_entrances(
         simulation=sim.simulation,
@@ -95,32 +98,92 @@ def main():
         entrance_areas=entrance_areas,
         platform_stages=platform_stages,
         platform_journeys=platform_journeys,
+        platform_areas=platform_areas,
         num_agents=num_agents,
-        agent_list=agents
+        agent_list=agents,
+        spawn_immediately=False  # Don't spawn agents yet
     )
     
     print(f"\nTotal agents created: {len(agents)}")
-    print(f"JuPedSim agent count: {sim.simulation.agent_count()}")
+    print(f"Agents queued for gradual spawning")
+    
+    # Queue agents for spawning - randomize order so entrances are mixed
+    agents_to_spawn = list(agents)
+    random.shuffle(agents_to_spawn)
+    print(f"Agent spawn order randomized across {len(entrance_areas)} entrances")
+    
+    spawn_interval = 2.0  # Spawn one agent every 2 seconds
+    last_spawn_time = -spawn_interval  # Allow first spawn immediately
+    
+    # Initialize live viewer if requested
+    viewer: Optional[LiveViewer] = None
+    if enable_gui:
+        print("\n[GUI] Initializing live viewer...")
+        viewer = LiveViewer(
+            walkable_areas=sim.walkable_areas,
+            obstacles=sim.obstacles,
+            platform_areas=platform_areas,
+            update_interval=gui_update_interval
+        )
+        print(f"[GUI] Live viewer ready (updating every {gui_update_interval}s)")
     
     # Run simulation
     print("\n[4/4] Running simulation...")
     print("Press Ctrl+C to stop\n")
     
-    max_iterations = 2000  # ~100 seconds at 0.05s timestep
+    max_iterations = 3600
     
     # Start timer for real execution time
     start_time = time.time()
+    last_gui_update = 0.0
     
     try:
-        while sim.step() and sim.iteration < max_iterations:
+        while sim.iteration < max_iterations:
+            # Spawn one agent if interval has passed and any are waiting
+            if agents_to_spawn and (sim.get_simulation_time() - last_spawn_time >= spawn_interval):
+                agent = agents_to_spawn.pop(0)
+                last_spawn_time = sim.get_simulation_time()
+                try:
+                    agent.spawn()
+                except Exception as e:
+                    print(f"Failed to spawn {agent.id}: {e}")
+            
+            # Step simulation (even if no agents yet)
+            if not sim.step():
+                # Simulation ended - check if we're done
+                if not agents_to_spawn and sim.simulation.agent_count() == 0:
+                    break  # All agents spawned and completed
+            
+            sim_time = sim.get_simulation_time()
+            agent_count = sim.simulation.agent_count()
+            
+            # Update all spawned agents
+            for agent in agents:
+                if agent.is_spawned:
+                    agent.update(sim_time)
+            
             # Print progress every 100 steps (5 seconds)
             if sim.iteration % 100 == 0:
-                agent_count = sim.simulation.agent_count()
-                sim_time = sim.get_simulation_time()
-                print(f"t={sim_time:6.2f}s  agents={agent_count:3d}")
+                spawned_count = sum(1 for a in agents if a.is_spawned)
+                print(f"t={sim_time:6.2f}s  agents={agent_count:3d}  spawned={spawned_count:3d}/{len(agents)}")
+            
+            # Update GUI at specified interval
+            if viewer and (sim_time - last_gui_update) >= gui_update_interval:
+                # Get current agent positions directly from JuPedSim
+                agent_positions = []
+                for agent in sim.simulation.agents():
+                    pos = agent.position
+                    agent_positions.append((pos[0], pos[1]))
+                
+                viewer.update(agent_positions, sim_time, agent_count)
+                last_gui_update = sim_time
                 
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user")
+    finally:
+        # Close GUI if open
+        if viewer:
+            viewer.close()
     
     # Stop timer
     end_time = time.time()
@@ -156,4 +219,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Run JuPedSim station simulation')
+    parser.add_argument('--gui', action='store_true', help='Enable real-time GUI visualization')
+    parser.add_argument('--gui-interval', type=float, default=1.0, 
+                        help='GUI update interval in seconds (default: 1.0)')
+    
+    args = parser.parse_args()
+    
+    main(enable_gui=args.gui, gui_update_interval=args.gui_interval)
