@@ -10,8 +10,11 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
-from scenarios.station_jupedsim.event_system import EventManager
-from scenarios.station_jupedsim.simulation_observer import SimulationObserver
+from scenarios.station_jupedsim.core.event_system import EventManager
+from scenarios.station_jupedsim.core.simulation_observer import SimulationObserver
+from scenarios.common.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SimulationRunner:
@@ -47,7 +50,7 @@ class SimulationRunner:
         # Queue agents for spawning - randomize order so entrances are mixed
         self.agents_to_spawn = list(agents)
         random.shuffle(self.agents_to_spawn)
-        print(f"Agent spawn order randomized")
+        logger.debug(f"Agent spawn order randomized")
         
         self.last_spawn_time = -spawn_interval  # Allow first spawn immediately
         self.last_event_message = None
@@ -76,7 +79,7 @@ class SimulationRunner:
                     try:
                         agent.spawn()
                     except Exception as e:
-                        print(f"Failed to spawn {agent.id}: {e}")
+                        logger.error(f"Failed to spawn {agent.id}: {e}")
                 
                 # Step simulation (even if no agents yet)
                 if not self.sim.step():
@@ -170,9 +173,9 @@ class SimulationRunner:
             ]
             with open(events_output, 'w') as f:
                 json.dump(events_data, f, indent=2)
-            print(f"\nSaved {len(events_data)} triggered events to {events_output}")
+            logger.info(f"Saved {len(events_data)} triggered events to {events_output}")
         else:
             # No events triggered - clear any old events file
             if events_output.exists():
                 events_output.unlink()
-                print(f"\nNo events triggered - cleared old events file")
+                logger.info(f"No events triggered - cleared old events file")

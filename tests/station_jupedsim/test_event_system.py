@@ -4,7 +4,7 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from scenarios.station_jupedsim.event_system import SimulationEvent, EventManager
+from scenarios.station_jupedsim.core.event_system import SimulationEvent, EventManager
 
 
 class TestSimulationEvent:

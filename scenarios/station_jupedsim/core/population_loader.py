@@ -16,7 +16,7 @@ from shapely.geometry import Polygon
 from scenarios.common.station_agent import StationAgent
 from scenarios.common.walking_speed import sample_walking_speed
 from scenarios.common.decision_makers.rule_based import RuleBasedDecisionMaker
-from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
+from scenarios.station_jupedsim.core.movement_jupedsim import JuPedSimMovementProvider
 
 def create_agents_from_entrances(
     simulation: jps.Simulation,

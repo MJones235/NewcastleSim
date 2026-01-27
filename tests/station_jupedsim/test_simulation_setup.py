@@ -2,8 +2,8 @@
 
 import pytest
 
-from scenarios.station_jupedsim.simulation import StationSimulation
-from scenarios.station_jupedsim.simulation_setup import (
+from scenarios.station_jupedsim.core.simulation import StationSimulation
+from scenarios.station_jupedsim.core.simulation_setup import (
     setup_evacuation_exits,
     setup_platform_stages,
     load_geometry

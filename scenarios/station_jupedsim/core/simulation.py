@@ -10,13 +10,13 @@ from typing import Dict, Tuple, List, Optional
 from shapely.geometry import Point, Polygon
 
 try:
-    from .geometry import load_walkable_areas, load_obstacles, GeometryProcessor
+    from ..geometry import load_walkable_areas, load_obstacles, GeometryProcessor
     from .stage_manager import StageManager
-    from .logger import get_logger
+    from scenarios.common.logger import get_logger
 except ImportError:
     from geometry import load_walkable_areas, load_obstacles, GeometryProcessor
     from stage_manager import StageManager
-    from logger import get_logger
+    from scenarios.common.logger import get_logger
 
 logger = get_logger(__name__)
 

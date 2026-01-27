@@ -44,7 +44,7 @@ if __name__ == "__main__":
         config = load_config(args.config)
     else:
         # Try to load default config.yaml if it exists
-        default_config = project_root / "scenarios" / "station_jupedsim" / "config.yaml"
+        default_config = project_root / "scenarios" / "station_jupedsim" / "config" / "config.yaml"
         config = load_config(str(default_config) if default_config.exists() else None)
     
     # Apply command-line overrides

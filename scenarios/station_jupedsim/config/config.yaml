@@ -41,4 +41,4 @@ paths:
   output_dir: scenarios/station_jupedsim/output
   
   # Path to events CSV file (null for no events)
-  events_file: scenarios/station_jupedsim/events.csv
+  events_file: scenarios/station_jupedsim/data/events.csv

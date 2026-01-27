@@ -8,7 +8,7 @@ from pathlib import Path
 from shapely.geometry import Point, Polygon
 from typing import Dict, Tuple
 
-from scenarios.station_jupedsim.simulation import StationSimulation
+from scenarios.station_jupedsim.core.simulation import StationSimulation
 from scenarios.station_jupedsim.geometry import load_entrance_areas, load_platform_areas
 
 

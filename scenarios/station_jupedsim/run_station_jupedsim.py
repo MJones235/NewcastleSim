@@ -26,16 +26,22 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from scenarios.station_jupedsim.simulation import StationSimulation
-from scenarios.station_jupedsim.simulation_setup import setup_evacuation_exits, setup_platform_stages, load_geometry
-from scenarios.station_jupedsim.simulation_runner import SimulationRunner
-from scenarios.station_jupedsim.simulation_observer import GUIObserver, ConsoleObserver
-from scenarios.station_jupedsim.population_loader import create_agents_from_entrances
-from scenarios.station_jupedsim.movement_jupedsim import JuPedSimMovementProvider
-from scenarios.station_jupedsim.event_system import EventManager
+from scenarios.station_jupedsim.core import (
+    StationSimulation,
+    setup_evacuation_exits,
+    setup_platform_stages,
+    load_geometry,
+    SimulationRunner,
+    GUIObserver,
+    ConsoleObserver,
+    create_agents_from_entrances,
+    JuPedSimMovementProvider,
+    EventManager,
+)
 from scenarios.station_jupedsim.visualization.live_viewer import LiveViewer
 from scenarios.common.station_agent import StationAgent
 from scenarios.station_jupedsim.config import Config, load_config
+from scenarios.common.logger import setup_logger, get_logger
 
 
 class SimulationError(Exception):
@@ -66,6 +72,18 @@ def main(config: Optional[Config] = None) -> int:
     # Use provided config or load defaults
     if config is None:
         config = Config()
+    
+    # Setup logging
+    output_dir = Path(config.paths.output_dir)
+    output_dir.mkdir(exist_ok=True, parents=True)
+    log_file = output_dir / "simulation.log"
+    setup_logger(name="scenarios.station_jupedsim", log_file=log_file)
+    logger = get_logger("scenarios.station_jupedsim")
+    
+    logger.info("=" * 60)
+    logger.info("JuPedSim Station Simulation")
+    logger.info("=" * 60)
+    logger.debug(f"Log file: {log_file}")
     
     try:
         # Setup paths

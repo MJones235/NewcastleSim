@@ -17,10 +17,7 @@ import jupedsim as jps
 from typing import List, Tuple, Dict, Optional
 from shapely.geometry import Polygon
 
-try:
-    from .logger import get_logger
-except ImportError:
-    from logger import get_logger
+from scenarios.common.logger import get_logger
 
 logger = get_logger(__name__)
 

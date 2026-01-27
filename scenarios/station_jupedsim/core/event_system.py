@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import List, Set, Any, Optional
 from dataclasses import dataclass
 
+from scenarios.common.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class SimulationEvent:
@@ -32,7 +36,7 @@ class SimulationEvent:
         if not self.action:
             raise ValueError("Event action cannot be empty")
         if self.action not in ['broadcast_to_all']:
-            print(f"WARNING: Unknown event action '{self.action}' (may not be implemented)")
+            logger.warning(f"Unknown event action '{self.action}' (may not be implemented)")
     
     def __hash__(self):
         return hash((self.time, self.action, self.value))
@@ -102,7 +106,7 @@ class EventManager:
         
         # Sort events by time
         self.events.sort(key=lambda e: e.time)
-        print(f"Loaded {len(self.events)} events from {events_file}")
+        logger.info(f"Loaded {len(self.events)} events from {events_file}")
     
     def _parse_event_row(self, row: List[str]) -> None:
         """
@@ -115,7 +119,7 @@ class EventManager:
             row: List of strings from CSV reader (time, action, value)
         """
         if len(row) < 3:
-            print(f"WARNING: Skipping malformed event row (need 3 columns): {row}")
+            logger.warning(f"Skipping malformed event row (need 3 columns): {row}")
             return
         
         try:
@@ -124,15 +128,15 @@ class EventManager:
             value = row[2].strip().strip('"\'')
             
             if not action:
-                print(f"WARNING: Skipping event with empty action at time {time}")
+                logger.warning(f"Skipping event with empty action at time {time}")
                 return
             
             event = SimulationEvent(time=time, action=action, value=value)
             self.events.append(event)
         except ValueError as e:
-            print(f"WARNING: Could not parse event row {row}: {e}")
+            logger.warning(f"Could not parse event row {row}: {e}")
         except Exception as e:
-            print(f"WARNING: Unexpected error parsing event row {row}: {e}")
+            logger.warning(f"Unexpected error parsing event row {row}: {e}")
     
     def add_event(self, time: float, action: str, value: str) -> None:
         """
@@ -181,7 +185,7 @@ class EventManager:
         if event.action == 'broadcast_to_all':
             self._broadcast_to_all(event.value, agents, sim_time)
         else:
-            print(f"Warning: Unknown event action '{event.action}' at time {event.time}")
+            logger.warning(f"Unknown event action '{event.action}' at time {event.time}")
     
     def _broadcast_to_all(self, message: str, agents: List[Any], sim_time: float) -> None:
         """
@@ -192,7 +196,7 @@ class EventManager:
             agents: List of StationAgent objects
             sim_time: Current simulation time
         """
-        print(f"\n[EVENT @ t={sim_time:.1f}s] Broadcasting to all agents: '{message}'")
+        logger.info(f"[EVENT @ t={sim_time:.1f}s] Broadcasting to all agents: '{message}'")
         
         delivered_count = 0
         for agent in agents:
@@ -200,7 +204,7 @@ class EventManager:
                 agent.receive_message(message)
                 delivered_count += 1
         
-        print(f"  Message delivered to {delivered_count} active agents")
+        logger.info(f"Message delivered to {delivered_count} active agents")
     
     def get_pending_events(self, sim_time: float) -> List[SimulationEvent]:
         """

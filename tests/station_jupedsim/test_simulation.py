@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from scenarios.station_jupedsim.simulation import StationSimulation
+from scenarios.station_jupedsim.core.simulation import StationSimulation
 
 
 class TestSimulationInitialization:
