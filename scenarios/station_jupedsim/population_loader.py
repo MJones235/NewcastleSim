@@ -14,7 +14,10 @@ from base.decision_maker_base import DecisionMakerBase
 from station_sim.rule_based_decision_maker import RuleBasedDecisionMaker
 from station_sim import decision_maker_configs
 
-from .agent import StationAgent, sample_walking_speed
+try:
+    from .agent import StationAgent, sample_walking_speed
+except ImportError:
+    from agent import StationAgent, sample_walking_speed
 
 
 def create_agents_in_zone(

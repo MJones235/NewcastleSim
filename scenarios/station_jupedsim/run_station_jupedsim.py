@@ -5,11 +5,17 @@ This is the main entry point for the standalone JuPedSim implementation.
 """
 
 import os
+import sys
+import time
 from pathlib import Path
-from .simulation import StationSimulation
-from .population_loader import create_agents_in_zone
-from .agent import StationAgent
 from typing import List
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from simulation import StationSimulation
+from population_loader import create_agents_in_zone
+from agent import StationAgent
 
 
 def main():
@@ -33,10 +39,9 @@ def main():
     
     # Setup stages
     print("[2/4] Setting up stages...")
-    sim.setup_stages()
+    exit_id = sim.setup_stages()
     
     # Create simple journey (all zones -> exit)
-    exit_id = sim.entrance_exits['main_exit']
     journey_id = sim.create_simple_journey('all_zones', exit_id)
     print(f"Created journey {journey_id}: all zones -> exit")
     
@@ -77,6 +82,9 @@ def main():
     
     max_iterations = 2000  # ~100 seconds at 0.05s timestep
     
+    # Start timer for real execution time
+    start_time = time.time()
+    
     try:
         while sim.step() and sim.iteration < max_iterations:
             # Print progress every 100 steps (5 seconds)
@@ -88,19 +96,37 @@ def main():
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user")
     
+    # Stop timer
+    end_time = time.time()
+    real_time_elapsed = end_time - start_time
+    simulated_time = sim.get_simulation_time()
+    
     # Summary
     print("\n" + "=" * 60)
     print("Simulation Complete")
     print("=" * 60)
     print(f"Total iterations: {sim.iteration}")
-    print(f"Simulation time: {sim.get_simulation_time():.2f}s")
+    print(f"Simulation time: {simulated_time:.2f}s")
+    print(f"Real execution time: {real_time_elapsed:.2f}s")
+    print(f"Speed factor: {simulated_time / real_time_elapsed:.2f}x realtime" if real_time_elapsed > 0 else "Speed factor: N/A")
     print(f"Remaining agents: {sim.simulation.agent_count()}")
     print(f"Agents who exited: {len(agents) - sim.simulation.agent_count()}")
     
-    # Visualization option
+    # Trajectory info
     print(f"\nTrajectory saved to: {trajectory_file}")
-    print("\nTo visualize, run:")
-    print(f"  .venv/bin/python scenarios/station_jupedsim/visualize.py {trajectory_file}")
+    
+    # Run visualization automatically
+    print("\n" + "=" * 60)
+    print("Launching Visualization")
+    print("=" * 60)
+    
+    try:
+        import visualize
+        visualize.visualize_simulation(str(trajectory_file), str(network_path))
+    except Exception as e:
+        print(f"Could not launch visualization: {e}")
+        print("\nTo visualize manually, run:")
+        print(f"  .venv/bin/python scenarios/station_jupedsim/visualize.py {trajectory_file}")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,22 @@
 """
 Basic JuPedSim simulation setup for station scenario.
+
+Orchestrates geometry processing, stage management, and simulation execution.
 """
 
 import jupedsim as jps
 from pathlib import Path
-from typing import List, Tuple, Dict
-from .geometry_loader import load_walkable_areas, combine_walkable_geometry
+from typing import Dict
+from shapely.geometry import Point
+
+try:
+    from .geometry_loader import load_walkable_areas, load_obstacles
+    from .geometry_processor import GeometryProcessor
+    from .stage_manager import StageManager
+except ImportError:
+    from geometry_loader import load_walkable_areas, load_obstacles
+    from geometry_processor import GeometryProcessor
+    from stage_manager import StageManager
 
 
 class StationSimulation:
@@ -27,62 +38,27 @@ class StationSimulation:
         # Load geometry
         walking_areas_file = self.network_path / "walking_areas.add.xml"
         self.walkable_areas = load_walkable_areas(str(walking_areas_file))
-        
-        # Track zones by name (original polygons for agent spawning)
-        self.zones = self.walkable_areas  # Map zone name -> Polygon (original, no holes)
-        self.zones_with_obstacles = {}  # Map zone name -> Polygon (with obstacles cut out)
-        
-        # Load obstacles
-        from .geometry_loader import load_obstacles
         self.obstacles = load_obstacles(str(walking_areas_file))
         
-        # In JuPedSim, obstacles must be defined as holes in polygons
-        # Fix any topology issues by buffering obstacles slightly
-        import shapely
+        # Track zones by name (original polygons for reference)
+        self.zones = self.walkable_areas  # Map zone name -> Polygon (original)
         
-        fixed_obstacles = []
-        for obs in self.obstacles:
-            # Buffer by 0 to fix invalid geometries
-            fixed_obs = obs.buffer(0)
-            if not fixed_obs.is_empty and fixed_obs.is_valid:
-                fixed_obstacles.append(fixed_obs)
+        # Process geometry: integrate obstacles into zones
+        self.zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
+            self.zones, 
+            self.obstacles
+        )
         
-        # For now, we'll subtract obstacles from all walkable areas
-        # This creates proper polygons with holes that JuPedSim understands
-        processed_areas = []
-        for zone_name, zone_polygon in self.walkable_areas.items():
-            # Fix zone polygon topology
-            zone_with_holes = zone_polygon.buffer(0)
-            
-            # Check which obstacles intersect this zone
-            for obstacle in fixed_obstacles:
-                if zone_with_holes.intersects(obstacle):
-                    # Subtract obstacle from zone
-                    try:
-                        zone_with_holes = zone_with_holes.difference(obstacle)
-                    except Exception as e:
-                        print(f"Warning: Could not subtract obstacle from {zone_name}: {e}")
-            
-            if not zone_with_holes.is_empty:
-                processed_areas.append(zone_with_holes)
-                self.zones_with_obstacles[zone_name] = zone_with_holes
-        
-        # Combine all processed areas
-        if len(processed_areas) == 1:
-            geometry = processed_areas[0]
-        else:
-            geometry = shapely.GeometryCollection(processed_areas)
+        # Combine processed areas for JuPedSim
+        processed_areas = list(self.zones_with_obstacles.values())
+        geometry = GeometryProcessor.combine_geometry(processed_areas)
         
         print(f"Loaded geometry: {len(self.walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
         print(f"Obstacles integrated as polygon holes")
         
-        # Create JuPedSim simulation
-        # Using CollisionFreeSpeedModel (similar to what SUMO uses)
+        # Create JuPedSim simulation with CollisionFreeSpeedModel
         if output_file:
-            # Create simulation with trajectory writer
-            writer = jps.SqliteTrajectoryWriter(
-                output_file=output_file
-            )
+            writer = jps.SqliteTrajectoryWriter(output_file=output_file)
             self.simulation = jps.Simulation(
                 model=jps.CollisionFreeSpeedModel(),
                 geometry=geometry,
@@ -96,37 +72,25 @@ class StationSimulation:
                 dt=dt
             )
         
-        # Stage IDs
-        self.entrance_exits: Dict[str, int] = {}
-        self.zone_waypoints: Dict[str, int] = {}
+        # Initialize stage manager
+        self.stage_manager = StageManager(self.simulation)
         
         # Iteration counter
         self.iteration = 0
         
     def setup_stages(self):
         """Define stages for the simulation (exits, waypoints)."""
-        # Create exits at entrance zone (agents leave through entrance)
-        # JuPedSim requires CONVEX polygons for exits
-        
-        # Get centroid of entrance zone for better exit placement
+        # Create exit at entrance zone centroid
         entrance_polygon = self.zones['entrance']
-        centroid = entrance_polygon.centroid
+        exit_id = self.stage_manager.create_exit_at_zone_centroid(
+            zone_name='main_exit',
+            zone_polygon=entrance_polygon,
+            width=30,
+            height=30
+        )
         
-        # Create a larger exit rectangle near entrance centroid
-        exit_width = 30
-        exit_height = 30
-        exit_coords = [
-            (centroid.x - exit_width/2, centroid.y - exit_height/2),
-            (centroid.x + exit_width/2, centroid.y - exit_height/2),
-            (centroid.x + exit_width/2, centroid.y + exit_height/2),
-            (centroid.x - exit_width/2, centroid.y + exit_height/2)
-        ]
-        self.entrance_exits['main_exit'] = self.simulation.add_exit_stage(exit_coords)
-        
-        print(f"Created exit stage: main_exit (id={self.entrance_exits['main_exit']})")
-        print(f"  Exit location: ({centroid.x:.1f}, {centroid.y:.1f})")
-        print(f"  Exit size: {exit_width}m x {exit_height}m")
-        
+        return exit_id
+    
     def create_simple_journey(self, start_zone: str, exit_id: int) -> int:
         """
         Create a simple journey from start zone to exit.
@@ -138,10 +102,10 @@ class StationSimulation:
         Returns:
             Journey ID
         """
-        # For now, simple journey: just go to exit
-        journey = jps.JourneyDescription([exit_id])
-        journey_id = self.simulation.add_journey(journey)
-        
+        journey_id = self.stage_manager.create_simple_exit_journey(
+            journey_name=f"{start_zone}_to_exit",
+            exit_id=exit_id
+        )
         return journey_id
     
     def get_zone_for_position(self, x: float, y: float) -> str:
@@ -154,7 +118,6 @@ class StationSimulation:
         Returns:
             Zone name, or 'unknown' if not in any zone
         """
-        from shapely.geometry import Point
         point = Point(x, y)
         
         for zone_name, polygon in self.zones.items():
