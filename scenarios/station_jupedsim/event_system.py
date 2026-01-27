@@ -18,6 +18,15 @@ class SimulationEvent:
     action: str
     value: str
     
+    def __post_init__(self):
+        """Validate event data after initialization."""
+        if self.time < 0:
+            raise ValueError(f"Event time must be non-negative, got {self.time}")
+        if not self.action:
+            raise ValueError("Event action cannot be empty")
+        if self.action not in ['broadcast_to_all']:
+            print(f"WARNING: Unknown event action '{self.action}' (may not be implemented)")
+    
     def __hash__(self):
         return hash((self.time, self.action, self.value))
     
@@ -60,17 +69,29 @@ class EventManager:
         
         Args:
             events_file: Path to CSV file
-        """
-        with open(events_file, 'r') as f:
-            reader = csv.reader(f)
             
-            # Skip comments and header
-            for row in reader:
-                if not row or row[0].strip().startswith('#'):
-                    continue  # Skip comment lines
-                if row[0].strip().lower() == 'time':
-                    continue  # Skip header line
-                self._parse_event_row(row)
+        Raises:
+            FileNotFoundError: If events file doesn't exist
+            ValueError: If CSV format is invalid
+        """
+        events_path = Path(events_file)
+        
+        if not events_path.exists():
+            raise FileNotFoundError(f"Events file not found: {events_file}")
+        
+        try:
+            with open(events_file, 'r') as f:
+                reader = csv.reader(f)
+                
+                # Skip comments and header
+                for row in reader:
+                    if not row or row[0].strip().startswith('#'):
+                        continue  # Skip comment lines
+                    if row[0].strip().lower() == 'time':
+                        continue  # Skip header line
+                    self._parse_event_row(row)
+        except Exception as e:
+            raise RuntimeError(f"Failed to read events file {events_file}: {e}")
         
         # Sort events by time
         self.events.sort(key=lambda e: e.time)
@@ -78,16 +99,25 @@ class EventManager:
     
     def _parse_event_row(self, row: List[str]):
         """Parse a single event row from CSV."""
-        if len(row) >= 3:
-            try:
-                time = float(row[0].strip())
-                action = row[1].strip()
-                value = row[2].strip().strip('"\'')  # Remove quotes if present
-                
-                event = SimulationEvent(time=time, action=action, value=value)
-                self.events.append(event)
-            except ValueError as e:
-                print(f"Warning: Could not parse event row {row}: {e}")
+        if len(row) < 3:
+            print(f"WARNING: Skipping malformed event row (need 3 columns): {row}")
+            return
+        
+        try:
+            time = float(row[0].strip())
+            action = row[1].strip()
+            value = row[2].strip().strip('"\'')
+            
+            if not action:
+                print(f"WARNING: Skipping event with empty action at time {time}")
+                return
+            
+            event = SimulationEvent(time=time, action=action, value=value)
+            self.events.append(event)
+        except ValueError as e:
+            print(f"WARNING: Could not parse event row {row}: {e}")
+        except Exception as e:
+            print(f"WARNING: Unexpected error parsing event row {row}: {e}")
     
     def add_event(self, time: float, action: str, value: str):
         """

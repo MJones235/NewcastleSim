@@ -28,51 +28,89 @@ class StationSimulation:
             network_path: Path to directory containing walking_areas.add.xml
             dt: Simulation time step in seconds (default 0.05s = 20 fps)
             output_file: Optional path to save trajectory data (sqlite)
+            
+        Raises:
+            FileNotFoundError: If network files are not found
+            ValueError: If geometry is invalid or empty
+            RuntimeError: If simulation initialization fails
         """
+        if dt <= 0:
+            raise ValueError(f"Time step dt must be positive, got {dt}")
+        
         self.dt = dt
         self.network_path = Path(network_path)
+        
+        if not self.network_path.exists():
+            raise FileNotFoundError(f"Network path does not exist: {network_path}")
+        
         self.output_file = output_file
         
         # Load geometry
         walking_areas_file = self.network_path / "walking_areas.add.xml"
-        self.walkable_areas = load_walkable_areas(str(walking_areas_file))
-        self.obstacles = load_obstacles(str(walking_areas_file))
+        
+        if not walking_areas_file.exists():
+            raise FileNotFoundError(f"Required file not found: {walking_areas_file}")
+        
+        try:
+            self.walkable_areas = load_walkable_areas(str(walking_areas_file))
+            self.obstacles = load_obstacles(str(walking_areas_file))
+        except Exception as e:
+            raise RuntimeError(f"Failed to load geometry from {walking_areas_file}: {e}")
+        
+        if not self.walkable_areas:
+            raise ValueError(f"No walkable areas found in {walking_areas_file}")
         
         # Track zones by name (original polygons for reference)
         self.zones = self.walkable_areas  # Map zone name -> Polygon (original)
         
         # Process geometry: integrate obstacles into zones
-        self.zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
-            self.zones, 
-            self.obstacles
-        )
+        try:
+            self.zones_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
+                self.zones, 
+                self.obstacles
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to process geometry: {e}")
         
         # Combine processed areas for JuPedSim
         processed_areas = list(self.zones_with_obstacles.values())
-        geometry = GeometryProcessor.combine_geometry(processed_areas)
+        
+        if not processed_areas:
+            raise ValueError("No valid walkable areas after processing geometry")
+        
+        try:
+            geometry = GeometryProcessor.combine_geometry(processed_areas)
+        except Exception as e:
+            raise RuntimeError(f"Failed to combine geometry: {e}")
         
         print(f"Loaded geometry: {len(self.walkable_areas)} walkable areas, {len(fixed_obstacles)} obstacles")
         print(f"Obstacles integrated as polygon holes")
         
         # Create JuPedSim simulation with CollisionFreeSpeedModel
-        if output_file:
-            # Write trajectory every 4th frame for reasonable file size (0.2s intervals)
-            writer = jps.SqliteTrajectoryWriter(output_file=output_file, every_nth_frame=4)
-            self.simulation = jps.Simulation(
-                model=jps.CollisionFreeSpeedModel(),
-                geometry=geometry,
-                dt=dt,
-                trajectory_writer=writer
-            )
-        else:
-            self.simulation = jps.Simulation(
-                model=jps.CollisionFreeSpeedModel(),
-                geometry=geometry,
-                dt=dt
-            )
+        try:
+            if output_file:
+                # Write trajectory every 4th frame for reasonable file size (0.2s intervals)
+                writer = jps.SqliteTrajectoryWriter(output_file=output_file, every_nth_frame=4)
+                self.simulation = jps.Simulation(
+                    model=jps.CollisionFreeSpeedModel(),
+                    geometry=geometry,
+                    dt=dt,
+                    trajectory_writer=writer
+                )
+            else:
+                self.simulation = jps.Simulation(
+                    model=jps.CollisionFreeSpeedModel(),
+                    geometry=geometry,
+                    dt=dt
+                )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create JuPedSim simulation: {e}")
         
         # Initialize stage manager
-        self.stage_manager = StageManager(self.simulation)
+        try:
+            self.stage_manager = StageManager(self.simulation)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create stage manager: {e}")
         
         # Iteration counter
         self.iteration = 0
