@@ -1,14 +1,15 @@
 """
 Rule-based decision maker using probabilistic logic.
+Simulator-agnostic - works with SUMO, JuPedSim, or any other simulator.
 """
 
 import random
 from typing import Dict, Any
 import sys
-import os
+from pathlib import Path
 
 # Add parent directory to path for base imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from base.decision_maker_base import DecisionMakerBase, Decision
 
 
@@ -39,8 +40,8 @@ class RuleBasedDecisionMaker(DecisionMakerBase):
         
         Args:
             message: The message received
-            agent_state: Current agent state
-            context: Simulation context
+            agent_state: Current agent state (position, destination, etc.)
+            context: Simulation context (time, network state, etc.)
             
         Returns:
             Decision.EVACUATE or Decision.IGNORE
@@ -49,18 +50,23 @@ class RuleBasedDecisionMaker(DecisionMakerBase):
         
         # Check for evacuation keywords
         if any(keyword in message_lower for keyword in self.evacuation_keywords):
+            # For now, always evacuate when keyword detected
+            # Can be made probabilistic again by uncommenting below
+            self.last_reasoning = f"Evacuation keyword detected in: '{message}'. Evacuating."
             return Decision.EVACUATE
-            #if random.random() < self.evacuation_probability:
-            #    self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
-            #    return Decision.EVACUATE
-            #else:
-            #    self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
-            #    return Decision.IGNORE
+            
+            # Probabilistic version (commented out):
+            # if random.random() < self.evacuation_probability:
+            #     self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
+            #     return Decision.EVACUATE
+            # else:
+            #     self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
+            #     return Decision.IGNORE
         
         # Default: ignore messages without evacuation keywords
         self.last_reasoning = "No evacuation keywords. Ignoring."
         return Decision.IGNORE
     
     def get_decision_reasoning(self) -> str:
-        """Return the reasoning for the last decision"""
+        """Return the reasoning for the last decision."""
         return self.last_reasoning

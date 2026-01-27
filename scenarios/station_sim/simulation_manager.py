@@ -13,8 +13,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from base.manager_base import SimulationManagerBase
 from base.diagnostics import SimulationDiagnostics
+from common.station_agent import StationAgent
 
-from agent import StationAgent
 from population_loader import PopulationLoader
 from station_network import StationNetwork
 from message_ui import MessageUI
@@ -37,7 +37,7 @@ class StationSimulationManager(SimulationManagerBase):
         # Station-specific tracking
         self.pedestrian_edges = []
         self.agents_to_spawn = []  # Queue of agents waiting to spawn
-        self.spawn_interval = 1.0  # Seconds between spawns
+        self.spawn_interval = 2.0  # Increased to 2 seconds between spawns to avoid JuPedSim distance violations
         self.last_spawn_time = -999  # Time of last spawn (start far in past)
         
         # Message UI
@@ -79,7 +79,7 @@ class StationSimulationManager(SimulationManagerBase):
         """
         print(f"Loading population of {num_agents} agents with rule-based decision makers...")
         
-        loader = PopulationLoader(decision_maker_config=decision_maker_config)
+        loader = PopulationLoader(decision_maker_config=decision_maker_config, network=self.network)
         agents = loader.create_agents(num_agents, self.station_network)
         
         for agent in agents:
@@ -94,7 +94,6 @@ class StationSimulationManager(SimulationManagerBase):
         """
         print("Queueing agents for spawning...")
         
-
         # Queue all unspawned agents
         self.agents_to_spawn = [agent for agent in self.agents.values() if not agent.is_spawned]
         print(f"Queued {len(self.agents_to_spawn)} agents for gradual spawning ({self.spawn_interval}s interval)")
@@ -106,9 +105,9 @@ class StationSimulationManager(SimulationManagerBase):
         # Spawn one agent if interval has passed and any are waiting
         if self.agents_to_spawn and (sim_time - self.last_spawn_time >= self.spawn_interval):
             agent = self.agents_to_spawn.pop(0)
+            self.last_spawn_time = sim_time  # Update time regardless of success to enforce interval
             try:
-                agent.spawn_in_sumo(self.network)
-                self.last_spawn_time = sim_time
+                agent.spawn()  # Use unified agent spawn method
             except Exception as e:
                 print(f"Failed to spawn {agent.id}: {e}")
                 self.diagnostics.failed_insertions += 1
@@ -148,8 +147,8 @@ class StationSimulationManager(SimulationManagerBase):
     
     def get_simulation_statistics(self) -> dict:
         """Get station simulation statistics"""
-        active_count = sum(1 for agent in self.agents.values() if not agent.is_complete())
-        completed_count = sum(1 for agent in self.agents.values() if agent.is_complete())
+        active_count = sum(1 for agent in self.agents.values() if not agent.is_schedule_complete())
+        completed_count = sum(1 for agent in self.agents.values() if agent.is_schedule_complete())
         
         return {
             'total_agents': self.get_agent_count(),

@@ -15,7 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from simulation import StationSimulation
 from population_loader import create_agents_in_zone
-from agent import StationAgent
+from movement_jupedsim import JuPedSimMovementProvider
+
+# Import common agent
+sys.path.append(str(Path(__file__).parent.parent))
+from common.station_agent import StationAgent
 
 
 def main():
@@ -49,6 +53,9 @@ def main():
     print("\n[3/4] Creating agent population...")
     agents: List[StationAgent] = []
     
+    # Create movement provider for JuPedSim
+    movement_provider = JuPedSimMovementProvider(sim.simulation, sim.zones)
+    
     # Distribute agents across all platforms
     agent_distribution = {
         'platform_5_to_7': 15,
@@ -62,13 +69,15 @@ def main():
             zone_polygon = sim.zones[zone_name]
             create_agents_in_zone(
                 simulation=sim.simulation,
+                movement_provider=movement_provider,
                 zone_name=zone_name,
                 zone_polygon=zone_polygon,
                 num_agents=num_agents,
                 journey_id=journey_id,
                 stage_id=exit_id,
                 agent_list=agents,
-                zones_with_obstacles=sim.zones_with_obstacles
+                zones_with_obstacles=sim.zones_with_obstacles,
+                destination="main_exit"
             )
         else:
             print(f"Warning: Zone '{zone_name}' not found")

@@ -1,7 +1,13 @@
 import traci
 import sumolib
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.append(str(Path(__file__).parent.parent))
+
 from simulation_manager import StationSimulationManager
-import decision_maker_configs
+from common.decision_makers import configs as decision_maker_configs
 
 use_gui = True
 sumo_binary = sumolib.checkBinary("sumo-gui" if use_gui else "sumo")
@@ -62,6 +68,7 @@ def main():
 
     # Main simulation loop
     step = 0
+    last_stats_time = 0
 
     print("\nStarting simulation...")
 
@@ -72,7 +79,13 @@ def main():
             sim_manager.step(sim_time)
             step += 1
 
-            # Check if all agents completed
+            # Print statistics every 10 seconds
+            if sim_time - last_stats_time >= 10:
+                stats = sim_manager.get_simulation_statistics()
+                print(f"t={sim_time:.1f}s: spawned={stats['spawned_agents']}, active={stats['active_agents']}, completed={stats['completed_agents']}")
+                last_stats_time = sim_time
+
+            # Check if all agents completed their journeys
             stats = sim_manager.get_simulation_statistics()
             if stats["active_agents"] == 0 and stats["completed_agents"] > 0:
                 print("\nAll agents completed their journeys!")
