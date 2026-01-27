@@ -56,7 +56,8 @@ class StationSimulation:
         
         # Create JuPedSim simulation with CollisionFreeSpeedModel
         if output_file:
-            writer = jps.SqliteTrajectoryWriter(output_file=output_file)
+            # Write trajectory every 4th frame for reasonable file size (0.2s intervals)
+            writer = jps.SqliteTrajectoryWriter(output_file=output_file, every_nth_frame=4)
             self.simulation = jps.Simulation(
                 model=jps.CollisionFreeSpeedModel(),
                 geometry=geometry,

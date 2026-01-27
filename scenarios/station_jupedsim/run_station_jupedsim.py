@@ -4,22 +4,20 @@ Run the JuPedSim station simulation.
 This is the main entry point for the standalone JuPedSim implementation.
 """
 
-import os
 import sys
-import time
 import argparse
-import random
 from pathlib import Path
-from typing import List, Optional
-import jupedsim as jps
+from typing import List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from simulation import StationSimulation
+from simulation_setup import setup_evacuation_exits, setup_platform_stages, load_geometry
+from simulation_runner import SimulationRunner
 from population_loader import create_agents_from_entrances
 from movement_jupedsim import JuPedSimMovementProvider
-from geometry import load_entrance_areas, load_platform_areas
+from event_system import EventManager
 from visualization import LiveViewer
 
 # Import common agent
@@ -27,8 +25,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from common.station_agent import StationAgent
 
 
-def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
-    """Main simulation loop."""
+def main(enable_gui: bool = False, gui_update_interval: float = 1.0, events_file: str = None):
+    """Main simulation setup and execution."""
     
     # Setup paths
     scenario_dir = Path(__file__).parent
@@ -42,53 +40,31 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
     print("=" * 60)
     
     # Initialize simulation
-    print("\n[1/4] Initializing simulation...")
+    print("\n[1/5] Initializing simulation...")
     sim = StationSimulation(str(network_path), dt=0.05, output_file=str(trajectory_file))
     print(f"  Trajectory output: {trajectory_file}")
     
-    # Load entrance and platform areas
-    walking_areas_file = network_path / "walking_areas.add.xml"
-    entrance_areas = load_entrance_areas(str(walking_areas_file))
-    platform_areas = load_platform_areas(str(walking_areas_file))
-    print(f"Loaded {len(entrance_areas)} entrances, {len(platform_areas)} platforms")
+    # Load entrance and platform geometry
+    print("\n[2/5] Loading geometry...")
+    entrance_areas, platform_areas = load_geometry(network_path)
     
-    # Setup platform stages (waiting areas at each platform)
-    print("\n[2/4] Setting up platform stages...")
-    platform_stages = {}
-    platform_journeys = {}
+    # Setup evacuation exits at entrances
+    print("\n[3/5] Setting up evacuation exits...")
+    evacuation_exits, evacuation_journeys = setup_evacuation_exits(sim, entrance_areas)
     
-    for platform_name, platform_polygon in platform_areas.items():
-        # Get representative point (guaranteed to be inside polygon, unlike centroid)
-        point = platform_polygon.representative_point()
-        position = (point.x, point.y)
-        
-        # Try to create waiting stage, skip if position is outside walkable area
-        try:
-            stage_id = sim.stage_manager.create_waiting_stage(
-                name=platform_name,
-                position=position
-            )
-            platform_stages[platform_name] = stage_id
-            
-            # Create journey for this platform (single-stage journey to the waypoint)
-            journey = jps.JourneyDescription([stage_id])
-            journey_id = sim.simulation.add_journey(journey)
-            platform_journeys[platform_name] = journey_id
-            
-            print(f"  Created waiting stage for platform '{platform_name}' (stage_id={stage_id}, journey_id={journey_id})")
-        except RuntimeError as e:
-            print(f"  Warning: Skipped platform '{platform_name}' - position outside walkable area")
-    
-    if not platform_stages:
-        print("Error: No valid platform stages created!")
-        return
+    # Setup platform stages
+    platform_stages, platform_journeys = setup_platform_stages(sim, platform_areas)
     
     # Create agents
-    print("\n[3/4] Creating agent population...")
+    print("\n[4/5] Creating agent population...")
     agents: List[StationAgent] = []
     
     # Create movement provider for JuPedSim
     movement_provider = JuPedSimMovementProvider(sim.simulation, sim.zones)
+    
+    # Store evacuation exits in movement provider for agent access
+    movement_provider.evacuation_journeys = evacuation_journeys
+    movement_provider.evacuation_exits = evacuation_exits
     
     # Create agents at entrances with random platform destinations (but don't spawn yet)
     num_agents = 60
@@ -107,16 +83,15 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
     print(f"\nTotal agents created: {len(agents)}")
     print(f"Agents queued for gradual spawning")
     
-    # Queue agents for spawning - randomize order so entrances are mixed
-    agents_to_spawn = list(agents)
-    random.shuffle(agents_to_spawn)
-    print(f"Agent spawn order randomized across {len(entrance_areas)} entrances")
-    
-    spawn_interval = 2.0  # Spawn one agent every 2 seconds
-    last_spawn_time = -spawn_interval  # Allow first spawn immediately
+    # Initialize event manager
+    event_manager = EventManager(events_file)
+    if event_manager.events:
+        print(f"\n[EVENTS] Event system active with {len(event_manager.events)} scheduled events:")
+        for event in event_manager.events:
+            print(f"  t={event.time:6.1f}s: {event.action} - '{event.value}'")
     
     # Initialize live viewer if requested
-    viewer: Optional[LiveViewer] = None
+    viewer = None
     if enable_gui:
         print("\n[GUI] Initializing live viewer...")
         viewer = LiveViewer(
@@ -127,84 +102,50 @@ def main(enable_gui: bool = False, gui_update_interval: float = 1.0):
         )
         print(f"[GUI] Live viewer ready (updating every {gui_update_interval}s)")
     
+    # Create simulation runner
+    print("\n[5/5] Running simulation...")
+    runner = SimulationRunner(
+        sim=sim,
+        agents=agents,
+        event_manager=event_manager,
+        max_iterations=3600,
+        spawn_interval=2.0
+    )
+    
     # Run simulation
-    print("\n[4/4] Running simulation...")
-    print("Press Ctrl+C to stop\n")
+    stats = runner.run(
+        enable_gui=enable_gui,
+        gui_update_interval=gui_update_interval,
+        viewer=viewer
+    )
     
-    max_iterations = 3600
+    # Save events
+    runner.save_events(output_dir)
     
-    # Start timer for real execution time
-    start_time = time.time()
-    last_gui_update = 0.0
+    # Print summary
+    print_summary(stats, trajectory_file)
     
-    try:
-        while sim.iteration < max_iterations:
-            # Spawn one agent if interval has passed and any are waiting
-            if agents_to_spawn and (sim.get_simulation_time() - last_spawn_time >= spawn_interval):
-                agent = agents_to_spawn.pop(0)
-                last_spawn_time = sim.get_simulation_time()
-                try:
-                    agent.spawn()
-                except Exception as e:
-                    print(f"Failed to spawn {agent.id}: {e}")
-            
-            # Step simulation (even if no agents yet)
-            if not sim.step():
-                # Simulation ended - check if we're done
-                if not agents_to_spawn and sim.simulation.agent_count() == 0:
-                    break  # All agents spawned and completed
-            
-            sim_time = sim.get_simulation_time()
-            agent_count = sim.simulation.agent_count()
-            
-            # Update all spawned agents
-            for agent in agents:
-                if agent.is_spawned:
-                    agent.update(sim_time)
-            
-            # Print progress every 100 steps (5 seconds)
-            if sim.iteration % 100 == 0:
-                spawned_count = sum(1 for a in agents if a.is_spawned)
-                print(f"t={sim_time:6.2f}s  agents={agent_count:3d}  spawned={spawned_count:3d}/{len(agents)}")
-            
-            # Update GUI at specified interval
-            if viewer and (sim_time - last_gui_update) >= gui_update_interval:
-                # Get current agent positions directly from JuPedSim
-                agent_positions = []
-                for agent in sim.simulation.agents():
-                    pos = agent.position
-                    agent_positions.append((pos[0], pos[1]))
-                
-                viewer.update(agent_positions, sim_time, agent_count)
-                last_gui_update = sim_time
-                
-    except KeyboardInterrupt:
-        print("\n\nSimulation interrupted by user")
-    finally:
-        # Close GUI if open
-        if viewer:
-            viewer.close()
-    
-    # Stop timer
-    end_time = time.time()
-    real_time_elapsed = end_time - start_time
-    simulated_time = sim.get_simulation_time()
-    
-    # Summary
+    # Run visualization automatically
+    launch_visualization(trajectory_file, network_path)
+
+
+def print_summary(stats: dict, trajectory_file: Path):
+    """Print simulation summary statistics."""
     print("\n" + "=" * 60)
     print("Simulation Complete")
     print("=" * 60)
-    print(f"Total iterations: {sim.iteration}")
-    print(f"Simulation time: {simulated_time:.2f}s")
-    print(f"Real execution time: {real_time_elapsed:.2f}s")
-    print(f"Speed factor: {simulated_time / real_time_elapsed:.2f}x realtime" if real_time_elapsed > 0 else "Speed factor: N/A")
-    print(f"Remaining agents: {sim.simulation.agent_count()}")
-    print(f"Agents who exited: {len(agents) - sim.simulation.agent_count()}")
-    
-    # Trajectory info
+    print(f"Total iterations: {stats['iterations']}")
+    print(f"Simulation time: {stats['simulated_time']:.2f}s")
+    print(f"Real execution time: {stats['real_time']:.2f}s")
+    if stats['real_time'] > 0:
+        print(f"Speed factor: {stats['simulated_time'] / stats['real_time']:.2f}x realtime")
+    print(f"Remaining agents: {stats['remaining_agents']}")
+    print(f"Agents who exited: {stats['total_agents'] - stats['remaining_agents']}")
     print(f"\nTrajectory saved to: {trajectory_file}")
-    
-    # Run visualization automatically
+
+
+def launch_visualization(trajectory_file: Path, network_path: Path):
+    """Launch post-run visualization."""
     print("\n" + "=" * 60)
     print("Launching Visualization")
     print("=" * 60)
@@ -224,6 +165,14 @@ if __name__ == "__main__":
     parser.add_argument('--gui-interval', type=float, default=1.0, 
                         help='GUI update interval in seconds (default: 1.0)')
     
+    # Default to events.csv if it exists
+    scenario_dir = Path(__file__).parent
+    default_events_file = scenario_dir / "events.csv"
+    default_events = str(default_events_file) if default_events_file.exists() else None
+    
+    parser.add_argument('--events', type=str, default=default_events,
+                        help=f'Path to events CSV file for mid-simulation injections (default: {default_events})')
+    
     args = parser.parse_args()
     
-    main(enable_gui=args.gui, gui_update_interval=args.gui_interval)
+    main(enable_gui=args.gui, gui_update_interval=args.gui_interval, events_file=args.events)

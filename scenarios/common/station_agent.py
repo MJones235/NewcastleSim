@@ -158,7 +158,34 @@ class StationAgent(AgentBase):
         """Initiate evacuation behavior."""
         print(f"Agent {self.id} deciding to evacuate")
         self.is_evacuating = True
-        # Actual rerouting will be handled by simulation manager
+        self.evacuation_target = self._select_evacuation_exit()
+        
+        # Request reroute to evacuation exit
+        if self.evacuation_target:
+            success = self.movement_provider.reroute_to_evacuation_exit(self, self.evacuation_target)
+            if success:
+                print(f"  → Agent {self.id} rerouted to {self.evacuation_target}")
+            else:
+                print(f"  ✗ Agent {self.id} failed to reroute")
+    
+    def _select_evacuation_exit(self) -> str:
+        """
+        Select closest evacuation exit based on current position.
+        
+        Returns:
+            Name of evacuation exit to target
+        """
+        # Get available evacuation exits from movement provider
+        if hasattr(self.movement_provider, 'evacuation_exits'):
+            exit_names = list(self.movement_provider.evacuation_exits.keys())
+            if exit_names:
+                # For now, select randomly
+                # Could be improved to select nearest exit based on position
+                import random
+                return random.choice(exit_names)
+        
+        # Fallback to initial zone (entrance)
+        return self.initial_zone
     
     def get_current_location(self) -> tuple[float, float]:
         """Get agent's current (x, y) position."""

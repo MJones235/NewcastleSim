@@ -26,7 +26,7 @@ class RuleBasedDecisionMaker(DecisionMakerBase):
         self.evacuation_probability = self.config.get('evacuation_probability', 0.5)
         
         # Keywords that trigger evacuation consideration
-        self.evacuation_keywords = ['evacuate', 'emergency', 'leave', 'exit', 'danger', 'fire', 'threat']
+        self.evacuation_keywords = ['evacuate', 'evacuation']
         
         # Store last decision reasoning
         self.last_reasoning = ""
@@ -50,18 +50,12 @@ class RuleBasedDecisionMaker(DecisionMakerBase):
         
         # Check for evacuation keywords
         if any(keyword in message_lower for keyword in self.evacuation_keywords):
-            # For now, always evacuate when keyword detected
-            # Can be made probabilistic again by uncommenting below
-            self.last_reasoning = f"Evacuation keyword detected in: '{message}'. Evacuating."
-            return Decision.EVACUATE
-            
-            # Probabilistic version (commented out):
-            # if random.random() < self.evacuation_probability:
-            #     self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
-            #     return Decision.EVACUATE
-            # else:
-            #     self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
-            #     return Decision.IGNORE
+            if random.random() < self.evacuation_probability:
+                self.last_reasoning = f"Evacuation keyword detected. Evacuating (p={self.evacuation_probability})"
+                return Decision.EVACUATE
+            else:
+                self.last_reasoning = f"Evacuation keyword detected. Ignoring (p={1-self.evacuation_probability})"
+                return Decision.IGNORE
         
         # Default: ignore messages without evacuation keywords
         self.last_reasoning = "No evacuation keywords. Ignoring."

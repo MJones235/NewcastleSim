@@ -28,6 +28,8 @@ class JuPedSimMovementProvider(MovementProvider):
         """
         self.simulation = simulation
         self.zones = zones
+        self.evacuation_journeys = {}  # Will be set by main script
+        self.evacuation_exits = {}  # Will be set by main script
     
     def spawn_agent(self, agent: Any, spawn_params: Dict[str, Any]) -> bool:
         """
@@ -216,3 +218,37 @@ class JuPedSimMovementProvider(MovementProvider):
             }
         except:
             return {'zone': 'unknown'}
+    
+    def reroute_to_evacuation_exit(self, agent: Any, exit_name: str) -> bool:
+        """
+        Reroute an agent to an evacuation exit.
+        
+        Args:
+            agent: StationAgent to reroute
+            exit_name: Name of the evacuation exit entrance
+            
+        Returns:
+            True if successfully rerouted
+        """
+        if not hasattr(agent, 'jps_agent_id'):
+            return False
+        
+        # Get the evacuation journey and exit stage for this exit
+        if exit_name not in self.evacuation_journeys:
+            print(f"Warning: No evacuation journey found for exit '{exit_name}'")
+            return False
+        
+        journey_id = self.evacuation_journeys[exit_name]
+        stage_id = self.evacuation_exits[exit_name]
+        
+        try:
+            # Switch agent to evacuation journey with the exit stage
+            self.simulation.switch_agent_journey(
+                agent.jps_agent_id,
+                journey_id,
+                stage_id
+            )
+            return True
+        except Exception as e:
+            print(f"Failed to reroute agent {agent.id} to {exit_name}: {e}")
+            return False

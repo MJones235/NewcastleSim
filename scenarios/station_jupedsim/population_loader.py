@@ -10,11 +10,9 @@ import sys
 
 # Import from parent modules
 sys.path.append(str(Path(__file__).parent.parent))
-from base.decision_maker_base import DecisionMakerBase
 from common.station_agent import StationAgent
 from common.walking_speed import sample_walking_speed
 from common.decision_makers.rule_based import RuleBasedDecisionMaker
-from common.decision_makers import configs as decision_configs
 
 try:
     from .movement_jupedsim import JuPedSimMovementProvider
@@ -69,9 +67,7 @@ def create_agents_in_zone(
         walking_speed = sample_walking_speed()
         
         # Create decision maker
-        evac_prob = np.random.uniform(0.3, 0.7)
-        config = {'evacuation_probability': evac_prob}
-        decision_maker = RuleBasedDecisionMaker(config=config)
+        decision_maker = RuleBasedDecisionMaker(config={'evacuation_probability': 0.5})
         
         # Create unified agent
         agent_id = f"agent_{len(agent_list)}"

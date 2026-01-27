@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import sqlite3
 import numpy as np
+import json
 from pathlib import Path
 import sys
 
@@ -14,7 +15,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from geometry import load_walkable_areas, load_obstacles, load_platform_areas
-from .viewer_common import draw_geometry, set_axis_limits
+
+try:
+    from .viewer_common import draw_geometry, set_axis_limits
+except ImportError:
+    from viewer_common import draw_geometry, set_axis_limits
 
 
 def load_trajectory_data(db_path):
@@ -77,6 +82,14 @@ def visualize_simulation(trajectory_db: str, network_path: str):
     
     print(f"Loaded {len(frames_data)} frames")
     
+    # Load triggered events if available
+    events_file = Path(trajectory_db).parent / "triggered_events.json"
+    events_data = []
+    if events_file.exists():
+        with open(events_file, 'r') as f:
+            events_data = json.load(f)
+        print(f"Loaded {len(events_data)} events")
+    
     # Setup figure using live viewer style
     fig, ax = plt.subplots(figsize=(12, 10))
     ax.set_aspect('equal')
@@ -113,8 +126,14 @@ def visualize_simulation(trajectory_db: str, network_path: str):
     # Initialize agent scatter plot
     scatter = ax.scatter([], [], c='green', s=30, alpha=0.7, zorder=10)
     
+    # Event popup tracking
+    event_popup = None
+    
     frame_list = sorted(frames_data.keys())
     dt = 0.05  # JuPedSim timestep
+    frame_interval = 4  # Trajectory written every 4th frame
+    time_per_saved_frame = dt * frame_interval  # 0.2s per saved frame
+    event_popup_duration = 5.0  # Show popup for 5 seconds
     
     def init():
         scatter.set_offsets(np.empty((0, 2)))
@@ -122,6 +141,8 @@ def visualize_simulation(trajectory_db: str, network_path: str):
         return scatter,
     
     def update(frame_idx):
+        nonlocal event_popup
+        
         frame_num = frame_list[frame_idx]
         positions = frames_data[frame_num]
         
@@ -130,9 +151,49 @@ def visualize_simulation(trajectory_db: str, network_path: str):
         else:
             scatter.set_offsets(np.empty((0, 2)))
         
-        time_sec = frame_num * dt
+        # Calculate actual simulation time based on frame number and sampling interval
+        time_sec = frame_num * time_per_saved_frame
+        
+        # Handle event popups
+        if event_popup:
+            event_popup.remove()
+            event_popup = None
+        
+        # Check if any events should be displayed
+        event_shown = False
+        for i in range(len(events_data)):
+            event = events_data[i]
+            event_time = event['time']
+            
+            # Show popup if event time is within display window
+            if event_time <= time_sec < event_time + event_popup_duration:
+                xlim = ax.get_xlim()
+                ylim = ax.get_ylim()
+                x_center = (xlim[0] + xlim[1]) / 2
+                y_top = ylim[1] - (ylim[1] - ylim[0]) * 0.05
+                
+                event_popup = ax.text(
+                    x_center, y_top, 
+                    f"🔔 EVENT: {event['value']}",
+                    fontsize=12,
+                    fontweight='bold',
+                    color='red',
+                    bbox=dict(boxstyle='round,pad=0.8', facecolor='yellow', 
+                             edgecolor='red', linewidth=2, alpha=0.9),
+                    ha='center',
+                    va='top',
+                    zorder=100
+                )
+                event_shown = True
+                break
+        
         ax.set_title(f'JuPedSim Station Simulation - t={time_sec:.1f}s, Agents={len(positions)}')
-        return scatter,
+        
+        # Return all artists that were modified
+        artists = [scatter]
+        if event_popup:
+            artists.append(event_popup)
+        return artists
     
     # Create animation
     print("Creating animation...")
