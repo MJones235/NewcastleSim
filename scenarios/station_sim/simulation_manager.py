@@ -84,7 +84,14 @@ class StationSimulationManager(SimulationManagerBase):
         for agent in agents:
             self.add_agent(agent)
 
+        # Set up evacuation exits (use entrance edges as exits)
+        # For SUMO, the movement provider just needs to know the edge IDs
+        if hasattr(self, "station_network") and hasattr(self.station_network, "entrance_edges"):
+            for entrance_edge in self.station_network.entrance_edges:
+                loader.movement_provider.evacuation_exits[entrance_edge] = entrance_edge
+
         print(f"Loaded {len(self.agents)} agents into simulation")
+        print(f"Set up {len(loader.movement_provider.evacuation_exits)} evacuation exits")
 
     def spawn_agents(self):
         """

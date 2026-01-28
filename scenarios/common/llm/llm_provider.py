@@ -15,6 +15,10 @@ class LLMResponse:
     completion_tokens: int = 0  # Tokens in completion
     total_tokens: int = 0  # Total tokens used
 
+    # Phase 2: Communication actions
+    broadcast_message: str | None = None  # Message to broadcast
+    broadcast_radius: float | None = None  # Radius in meters
+
 
 class LLMProvider(ABC):
     """

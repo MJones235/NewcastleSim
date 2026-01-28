@@ -181,6 +181,12 @@ class AzureLLMProvider(LLMProvider):
                     UserMessage(content=prompt),
                 ]
 
+                # Log prompt and response for debugging
+                logger.debug("=" * 70)
+                logger.debug("LLM REQUEST:")
+                logger.debug(f"Prompt:\n{prompt}")
+                logger.debug("=" * 70)
+
                 # Call Azure AI Inference API
                 # Note: gpt-5-nano has limited parameter support - using defaults
                 response = await self.client.complete(
@@ -190,13 +196,21 @@ class AzureLLMProvider(LLMProvider):
 
                 # Parse response - guaranteed to match schema
                 content = response.choices[0].message.content
-                logger.debug(f"LLM Response (first 300 chars): {content[:300]}")
 
                 # Extract token usage
                 usage = response.usage
                 prompt_tokens = usage.prompt_tokens if usage else 0
                 completion_tokens = usage.completion_tokens if usage else 0
                 total_tokens = usage.total_tokens if usage else 0
+
+                # Log full response for debugging
+                logger.debug("=" * 70)
+                logger.debug("LLM RESPONSE:")
+                logger.debug(f"Content:\n{content}")
+                logger.debug(
+                    f"Tokens: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
+                )
+                logger.debug("=" * 70)
 
                 # Update cumulative stats
                 self.total_prompt_tokens += prompt_tokens
@@ -207,6 +221,11 @@ class AzureLLMProvider(LLMProvider):
                 parsed = self._parse_response(
                     content, prompt_tokens, completion_tokens, total_tokens
                 )
+
+                logger.debug(
+                    f"PARSED: decision={parsed.decision}, broadcast_msg={parsed.broadcast_message}"
+                )
+
                 return parsed
 
             except Exception as e:
@@ -256,6 +275,18 @@ class AzureLLMProvider(LLMProvider):
                 )
                 confidence = 0.5
 
+            # Phase 2: Extract broadcast fields directly from JSON
+            broadcast_msg = data.get("broadcast_message")
+
+            # Validate broadcast_message (convert None or empty to None)
+            if broadcast_msg is not None:
+                broadcast_msg = str(broadcast_msg).strip()
+                if not broadcast_msg or broadcast_msg.lower() == "null":
+                    broadcast_msg = None
+
+            # Always use fixed 2m radius for broadcasts
+            broadcast_radius = 2.0 if broadcast_msg else None
+
             return LLMResponse(
                 decision=decision,
                 reasoning=reasoning,
@@ -263,6 +294,8 @@ class AzureLLMProvider(LLMProvider):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                broadcast_message=broadcast_msg,
+                broadcast_radius=broadcast_radius,
             )
 
         except json.JSONDecodeError:
@@ -287,7 +320,10 @@ class AzureLLMProvider(LLMProvider):
             # Use the raw content as reasoning (truncate if too long)
             reasoning = content[:200] if len(content) <= 200 else content[:197] + "..."
 
-            logger.info(f"Parsed natural language response as: {decision}")
+            logger.debug(f"Parsed natural language response as: {decision}")
+
+            # Phase 2: Parse broadcast communication (simple keyword detection)
+            broadcast_msg, broadcast_radius = self._parse_broadcast_intent(content)
 
             return LLMResponse(
                 decision=decision,
@@ -296,6 +332,8 @@ class AzureLLMProvider(LLMProvider):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                broadcast_message=broadcast_msg,
+                broadcast_radius=broadcast_radius,
             )
 
         except (KeyError, ValueError, TypeError) as e:
@@ -340,3 +378,81 @@ class AzureLLMProvider(LLMProvider):
         """Close the Azure client session."""
         if hasattr(self.client, "close"):
             await self.client.close()
+
+    def _parse_broadcast_intent(self, text: str) -> tuple[str | None, float | None]:
+        """
+        Parse broadcast communication intent from natural language response.
+
+        Args:
+            text: The LLM response text
+
+        Returns:
+            Tuple of (message, radius) or (None, None) if no broadcast intent
+        """
+        import re
+
+        text_lower = text.lower()
+
+        # Keywords indicating broadcast intent
+        broadcast_keywords = [
+            "shout",
+            "yell",
+            "call out",
+            "warn",
+            "tell everyone",
+            "announce",
+            "alert",
+            "say to",
+            "inform",
+            "let people know",
+        ]
+
+        has_broadcast = any(keyword in text_lower for keyword in broadcast_keywords)
+        if not has_broadcast:
+            return None, None
+
+        # Extract quoted message or message after keywords
+        message = None
+
+        # Try to find quoted text
+        quote_patterns = [
+            r'["\']([^"\']+)["\']',  # Single or double quotes
+            r"say:\s*(.+?)(?:\.|$)",  # "say: message"
+            r"shout:\s*(.+?)(?:\.|$)",  # "shout: message"
+        ]
+
+        for pattern in quote_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                message = match.group(1).strip()
+                break
+
+        # If no message found, extract a general warning
+        if not message:
+            if "evacuate" in text_lower:
+                message = "We need to evacuate!"
+            elif "leave" in text_lower:
+                message = "We should leave!"
+            else:
+                message = "Something's happening!"
+
+        # Extract radius (default to 10m)
+        radius = 10.0  # Default
+
+        # Look for distance mentions
+        distance_patterns = [
+            r"(\d+)\s*(?:meter|metre|m\b)",
+            r"within\s+(\d+)",
+        ]
+
+        for pattern in distance_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                radius = float(match.group(1))
+                break
+
+        # Clamp radius to reasonable range
+        radius = max(5.0, min(20.0, radius))
+
+        logger.debug(f"Parsed broadcast: message='{message}', radius={radius}m")
+        return message, radius

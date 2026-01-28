@@ -28,7 +28,7 @@ def load_trajectory_data(db_path):
         db_path: Path to trajectory database
 
     Returns:
-        Dictionary with frame numbers as keys, each containing agent positions
+        Dictionary with frame numbers as keys, each containing agent positions and IDs
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -48,12 +48,12 @@ def load_trajectory_data(db_path):
     if not data:
         return None
 
-    # Organize data by frame
+    # Organize data by frame - include agent IDs for state tracking
     frames: dict[int, list] = {}
-    for frame, _agent_id, x, y in data:
+    for frame, agent_id, x, y in data:
         if frame not in frames:
             frames[frame] = []
-        frames[frame].append((x, y))
+        frames[frame].append((x, y, agent_id))
 
     return frames
 
@@ -89,6 +89,22 @@ def visualize_simulation(trajectory_db: str, network_path: str):
         with open(events_file) as f:
             events_data = json.load(f)
         print(f"Loaded {len(events_data)} events")
+
+    # Load agent timelines to track evacuation decisions
+    timeline_file = Path(trajectory_db).parent / "agent_timelines.json"
+    evacuation_times = {}  # Map agent_id -> time when they decided to evacuate
+    if timeline_file.exists():
+        with open(timeline_file) as f:
+            timeline_data = json.load(f)
+        for agent_data in timeline_data.get("agents", []):
+            agent_id = agent_data["agent_id"]
+            # Find first evacuation decision
+            for action in agent_data.get("actions", []):
+                if action["action_type"] == "decision":
+                    if action["details"].get("decision") == "evacuate":
+                        evacuation_times[agent_id] = action["timestamp"]
+                        break
+        print(f"Loaded evacuation decisions for {len(evacuation_times)} agents")
 
     # Setup figure using live viewer style
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -144,8 +160,8 @@ def visualize_simulation(trajectory_db: str, network_path: str):
     # Set axis limits using shared function
     set_axis_limits(ax, walkable_areas, obstacles, platform_areas)
 
-    # Initialize agent scatter plot
-    scatter = ax.scatter([], [], c="green", s=30, alpha=0.7, zorder=10)
+    # Initialize agent scatter plot (will be updated with colors per frame)
+    scatter = ax.scatter([], [], s=30, alpha=0.7, zorder=10)
 
     # Event popup tracking
     event_popup = None
@@ -154,7 +170,7 @@ def visualize_simulation(trajectory_db: str, network_path: str):
     dt = 0.05  # JuPedSim timestep
     frame_interval = 4  # Trajectory written every 4th frame
     time_per_saved_frame = dt * frame_interval  # 0.2s per saved frame
-    event_popup_duration = 5.0  # Show popup for 5 seconds
+    event_popup_duration = 10.0  # Show popup for 10 seconds
 
     def init():
         scatter.set_offsets(np.empty((0, 2)))
@@ -165,15 +181,20 @@ def visualize_simulation(trajectory_db: str, network_path: str):
         nonlocal event_popup
 
         frame_num = frame_list[frame_idx]
-        positions = frames_data[frame_num]
-
-        if positions:
-            scatter.set_offsets(positions)
-        else:
-            scatter.set_offsets(np.empty((0, 2)))
+        positions_with_ids = frames_data[frame_num]
 
         # Calculate actual simulation time based on frame number and sampling interval
         time_sec = frame_num * time_per_saved_frame
+
+        if positions_with_ids:
+            # Extract positions
+            positions = [(x, y) for x, y, agent_id in positions_with_ids]
+
+            scatter.set_offsets(positions)
+            scatter.set_color("blue")  # All agents in blue
+        else:
+            scatter.set_offsets(np.empty((0, 2)))
+            scatter.set_color("blue")
 
         # Handle event popups (remove previous popup if it exists)
         nonlocal event_popup
@@ -193,10 +214,16 @@ def visualize_simulation(trajectory_db: str, network_path: str):
                 x_center = (xlim[0] + xlim[1]) / 2
                 y_top = ylim[1] - (ylim[1] - ylim[0]) * 0.05
 
+                # Wrap text to prevent cutoff and improve readability
+                import textwrap
+
+                event_text = f"🔔 EVENT: {event['value']}"
+                wrapped_text = "\n".join(textwrap.wrap(event_text, width=60))
+
                 event_popup = ax.text(
                     x_center,
                     y_top,
-                    f"🔔 EVENT: {event['value']}",
+                    wrapped_text,
                     fontsize=12,
                     fontweight="bold",
                     color="red",
@@ -213,7 +240,10 @@ def visualize_simulation(trajectory_db: str, network_path: str):
                 )
                 break
 
-        ax.set_title(f"JuPedSim Station Simulation - t={time_sec:.1f}s, Agents={len(positions)}")
+        ax.set_title(
+            f"JuPedSim Station Simulation - t={time_sec:.1f}s | "
+            f"Agents: {len(positions_with_ids) if positions_with_ids else 0}"
+        )
 
         # Return all artists that were modified
         artists: list[Any] = [scatter]

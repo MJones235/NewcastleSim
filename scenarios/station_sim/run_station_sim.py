@@ -4,11 +4,13 @@ from pathlib import Path
 import sumolib
 import traci
 
-# Add parent directory to path
-sys.path.append(str(Path(__file__).parent.parent))
+# Add project root to Python path (two levels up from this file)
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from common.decision_makers import configs as decision_maker_configs
-from simulation_manager import StationSimulationManager
+from scenarios.common.decision_makers import configs as decision_maker_configs
+from scenarios.station_sim.simulation_manager import StationSimulationManager
 
 use_gui = True
 sumo_binary = sumolib.checkBinary("sumo-gui" if use_gui else "sumo")
@@ -26,7 +28,7 @@ def main():
     # Load population with decision makers
     # Configure evacuation probability: RULE_BASED_DEFAULT, RULE_BASED_HIGH_COMPLIANCE, or RULE_BASED_LOW_COMPLIANCE
     sim_manager.load_population(
-        num_agents=10, decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
+        num_agents=100, decision_maker_config=decision_maker_configs.RULE_BASED_DEFAULT
     )
 
     # Configure SUMO

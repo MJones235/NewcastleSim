@@ -124,7 +124,8 @@ class EventManager:
         try:
             time = float(row[0].strip())
             action = row[1].strip()
-            value = row[2].strip().strip("\"'")
+            # Join remaining columns in case message contains commas
+            value = " ".join(row[2:]).strip().strip("\"'")
 
             if not action:
                 logger.warning(f"Skipping event with empty action at time {time}")

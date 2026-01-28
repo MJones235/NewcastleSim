@@ -27,6 +27,7 @@ class SUMOMovementProvider(MovementProvider):
             network: Optional SUMO network object for analysis
         """
         self.network = network
+        self.evacuation_exits = {}  # Will be set by simulation setup
 
     def spawn_agent(self, agent: Any, spawn_params: dict[str, Any]) -> bool:
         """
@@ -164,6 +165,54 @@ class SUMOMovementProvider(MovementProvider):
                 traci.person.remove(agent.person_id)
             except traci.exceptions.TraCIException:
                 pass
+
+    def reroute_to_evacuation_exit(self, agent: Any, exit_name: str) -> bool:
+        """
+        Reroute agent to a specific evacuation exit.
+
+        For SUMO with JuPedSim, this sets a new walking destination and lets JuPedSim
+        compute the actual path through the pedestrian geometry.
+
+        Args:
+            agent: StationAgent to reroute
+            exit_name: Name of the exit (entrance edge name)
+
+        Returns:
+            True if successfully rerouted
+        """
+        if not hasattr(agent, "person_id") or not agent.person_id:
+            return False
+
+        try:
+            # Check if person still exists
+            if agent.person_id not in traci.person.getIDList():
+                return False
+
+            # Get current edge
+            current_edge = traci.person.getRoadID(agent.person_id)
+
+            # If already at exit, done
+            if current_edge == exit_name:
+                return True
+
+            # Remove all remaining stages (future stages, not current one)
+            remaining_stages = traci.person.getRemainingStages(agent.person_id)
+            if remaining_stages > 1:
+                for _ in range(remaining_stages - 1):
+                    try:
+                        traci.person.removeStage(agent.person_id, 1)
+                    except:
+                        break
+
+            # With JuPedSim, we just specify the destination edge
+            # JuPedSim will compute the path through its geometry
+            # arrivalPos=0.0, duration=0.0 (use default speed), speed=0.0 (use person speed)
+            traci.person.appendWalkingStage(agent.person_id, [exit_name], 0.0, 0.0, 0.0, "")
+            return True
+
+        except traci.exceptions.TraCIException as e:
+            print(f"  ⚠ Agent {agent.id} failed to reroute to {exit_name}: {e}")
+            return False
 
     def get_agent_location_info(self, agent: Any) -> dict[str, Any]:
         """

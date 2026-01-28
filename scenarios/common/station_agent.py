@@ -3,6 +3,7 @@ Unified station agent that works with any movement simulator.
 Separates decision-making from movement implementation.
 """
 
+import random
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -13,6 +14,45 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from base.agent_base import AgentBase
 from base.decision_maker_base import Decision, DecisionMakerBase
 from base.movement_provider import MovementProvider
+
+from scenarios.common.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# Myers-Briggs personality types with descriptions
+PERSONALITY_TYPES = {
+    "ISTJ": "Practical, fact-minded, reliable. Prefers order and clear procedures.",
+    "ISFJ": "Caring, loyal, patient. Values harmony and helping others.",
+    "INFJ": "Idealistic, insightful, principled. Seeks meaning and authenticity.",
+    "INTJ": "Strategic, independent, analytical. Values competence and logic.",
+    "ISTP": "Practical, observant, adaptable. Prefers hands-on problem-solving.",
+    "ISFP": "Gentle, sensitive, spontaneous. Values personal freedom and aesthetics.",
+    "INFP": "Idealistic, empathetic, reflective. Guided by personal values.",
+    "INTP": "Analytical, curious, theoretical. Seeks logical understanding.",
+    "ESTP": "Energetic, pragmatic, direct. Thrives on action and excitement.",
+    "ESFP": "Enthusiastic, sociable, spontaneous. Lives in the moment.",
+    "ENFP": "Enthusiastic, creative, expressive. Sees possibilities everywhere.",
+    "ENTP": "Inventive, analytical, outspoken. Enjoys intellectual challenges.",
+    "ESTJ": "Organized, decisive, practical. Values tradition and order.",
+    "ESFJ": "Warm, cooperative, responsible. Values harmony and helping.",
+    "ENFJ": "Charismatic, empathetic, inspiring. Focused on helping others grow.",
+    "ENTJ": "Bold, strategic, decisive. Natural leader who values efficiency.",
+}
+
+
+def generate_random_demographics() -> dict:
+    """Generate random age, gender, and personality type for an agent."""
+    age = random.randint(18, 75)
+    gender = random.choice(["male", "female"])
+    personality_type = random.choice(list(PERSONALITY_TYPES.keys()))
+
+    return {
+        "age": age,
+        "gender": gender,
+        "personality_type": personality_type,
+        "personality_description": PERSONALITY_TYPES[personality_type],
+    }
 
 
 class StationAgent(AgentBase):
@@ -43,9 +83,19 @@ class StationAgent(AgentBase):
             initial_zone: Starting zone/location name
             destination: Target destination name
             spawn_params: Simulator-specific spawn parameters
-            demographics: Optional demographic information
+            demographics: Optional demographic information (age, gender, personality)
         """
+        # Generate demographics if not provided
+        if demographics is None:
+            demographics = generate_random_demographics()
+
         super().__init__(agent_id, demographics)
+
+        # Store demographics for easy access
+        self.age = demographics.get("age", 30)
+        self.gender = demographics.get("gender", "unknown")
+        self.personality_type = demographics.get("personality_type", "ISTJ")
+        self.personality_description = demographics.get("personality_description", "")
 
         # Movement properties
         self.walking_speed = walking_speed
@@ -71,6 +121,9 @@ class StationAgent(AgentBase):
         # For tracking evacuation
         self.original_destination = destination
         self.evacuation_target = None
+
+        # For agent-to-agent communication
+        self._get_all_agents_callback = None  # Set by simulation manager
 
     def spawn(self) -> bool:
         """
@@ -165,7 +218,11 @@ class StationAgent(AgentBase):
 
     def _start_evacuation(self):
         """Initiate evacuation behavior."""
-        print(f"Agent {self.id} deciding to evacuate")
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Agent {self.id} deciding to evacuate")
         self.is_evacuating = True
         self.evacuation_target = self._select_evacuation_exit()
 
@@ -175,9 +232,9 @@ class StationAgent(AgentBase):
                 self, self.evacuation_target
             )
             if success:
-                print(f"  → Agent {self.id} rerouted to {self.evacuation_target}")
+                logger.info(f"  → Agent {self.id} rerouted to {self.evacuation_target}")
             else:
-                print(f"  ✗ Agent {self.id} failed to reroute")
+                logger.warning(f"  ✗ Agent {self.id} failed to reroute to {self.evacuation_target}")
 
     def _select_evacuation_exit(self) -> str:
         """
@@ -207,6 +264,82 @@ class StationAgent(AgentBase):
         """Get agent's current zone/area name."""
         location_info = self.movement_provider.get_agent_location_info(self)
         return location_info.get("zone", "unknown")
+
+    def send_message_to_nearby(self, message: str, radius: float) -> int:
+        """
+        Send a message to all agents within a given radius.
+
+        Args:
+            message: Message to broadcast
+            radius: Distance in meters within which agents will receive the message
+
+        Returns:
+            Number of agents who received the message
+        """
+        if self._get_all_agents_callback is None:
+            logger.warning(f"Agent {self.id} cannot send messages - callback not set")
+            return 0
+
+        if not self.is_spawned:
+            logger.debug(f"Agent {self.id} cannot send messages - not spawned")
+            return 0
+
+        all_agents = self._get_all_agents_callback()
+        recipients = 0
+
+        # Calculate distance to each agent and send message if within radius
+        for other_agent in all_agents:
+            if other_agent.id == self.id:
+                continue  # Don't send to self
+
+            if not other_agent.is_spawned:
+                continue  # Skip agents not yet spawned
+
+            # Calculate Euclidean distance
+            dx = other_agent.position[0] - self.position[0]
+            dy = other_agent.position[1] - self.position[1]
+            distance = (dx**2 + dy**2) ** 0.5
+
+            if distance <= radius:
+                # Format message with sender information
+                formatted_message = f"[Agent {self.id}]: {message}"
+                other_agent.receive_message(formatted_message)
+                recipients += 1
+
+        logger.info(
+            f"Agent {self.id} sent message to {recipients} nearby agents (radius={radius}m)"
+        )
+        return recipients
+
+    def send_message_to_agent(self, target_agent: "StationAgent", message: str) -> bool:
+        """
+        Send a message to a specific agent.
+
+        Args:
+            target_agent: The agent to send the message to
+            message: Message to send
+
+        Returns:
+            True if message was delivered, False otherwise
+        """
+        if not self.is_spawned:
+            logger.debug(f"Agent {self.id} cannot send messages - not spawned")
+            return False
+
+        if target_agent.id == self.id:
+            logger.debug(f"Agent {self.id} cannot send message to self")
+            return False
+
+        if not target_agent.is_spawned:
+            logger.debug(f"Agent {self.id} cannot send to {target_agent.id} - target not spawned")
+            return False
+
+        # Format message with sender information
+        formatted_message = f"[Agent {self.id}]: {message}"
+        target_agent.receive_message(formatted_message)
+
+        logger.info(f"Agent {self.id} sent message to agent {target_agent.id}")
+        return True
 
     def set_destination(self, new_destination: str, target: Any = None) -> bool:
         """

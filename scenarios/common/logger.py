@@ -22,6 +22,9 @@ def setup_logger(
     """
     Setup and configure logger with console and optional file handlers.
 
+    Configures BOTH the named logger AND the root logger so that all child
+    loggers (e.g., scenarios.common.llm.azure_provider) inherit the file handler.
+
     Args:
         name: Logger name
         log_file: Optional path to log file
@@ -31,6 +34,11 @@ def setup_logger(
     Returns:
         Configured logger instance
     """
+    # Configure root logger to capture all logs
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.handlers.clear()
+
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)  # Capture everything, handlers will filter
 
@@ -43,6 +51,7 @@ def setup_logger(
     console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
+    root_logger.addHandler(console_handler)
 
     # File handler - DEBUG and above (if log file specified)
     if log_file:
@@ -54,6 +63,7 @@ def setup_logger(
         )
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
+        root_logger.addHandler(file_handler)
 
     return logger
 

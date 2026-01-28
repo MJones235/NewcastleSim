@@ -195,22 +195,37 @@ class JuPedSimMovementProvider(MovementProvider):
 
     def get_agent_location_info(self, agent: Any) -> dict[str, Any]:
         """
-        Get agent's current position from JuPedSim.
+        Get agent's current position and zone from JuPedSim.
 
         Args:
             agent: StationAgent with jps_agent_id
 
         Returns:
-            Dictionary with position (x, y) tuple
+            Dictionary with position (x, y) tuple and zone name
         """
         if not hasattr(agent, "jps_agent_id"):
-            return {"position": (0.0, 0.0)}
+            return {"position": (0.0, 0.0), "zone": "unknown"}
 
         try:
             position = self.simulation.agent_position(agent.jps_agent_id)
-            return {"position": (position[0], position[1])}
+            pos_tuple = (position[0], position[1])
+
+            # Determine which zone the agent is in
+            zone_name = "unknown"
+            from shapely.geometry import Point
+
+            point = Point(pos_tuple)
+
+            # Check each zone to see if agent is inside
+            for name, polygon in self.zones.items():
+                if polygon.contains(point):
+                    zone_name = name
+                    break
+
+            return {"position": pos_tuple, "zone": zone_name}
         except Exception:
-            return {"position": agent.position if hasattr(agent, "position") else (0.0, 0.0)}
+            fallback_pos = agent.position if hasattr(agent, "position") else (0.0, 0.0)
+            return {"position": fallback_pos, "zone": "unknown"}
 
     def reroute_to_evacuation_exit(self, agent: Any, exit_name: str) -> bool:
         """

@@ -51,10 +51,20 @@ class LLMDecisionMaker(DecisionMakerBase):
         self.last_decision: Decision = Decision.IGNORE
         self.last_reasoning: str = ""
 
+        # Message history tracking (Phase 1)
+        self.message_history: list[dict[str, Any]] = []
+
+        # Callback for structured message logging
+        self._message_callback = None
+
         if self._llm_provider is None:
             logger.warning(
                 "LLM provider not initialized - call LLMDecisionMaker.initialize_llm() first"
             )
+
+    def set_message_callback(self, callback):
+        """Set callback for logging messages: callback(agent_id, timestamp, message, from_agent)"""
+        self._message_callback = callback
 
     def make_decision(
         self, message: str, agent_state: dict[str, Any], context: dict[str, Any]
@@ -73,6 +83,25 @@ class LLMDecisionMaker(DecisionMakerBase):
         Returns:
             Decision.IGNORE (actual decision made in batch processing)
         """
+        # Extract sender from message if it's from another agent
+        sender = "system"
+        if message.startswith("[Agent "):
+            # Format: "[Agent agent_5]: message"
+            try:
+                sender = message.split("]")[0].replace("[Agent ", "")
+            except:
+                pass
+
+        # Track message with metadata
+        sim_time = context.get("time", 0)
+        self.message_history.append(
+            {"time": sim_time, "type": "received", "from": sender, "message": message}
+        )
+
+        # Call structured logging callback if set
+        if self._message_callback and self.agent:
+            self._message_callback(self.agent.id, sim_time, message, sender)
+
         # Queue message for batch processing
         self.pending_messages.append(message)
         return Decision.IGNORE
@@ -111,6 +140,11 @@ class LLMDecisionMaker(DecisionMakerBase):
         Args:
             message: The received message
         """
+        # Avoid adding duplicate consecutive messages
+        if self.pending_messages and self.pending_messages[-1] == message:
+            logger.debug(f"Agent {self.agent.id} received duplicate message, ignoring")
+            return
+
         self.pending_messages.append(message)
         logger.debug(f"Agent {self.agent.id} queued message for LLM processing")
 
@@ -124,11 +158,23 @@ class LLMDecisionMaker(DecisionMakerBase):
         if not self.pending_messages or self._llm_provider is None:
             return {"action": "continue"}
 
-        # Use the most recent message
-        message = self.pending_messages[-1]
+        # Consolidate multiple messages if present
+        if len(self.pending_messages) == 1:
+            message = self.pending_messages[0]
+        else:
+            # Summarize multiple messages
+            unique_messages = list(dict.fromkeys(self.pending_messages))  # Remove duplicates
+            if len(unique_messages) == 1:
+                message = unique_messages[0]
+            else:
+                # Convert to strings before joining
+                message_strs = [str(msg) for msg in unique_messages[-3:]]
+                message = f"Multiple people nearby are saying: {'; '.join(message_strs)}"  # Last 3 unique messages
 
         # Build prompt
-        prompt = EvacuationPromptBuilder.build_evacuation_prompt(self.agent, message)
+        prompt = EvacuationPromptBuilder.build_evacuation_prompt(
+            self.agent, message, message_history=self.message_history
+        )
 
         # Query LLM
         try:
@@ -227,6 +273,9 @@ class LLMDecisionMaker(DecisionMakerBase):
                         "confidence": response.confidence,
                     }
 
+                # Store full response for action processing (Phase 2)
+                decisions[agent.id + "_response"] = response
+
                 # Clear processed messages
                 agent.decision_maker.pending_messages.clear()
 
@@ -240,10 +289,16 @@ class LLMDecisionMaker(DecisionMakerBase):
                 f"(prompt: {total_prompt_tokens}, completion: {total_completion_tokens})"
             )
 
-            logger.info(f"Returning {len(decisions)} decisions to simulation")
-            evacuate_count = sum(1 for d in decisions.values() if d.get("action") == "evacuate")
+            # Count decisions (excluding _response entries)
+            decision_count = sum(1 for k in decisions.keys() if not k.endswith("_response"))
+            evacuate_count = sum(
+                1
+                for k, d in decisions.items()
+                if not k.endswith("_response") and d.get("action") == "evacuate"
+            )
+            logger.info(f"Returning {decision_count} decisions to simulation")
             logger.info(f"  {evacuate_count} agents decided to evacuate")
-            logger.info(f"  {len(decisions) - evacuate_count} agents decided to stay")
+            logger.info(f"  {decision_count - evacuate_count} agents decided to stay")
 
             return decisions
 
