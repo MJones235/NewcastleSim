@@ -42,3 +42,12 @@ paths:
 
   # Path to events CSV file (null for no events)
   events_file: scenarios/station_jupedsim/data/events.csv
+
+llm:
+  # Enable LLM for agent decision-making
+  enabled: true
+
+  # Azure credentials are loaded from .env file:
+  #   AZURE_LLM_ENDPOINT
+  #   AZURE_LLM_API_KEY
+  #   AZURE_LLM_MODEL

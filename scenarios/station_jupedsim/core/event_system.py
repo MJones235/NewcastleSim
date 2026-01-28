@@ -199,7 +199,7 @@ class EventManager:
 
         delivered_count = 0
         for agent in agents:
-            if agent.is_spawned and agent.is_active:
+            if agent.is_spawned:
                 agent.receive_message(message)
                 delivered_count += 1
 

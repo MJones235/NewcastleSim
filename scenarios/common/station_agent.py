@@ -156,6 +156,13 @@ class StationAgent(AgentBase):
         if decision == Decision.EVACUATE and not self.is_evacuating:
             self._start_evacuation()
 
+    def start_evacuation(self):
+        """
+        Public method to initiate evacuation (called by LLM decision system).
+        """
+        if not self.is_evacuating:
+            self._start_evacuation()
+
     def _start_evacuation(self):
         """Initiate evacuation behavior."""
         print(f"Agent {self.id} deciding to evacuate")

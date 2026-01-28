@@ -114,6 +114,23 @@ def main(config: Config | None = None) -> int:
         print("JuPedSim Station Simulation")
         print("=" * 60)
 
+        # Initialize LLM if enabled
+        if config.llm.enabled:
+            print("\n[LLM] Initializing Azure AI model...")
+            try:
+                from scenarios.common.decision_makers.llm_decision_maker import LLMDecisionMaker
+
+                LLMDecisionMaker.initialize_llm(
+                    endpoint=config.llm.endpoint,
+                    api_key=config.llm.api_key,
+                    model=config.llm.model,
+                )
+                model_name = config.llm.model or "serverless endpoint"
+                print(f"[LLM] ✓ Connected to model: {model_name}")
+                logger.info("LLM provider initialized successfully")
+            except Exception as e:
+                raise SimulationError(f"Failed to initialize LLM provider: {e}")
+
         # Initialize simulation
         print("\n[1/5] Initializing simulation...")
         try:
@@ -185,6 +202,7 @@ def main(config: Config | None = None) -> int:
                 num_agents=config.simulation.num_agents,
                 agent_list=agents,
                 spawn_immediately=False,  # Don't spawn agents yet
+                use_llm=config.llm.enabled,  # Use LLM decision maker if enabled
             )
 
             if not agents:
@@ -245,6 +263,12 @@ def main(config: Config | None = None) -> int:
                 spawn_interval=config.simulation.spawn_interval,
                 observers=observers,
             )
+
+            # Enable LLM processing if configured
+            if config.llm.enabled:
+                runner.enable_llm()
+                print("[LLM] ✓ LLM decision-making enabled for agents")
+
         except Exception as e:
             raise SimulationError(f"Failed to create simulation runner: {e}")
 

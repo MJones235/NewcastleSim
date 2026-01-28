@@ -28,6 +28,7 @@ def create_agents_from_entrances(
     num_agents: int,
     agent_list: list[StationAgent],
     spawn_immediately: bool = True,
+    use_llm: bool = False,
 ) -> None:
     """
     Create agents at entrance locations with random platform destinations.
@@ -42,6 +43,7 @@ def create_agents_from_entrances(
         num_agents: Total number of agents to create
         agent_list: List to append created StationAgent objects to
         spawn_immediately: If True, spawn agents immediately; if False, just create them
+        use_llm: If True, use LLMDecisionMaker; otherwise use RuleBasedDecisionMaker
     """
     if not entrance_areas:
         print("Warning: No entrance areas defined, cannot spawn agents")
@@ -89,10 +91,19 @@ def create_agents_from_entrances(
             # Sample walking speed
             walking_speed = sample_walking_speed()
 
-            # Create decision maker
-            evac_prob = np.random.uniform(0.3, 0.7)
-            config = {"evacuation_probability": evac_prob}
-            decision_maker = RuleBasedDecisionMaker(config=config)
+            # Create decision maker based on configuration
+            if use_llm:
+                from scenarios.common.decision_makers.llm_decision_maker import LLMDecisionMaker
+
+                # Create a temporary agent stub for decision maker initialization
+                # The decision maker will be properly linked when StationAgent is created
+                decision_maker = LLMDecisionMaker(
+                    agent=None
+                )  # Agent will be set by StationAgent.__init__
+            else:
+                evac_prob = np.random.uniform(0.3, 0.7)
+                config = {"evacuation_probability": evac_prob}
+                decision_maker = RuleBasedDecisionMaker(config=config)
 
             # Create unified agent
             agent_id = f"agent_{len(agent_list)}"

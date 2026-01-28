@@ -4,10 +4,12 @@ Configuration management for JuPedSim station simulation.
 Provides dataclass-based configuration with defaults and YAML file loading.
 """
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 
 @dataclass
@@ -107,12 +109,35 @@ class PathConfig:
 
 
 @dataclass
+class LLMConfig:
+    """LLM provider configuration for agent decision-making."""
+
+    enabled: bool = False  # Whether to use LLM for decisions
+    endpoint: str | None = None  # Azure AI model endpoint URL
+    api_key: str | None = None  # Azure AI API key
+    model: str | None = None  # Model name (optional for serverless endpoints)
+
+    def validate(self) -> None:
+        """Validate LLM configuration.
+
+        Raises:
+            ValueError: If LLM is enabled but credentials are missing
+        """
+        if self.enabled:
+            if not self.endpoint:
+                raise ValueError("LLM enabled but endpoint not provided")
+            if not self.api_key:
+                raise ValueError("LLM enabled but api_key not provided")
+
+
+@dataclass
 class Config:
     """Complete simulation configuration."""
 
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     paths: PathConfig = field(default_factory=PathConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     def validate(self) -> None:
         """Validate all configuration sections.
@@ -124,6 +149,7 @@ class Config:
         self.simulation.validate()
         self.visualization.validate()
         self.paths.validate()
+        self.llm.validate()
 
     @classmethod
     def from_yaml(cls, yaml_file: str) -> "Config":
@@ -139,6 +165,9 @@ class Config:
             FileNotFoundError: If YAML file doesn't exist
             ValueError: If YAML format is invalid
         """
+        # Load environment variables from .env file
+        load_dotenv()
+
         yaml_path = Path(yaml_file)
 
         if not yaml_path.exists():
@@ -172,6 +201,19 @@ class Config:
             for key, value in data["paths"].items():
                 if hasattr(config.paths, key):
                     setattr(config.paths, key, value)
+
+        if "llm" in data:
+            for key, value in data["llm"].items():
+                if hasattr(config.llm, key):
+                    setattr(config.llm, key, value)
+
+        # Override LLM config with environment variables if present
+        if os.getenv("AZURE_LLM_ENDPOINT"):
+            config.llm.endpoint = os.getenv("AZURE_LLM_ENDPOINT")
+        if os.getenv("AZURE_LLM_API_KEY"):
+            config.llm.api_key = os.getenv("AZURE_LLM_API_KEY")
+        if os.getenv("AZURE_LLM_MODEL"):
+            config.llm.model = os.getenv("AZURE_LLM_MODEL")
 
         # Validate after loading
         config.validate()
