@@ -2,7 +2,6 @@ import sumolib
 import traci
 from simulation_manager import SimulationManager
 
-# Performance mode: use headless SUMO for speed (10-20x faster)
 use_gui = True
 sumo_binary = sumolib.checkBinary("sumo-gui" if use_gui else "sumo")
 

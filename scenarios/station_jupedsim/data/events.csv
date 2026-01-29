@@ -1,0 +1,7 @@
+# Simulation events - format: time, action, value
+# Lines starting with # are comments
+# Realistic UK train station emergency scenario - gradual escalation
+time, action, value
+90.0, broadcast_to_all, "Due to a security alert, some platforms are temporarily closed. Please follow staff directions."
+120.0, broadcast_to_all, "Attention please. We are conducting a controlled evacuation of platforms 3 and 4. If you are on these platforms, please make your way to the main concourse."
+150.0, broadcast_to_all, "This is now a full station evacuation. Please leave the station immediately via the nearest exit. Do not use lifts. Follow the green exit signs and staff instructions."

@@ -51,7 +51,6 @@ htmlcov/
 *.log
 
 # Data files (adjust based on your needs)
-*.csv
 edge_mapping_cache.json
 *.sqlite
 *.db
