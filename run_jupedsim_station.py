@@ -40,6 +40,11 @@ if __name__ == "__main__":
         help="Disable real-time GUI visualization (overrides config)",
     )
     parser.add_argument(
+        "--no-viz",
+        action="store_true",
+        help="Disable post-run animation visualization (overrides config)",
+    )
+    parser.add_argument(
         "--num-agents", type=int, help="Number of agents to create (overrides config)"
     )
     parser.add_argument("--events", type=str, help="Path to events CSV file (overrides config)")
@@ -59,6 +64,8 @@ if __name__ == "__main__":
         config.visualization.enable_gui = True
     if args.no_gui:
         config.visualization.enable_gui = False
+    if args.no_viz:
+        config.visualization.enable_post_run_viz = False
     if args.num_agents:
         config.simulation.num_agents = args.num_agents
     if args.events:

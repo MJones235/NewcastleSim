@@ -9,7 +9,11 @@ import jupedsim as jps
 from shapely.geometry import Point, Polygon
 
 from scenarios.station_jupedsim.core.simulation import StationSimulation
-from scenarios.station_jupedsim.geometry import load_entrance_areas, load_platform_areas
+from scenarios.station_jupedsim.geometry import (
+    load_entrance_areas,
+    load_platform_areas,
+    load_walkable_areas,
+)
 
 
 def setup_evacuation_exits(
@@ -120,15 +124,15 @@ def setup_platform_stages(
     return platform_stages, platform_journeys
 
 
-def load_geometry(network_path: Path) -> tuple[dict, dict]:
+def load_geometry(network_path: Path) -> tuple[dict, dict, dict]:
     """
-    Load entrance and platform geometry from network files.
+    Load entrance, platform, and walkable area geometry from network files.
 
     Args:
         network_path: Path to network directory
 
     Returns:
-        Tuple of (entrance_areas, platform_areas) dictionaries
+        Tuple of (entrance_areas, platform_areas, walkable_areas) dictionaries
 
     Raises:
         FileNotFoundError: If geometry files are not found
@@ -142,6 +146,7 @@ def load_geometry(network_path: Path) -> tuple[dict, dict]:
     try:
         entrance_areas = load_entrance_areas(str(walking_areas_file))
         platform_areas = load_platform_areas(str(walking_areas_file))
+        walkable_areas = load_walkable_areas(str(walking_areas_file))
     except Exception as e:
         raise RuntimeError(f"Failed to load geometry from {walking_areas_file}: {e}")
 
@@ -152,4 +157,4 @@ def load_geometry(network_path: Path) -> tuple[dict, dict]:
 
     print(f"Loaded {len(entrance_areas)} entrances, {len(platform_areas)} platforms")
 
-    return entrance_areas, platform_areas
+    return entrance_areas, platform_areas, walkable_areas

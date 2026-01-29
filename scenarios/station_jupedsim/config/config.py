@@ -22,7 +22,10 @@ class SimulationConfig:
 
     # Agent parameters
     num_agents: int = 60  # Total number of agents to create
-    spawn_interval: float = 2.0  # Time between agent spawns in seconds
+    spawn_interval: float = 2.0  # Time between agent spawns in seconds (for gradual spawning)
+    spawn_mode: str = (
+        "random"  # "entrances" for gradual spawning, "random" for immediate random placement
+    )
 
     # Exit parameters
     exit_radius: float = 10.0  # Radius of circular evacuation exits in meters
@@ -44,6 +47,8 @@ class SimulationConfig:
             raise ValueError(f"num_agents must be positive, got {self.num_agents}")
         if self.spawn_interval <= 0:
             raise ValueError(f"spawn_interval must be positive, got {self.spawn_interval}")
+        if self.spawn_mode not in ["entrances", "random"]:
+            raise ValueError(f"spawn_mode must be 'entrances' or 'random', got {self.spawn_mode}")
         if self.exit_radius <= 0:
             raise ValueError(f"exit_radius must be positive, got {self.exit_radius}")
         if self.trajectory_frame_interval <= 0:
@@ -61,6 +66,7 @@ class VisualizationConfig:
     gui_update_interval: float = 1.0  # GUI update frequency in seconds
 
     # Post-run visualization
+    enable_post_run_viz: bool = True  # Enable post-run animation
     animation_interval: int = 50  # Milliseconds between animation frames
     event_popup_duration: float = 5.0  # Seconds to show event popups
 

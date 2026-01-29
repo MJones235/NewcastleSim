@@ -5,12 +5,14 @@ Supports both immediate spawning (agents created at t=0) and gradual spawning
 (agents created over time as simulation runs).
 
 Key Functions:
-    - create_agents_from_entrances: Create agents at entrance locations with
+    - create_agents_from_entrances: Create agents at entrance locations with gradual spawning
+    - create_agents_in_walkable_areas: Create agents randomly distributed throughout station
 """
 
 import jupedsim as jps
 import numpy as np
-from shapely.geometry import Polygon
+from shapely.geometry import MultiPolygon, Polygon
+from shapely.ops import unary_union
 
 from scenarios.common.decision_makers.rule_based import RuleBasedDecisionMaker
 from scenarios.common.station_agent import StationAgent
@@ -148,5 +150,147 @@ def create_agents_from_entrances(
         print(f"Created {count} agents at entrance '{entrance_name}'")
 
 
+def create_agents_in_walkable_areas(
+    simulation: jps.Simulation,
+    movement_provider: JuPedSimMovementProvider,
+    walkable_areas: dict[str, Polygon],
+    platform_stages: dict[str, int],
+    platform_journeys: dict[str, int],
+    platform_areas: dict[str, Polygon],
+    num_agents: int,
+    agent_list: list[StationAgent],
+    use_llm: bool = False,
+) -> None:
+    """
+    Create agents randomly distributed throughout walkable areas of the station.
+    All agents are spawned immediately at random positions.
+
+    Args:
+        simulation: JuPedSim simulation object
+        movement_provider: JuPedSim movement provider
+        walkable_areas: Dictionary of zone name -> walkable polygon
+        platform_stages: Dictionary of platform name -> stage_id for that platform
+        platform_journeys: Dictionary of platform name -> journey_id for that platform
+        platform_areas: Dictionary of platform name -> platform polygon
+        num_agents: Total number of agents to create
+        agent_list: List to append created StationAgent objects to
+        use_llm: If True, use LLMDecisionMaker; otherwise use RuleBasedDecisionMaker
+    """
+    if not walkable_areas:
+        print("Warning: No walkable areas defined, cannot spawn agents")
+        return
+
+    if not platform_stages:
+        print("Warning: No platform stages defined, cannot create agents")
+        return
+
+    # Get list of platform names
+    platform_names = list(platform_stages.keys())
+
+    # Combine all walkable areas into a single polygon for distribution
+    all_walkable_polygons = list(walkable_areas.values())
+    combined_walkable = unary_union(all_walkable_polygons)
+
+    # Convert to Polygon if it's a MultiPolygon with one part
+    if isinstance(combined_walkable, MultiPolygon) and len(combined_walkable.geoms) == 1:
+        combined_walkable = combined_walkable.geoms[0]
+
+    print(f"Distributing {num_agents} agents across walkable areas...")
+
+    # Distribute agent positions throughout all walkable areas
+    try:
+        if isinstance(combined_walkable, Polygon):
+            positions = jps.distribute_by_number(
+                polygon=combined_walkable,
+                number_of_agents=num_agents,
+                distance_to_agents=0.5,
+                distance_to_polygon=0.3,
+                seed=42,
+            )
+        else:
+            # If MultiPolygon, distribute proportionally across each polygon
+            positions = []
+            for i, poly in enumerate(combined_walkable.geoms):
+                # Distribute proportionally based on area
+                poly_agents = int(num_agents * poly.area / combined_walkable.area)
+                if i == len(combined_walkable.geoms) - 1:
+                    # Last polygon gets any remaining agents
+                    poly_agents = num_agents - len(positions)
+
+                if poly_agents > 0:
+                    poly_positions = jps.distribute_by_number(
+                        polygon=poly,
+                        number_of_agents=poly_agents,
+                        distance_to_agents=0.5,
+                        distance_to_polygon=0.3,
+                        seed=42 + i,
+                    )
+                    positions.extend(poly_positions)
+    except Exception as e:
+        print(f"Error distributing agents: {e}")
+        print("Falling back to entrance-based spawning")
+        return
+
+    # Determine which zone each position is in
+    def get_zone_for_position(pos):
+        """Find which walkable area contains this position."""
+        for zone_name, polygon in walkable_areas.items():
+            from shapely.geometry import Point
+
+            if polygon.contains(Point(pos)):
+                return zone_name
+        # Default to first zone if not found
+        return list(walkable_areas.keys())[0]
+
+    # Create each agent at its random position
+    for pos in positions:
+        # Assign random platform destination
+        platform_name = np.random.choice(platform_names)
+
+        # Sample walking speed
+        walking_speed = sample_walking_speed()
+
+        # Determine which zone this agent is in
+        initial_zone = get_zone_for_position(pos)
+
+        # Create decision maker based on configuration
+        if use_llm:
+            from scenarios.common.decision_makers.llm_decision_maker import LLMDecisionMaker
+
+            decision_maker = LLMDecisionMaker(agent=None)
+        else:
+            evac_prob = np.random.uniform(0.3, 0.7)
+            config = {"evacuation_probability": evac_prob}
+            decision_maker = RuleBasedDecisionMaker(config=config)
+
+        # Create agent with immediate spawn
+        agent_id = f"agent_{len(agent_list)}"
+
+        spawn_params = {
+            "position": pos,
+            "platform_name": platform_name,
+            "platform_polygon": platform_areas[platform_name],
+            "platform_stages": platform_stages,
+            "platform_journeys": platform_journeys,
+        }
+
+        agent = StationAgent(
+            agent_id=agent_id,
+            walking_speed=walking_speed,
+            decision_maker=decision_maker,
+            movement_provider=movement_provider,
+            initial_zone=initial_zone,
+            destination=platform_name,
+            spawn_params=spawn_params,
+        )
+
+        # Spawn immediately
+        if agent.spawn():
+            agent_list.append(agent)
+
+    print(f"Successfully spawned {len(agent_list)} agents throughout station")
+
+
 if __name__ == "__main__":
+
     print("Population loader module ready")

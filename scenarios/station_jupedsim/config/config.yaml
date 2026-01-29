@@ -11,8 +11,12 @@ simulation:
   # Number of agents to create
   num_agents: 60
 
-  # Time between agent spawns in seconds
+  # Time between agent spawns in seconds (only used for "entrances" spawn mode)
   spawn_interval: 2.0
+
+  # Spawn mode: "random" spawns all agents immediately at random positions,
+  # "entrances" spawns agents gradually from entrance areas
+  spawn_mode: "random"
 
   # Radius of circular evacuation exits in meters
   exit_radius: 10.0
@@ -45,7 +49,7 @@ paths:
 
 llm:
   # Enable LLM for agent decision-making
-  enabled: true
+  enabled: false
 
   # Azure credentials are loaded from .env file:
   #   AZURE_LLM_ENDPOINT

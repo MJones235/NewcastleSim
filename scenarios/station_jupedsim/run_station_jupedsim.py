@@ -147,7 +147,7 @@ def main(config: Config | None = None) -> int:
         # Load entrance and platform geometry
         print("\n[2/5] Loading geometry...")
         try:
-            entrance_areas, platform_areas = load_geometry(network_path)
+            entrance_areas, platform_areas, walkable_areas = load_geometry(network_path)
             if not entrance_areas:
                 raise SimulationError("No entrance areas found in network files")
             if not platform_areas:
@@ -190,20 +190,39 @@ def main(config: Config | None = None) -> int:
         movement_provider.evacuation_journeys = evacuation_journeys
         movement_provider.evacuation_exits = evacuation_exits
 
-        # Create agents at entrances with random platform destinations (but don't spawn yet)
+        # Create agents based on spawn mode
         try:
-            create_agents_from_entrances(
-                simulation=sim.simulation,
-                movement_provider=movement_provider,
-                entrance_areas=entrance_areas,
-                platform_stages=platform_stages,
-                platform_journeys=platform_journeys,
-                platform_areas=platform_areas,
-                num_agents=config.simulation.num_agents,
-                agent_list=agents,
-                spawn_immediately=False,  # Don't spawn agents yet
-                use_llm=config.llm.enabled,  # Use LLM decision maker if enabled
-            )
+            if config.simulation.spawn_mode == "random":
+                # Spawn all agents immediately at random positions throughout the station
+                from scenarios.station_jupedsim.core import create_agents_in_walkable_areas
+
+                create_agents_in_walkable_areas(
+                    simulation=sim.simulation,
+                    movement_provider=movement_provider,
+                    walkable_areas=walkable_areas,
+                    platform_stages=platform_stages,
+                    platform_journeys=platform_journeys,
+                    platform_areas=platform_areas,
+                    num_agents=config.simulation.num_agents,
+                    agent_list=agents,
+                    use_llm=config.llm.enabled,
+                )
+                print(f"Spawned {len(agents)} agents randomly throughout station")
+            else:
+                # Gradual spawning from entrances (original behavior)
+                create_agents_from_entrances(
+                    simulation=sim.simulation,
+                    movement_provider=movement_provider,
+                    entrance_areas=entrance_areas,
+                    platform_stages=platform_stages,
+                    platform_journeys=platform_journeys,
+                    platform_areas=platform_areas,
+                    num_agents=config.simulation.num_agents,
+                    agent_list=agents,
+                    spawn_immediately=False,  # Don't spawn agents yet
+                    use_llm=config.llm.enabled,  # Use LLM decision maker if enabled
+                )
+                print("Agents queued for gradual spawning from entrances")
 
             if not agents:
                 raise SimulationError("Failed to create any agents")
@@ -211,7 +230,6 @@ def main(config: Config | None = None) -> int:
             raise SimulationError(f"Failed to create agents: {e}")
 
         print(f"\nTotal agents created: {len(agents)}")
-        print("Agents queued for gradual spawning")
 
         # Initialize event manager
         try:
@@ -290,8 +308,11 @@ def main(config: Config | None = None) -> int:
         # Print summary
         print_summary(stats, trajectory_file)
 
-        # Run visualization automatically
-        launch_visualization(trajectory_file, network_path)
+        # Run visualization automatically if enabled
+        if config.visualization.enable_post_run_viz:
+            launch_visualization(trajectory_file, network_path)
+        else:
+            print("\n[Visualization disabled - skipping post-run animation]")
 
         return 0
 

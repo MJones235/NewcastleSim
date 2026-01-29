@@ -1,0 +1,6 @@
+# Benchmark output files (keep the scripts but ignore results)
+benchmark_results.json
+performance_plot.png
+test_*.json
+test_*.png
+*.db

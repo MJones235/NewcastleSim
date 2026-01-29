@@ -6,7 +6,7 @@ Contains the main simulation logic, runners, and infrastructure.
 
 from .event_system import EventManager, SimulationEvent
 from .movement_jupedsim import JuPedSimMovementProvider
-from .population_loader import create_agents_from_entrances
+from .population_loader import create_agents_from_entrances, create_agents_in_walkable_areas
 from .simulation import StationSimulation
 from .simulation_observer import ConsoleObserver, GUIObserver, SimulationObserver
 from .simulation_runner import SimulationRunner
@@ -27,4 +27,5 @@ __all__ = [
     "SimulationEvent",
     "JuPedSimMovementProvider",
     "create_agents_from_entrances",
+    "create_agents_in_walkable_areas",
 ]
