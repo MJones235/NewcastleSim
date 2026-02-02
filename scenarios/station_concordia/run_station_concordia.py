@@ -60,6 +60,11 @@ def parse_args():
         action="store_true",
         help="Don't launch the GUI viewer",
     )
+    parser.add_argument(
+        "--spatial-viewer",
+        action="store_true",
+        help="Launch spatial matplotlib viewer (shows agent positions on map)",
+    )
     return parser.parse_args()
 
 
@@ -148,7 +153,9 @@ def setup_language_model(config: dict, disable_llm: bool = False):
     )
 
 
-def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
+def run_simulation(
+    config: dict, model, embedder, launch_viewer: bool = True, launch_spatial: bool = False
+):
     """
     Run the hybrid Concordia + JuPedSim simulation.
 
@@ -157,6 +164,7 @@ def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
         model: Language model
         embedder: Sentence embedder function
         launch_viewer: Whether to launch the GUI viewer before simulation starts
+        launch_spatial: Whether to launch the spatial matplotlib viewer
 
     Returns:
         Tuple of (results dict, run_id string, decisions_file Path)
@@ -166,16 +174,34 @@ def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
     from pathlib import Path
 
     from scenarios.station_concordia.core.hybrid_simulation import HybridSimulationRunner
-    from scenarios.station_concordia.core.mock_jupedsim import MockJuPedSimulation
+    from scenarios.station_concordia.core.jupedsim_integration import ConcordiaJuPedSimulation
 
     logger.info("Initializing simulation...")
 
-    # Step 1: Setup mock JuPedSim simulation
-    # TODO: Replace MockJuPedSimulation with real JuPedSim
-    # TODO: Load actual station geometry from scenarios/station_sim/network
+    # Step 1: Setup JuPedSim simulation
     sim_config = config.get("simulation", {})
     dt = sim_config.get("dt", 0.05)
-    jps_sim = MockJuPedSimulation(dt=dt)
+    use_simple_geometry = sim_config.get(
+        "use_simple_geometry", True
+    )  # Default to simple for testing
+
+    if use_simple_geometry:
+        logger.info("Using simple rectangular room geometry (100m x 100m)")
+        jps_sim = ConcordiaJuPedSimulation(
+            dt=dt,
+            exit_radius=5.0,
+            use_simple_geometry=True,
+        )
+    else:
+        # Load station geometry from network files
+        network_path = Path("scenarios/station_sim/network")
+        logger.info(f"Loading real station geometry from {network_path}...")
+        jps_sim = ConcordiaJuPedSimulation(
+            network_path=network_path,
+            dt=dt,
+            exit_radius=10.0,
+            use_simple_geometry=False,
+        )
 
     # Step 2: Create agent configurations
     agent_config = config.get("agents", {})
@@ -183,6 +209,31 @@ def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
 
     agents_config = []
     station_layout = config.get("station", {})
+
+    # Get spawn positions from walkable areas (not entrances, which may be outside)
+    walkable_areas = jps_sim.walkable_areas
+    if walkable_areas:
+        # Use main walkable area for spawning
+        main_area = list(walkable_areas.values())[0]
+        logger.info(f"Spawning agents in main walkable area (area: {main_area.area:.1f} m²)")
+
+        # Use a more restricted spawn area in the center of the room
+        # to ensure agents are far from exits and have to walk there
+        import random
+
+        random.seed(42)  # Reproducible
+
+        spawn_positions = []
+        for _ in range(num_agents):
+            # Spawn in central area: 30-70 for x and y (center 40x40 square)
+            x = random.uniform(30.0, 70.0)
+            y = random.uniform(30.0, 70.0)
+            spawn_positions.append((x, y))
+
+        logger.info(f"Generated {len(spawn_positions)} spawn positions in central area")
+    else:
+        logger.error("No walkable areas found!")
+        raise RuntimeError("Cannot spawn agents without walkable areas")
 
     for i in range(num_agents):
         agent_id = f"agent_{i}"
@@ -200,9 +251,8 @@ def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
         }
         agents_config.append(agent_cfg)
 
-        # Add agent to JuPedSim at starting position
-        # TODO: Use proper spawn points from geometry
-        start_pos = (50.0, 50.0)  # Center of mock station
+        # Add agent to JuPedSim at spawn position
+        start_pos = spawn_positions[i]
         jps_sim.add_agent(agent_id, start_pos)
 
     logger.info(f"Created {num_agents} agent configuration(s)")
@@ -241,6 +291,26 @@ def run_simulation(config: dict, model, embedder, launch_viewer: bool = True):
             logger.info("GUI viewer launched - it will update as simulation runs")
         except Exception as e:
             logger.warning(f"Failed to launch GUI viewer: {e}")
+
+    # Launch spatial viewer if requested
+    _spatial_viewer_process = None
+    if launch_spatial:
+        logger.info("Launching spatial matplotlib viewer...")
+        try:
+            spatial_viewer_path = (
+                Path(__file__).parent.parent.parent / "tools" / "view_concordia_spatial.py"
+            )
+            _spatial_viewer_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(spatial_viewer_path),
+                    "--output-file",
+                    str(decisions_file.absolute()),
+                ]
+            )
+            logger.info("Spatial viewer launched - shows agent positions on map")
+        except Exception as e:
+            logger.warning(f"Failed to launch spatial viewer: {e}")
 
     logger.info("Creating HybridSimulationRunner...")
 
@@ -317,9 +387,14 @@ def main():
         # Setup language model
         model, embedder = setup_language_model(config, disable_llm=args.no_llm)
 
-        # Run simulation (with viewer if not disabled)
+        # Run simulation (with viewers if enabled)
+        # Run simulation (with viewers if enabled)
         results, run_id, decisions_file = run_simulation(
-            config, model, embedder, launch_viewer=not args.no_viewer
+            config,
+            model,
+            embedder,
+            launch_viewer=not args.no_viewer,
+            launch_spatial=args.spatial_viewer,
         )
 
         # Log results

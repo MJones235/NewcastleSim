@@ -4,23 +4,24 @@
 simulation:
   dt: 0.05  # JuPedSim timestep (seconds)
   max_iterations: 3000  # Maximum simulation steps (3000 * 0.05 = 150 seconds)
-  decision_interval: 5.0  # Time between Concordia decisions (seconds)
+  decision_interval: 15.0  # Time between Concordia decisions (seconds) - reduced frequency for smoother movement
   spawn_interval: 2.0  # Time between agent spawns (seconds)
+  use_simple_geometry: true  # Use simple 100x100m room for testing (set false for real station)
 
-# Station layout
+# Station layout (for simple geometry mode - 100m x 100m room)
 station:
   # Exit locations (x, y coordinates)
   exits:
-    north_exit: [50.0, 100.0]
-    south_exit: [50.0, 0.0]
-    east_exit: [100.0, 50.0]
-    west_exit: [0.0, 50.0]
+    north_exit: [50.0, 95.0]
+    south_exit: [50.0, 5.0]
+    east_exit: [95.0, 50.0]
+    west_exit: [5.0, 50.0]
 
   # Zone definitions (for observation generation)
   zones:
     platform:
-      x_min: 20.0
-      x_max: 80.0
+      x_min: 40.0
+      x_max: 60.0
       y_min: 40.0
       y_max: 60.0
     concourse:
@@ -36,7 +37,7 @@ station:
 
 # Agent configuration
 agents:
-  count: 1
+  count: 1  # Start with 1 agent for testing
 
   # Personality distribution (percentage)
   personalities:

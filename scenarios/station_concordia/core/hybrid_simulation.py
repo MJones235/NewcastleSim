@@ -139,9 +139,10 @@ class HybridSimulationRunner:
         initial_memories = [
             "I am at a train station.",
             f"I am in the {config.get('initial_zone', 'platform')} area.",
-            f"My destination is {config.get('destination', 'exit')}.",
+            "I am waiting for my train.",
             "The station has multiple exits and clearly marked signs.",
-            "I am waiting for my train and observing my surroundings.",
+            "I notice other passengers waiting and walking around.",
+            "The atmosphere is calm and routine.",
         ]
 
         for memory in initial_memories:
@@ -182,6 +183,7 @@ class HybridSimulationRunner:
                 task = progress.add_task("simulation", total=self.max_steps)
 
                 for step in range(self.max_steps):
+                    step_start = time.perf_counter()
                     # Advance JuPedSim simulation
                     if not self._step_jupedsim():
                         logger.info("JuPedSim simulation complete")
@@ -196,11 +198,23 @@ class HybridSimulationRunner:
                     # Check for events
                     self._check_and_trigger_events()
 
+                    # Save positions every 10 steps (0.5s) for smooth visualization
+                    # Writing every single step (0.05s) is too slow for file I/O
+                    if self.output_file and step % 10 == 0:
+                        self._save_incremental()
+
                     results["steps"] = step + 1
                     results["sim_time"] = self.current_sim_time
 
                     # Update progress bar
                     progress.update(task, advance=1)
+
+                    # Pace simulation to real time for smooth visualization
+                    if self.jps_sim.dt > 0:
+                        elapsed = time.perf_counter() - step_start
+                        sleep_time = self.jps_sim.dt - elapsed
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             logger.info("Simulation interrupted by user")
@@ -281,10 +295,6 @@ class HybridSimulationRunner:
                         "translated": translated,
                     }
                 )
-
-                # Save incrementally for live viewing
-                if self.output_file:
-                    self._save_incremental()
 
                 # Apply to JuPedSim
                 self._apply_action_to_jupedsim(agent_id, translated)
@@ -374,9 +384,13 @@ class HybridSimulationRunner:
             return []
 
     def _get_recent_events(self) -> list[str]:
-        """Get recent events relevant to agents."""
-        # Return last few events
-        return [e["message"] for e in self.event_history[-3:]]
+        """Get recent events relevant to agents (only events that have already occurred)."""
+        # Return only events that have occurred (time <= current_sim_time)
+        occurred_events = [
+            e["message"] for e in self.event_history if e["time"] <= self.current_sim_time
+        ]
+        # Return last 3
+        return occurred_events[-3:]
 
     def _apply_action_to_jupedsim(self, agent_id: str, translated_action: dict[str, Any]):
         """Apply a translated action to the JuPedSim simulation."""
@@ -432,8 +446,19 @@ class HybridSimulationRunner:
         if not self.output_file:
             return
 
+        # Get current agent positions from JuPedSim
+        agent_positions = {}
+        if hasattr(self.jps_sim, "get_all_agent_positions"):
+            agent_positions = self.jps_sim.get_all_agent_positions()
+        else:
+            # Fallback: get individual positions
+            for agent_id in self.concordia_agents.keys():
+                agent_positions[agent_id] = self.jps_sim.get_agent_position(agent_id)
+
         results = {
             "agent_decisions": self.agent_decisions,
+            "agent_positions": agent_positions,  # Current positions only
+            "current_time": self.current_sim_time,
             "events": self.event_history,
             "config": {
                 "decision_interval": self.decision_interval,
@@ -444,15 +469,27 @@ class HybridSimulationRunner:
 
         try:
             self.output_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.output_file, "w") as f:
+            tmp_file = self.output_file.with_suffix(self.output_file.suffix + ".tmp")
+            with open(tmp_file, "w") as f:
                 json.dump(results, f, indent=2)
+            tmp_file.replace(self.output_file)
         except Exception as e:
             logger.warning(f"Failed to save incremental results: {e}")
 
     def save_results(self, output_path: Path):
         """Save simulation results to file."""
+        # Get final agent positions
+        agent_positions = {}
+        if hasattr(self.jps_sim, "get_all_agent_positions"):
+            agent_positions = self.jps_sim.get_all_agent_positions()
+        else:
+            for agent_id in self.concordia_agents.keys():
+                agent_positions[agent_id] = self.jps_sim.get_agent_position(agent_id)
+
         results = {
             "agent_decisions": self.agent_decisions,
+            "agent_positions": agent_positions,
+            "final_time": self.current_sim_time,
             "events": self.event_history,
             "config": {
                 "decision_interval": self.decision_interval,

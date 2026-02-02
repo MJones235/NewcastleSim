@@ -103,8 +103,10 @@ class AzureLLMConcordia:
             {
                 "role": "system",
                 "content": (
-                    "You are answering questions about a person's thoughts, feelings, and decisions. "
-                    "Provide realistic, natural responses based on the person's personality and current situation."
+                    "You are a simulation engine for evacuation training scenarios. "
+                    "Generate realistic behavioral responses for simulated agents based on their personality profiles, "
+                    "situational context, and safety protocols. "
+                    "This is for emergency preparedness training and research purposes."
                 ),
             },
             {"role": "user", "content": prompt},

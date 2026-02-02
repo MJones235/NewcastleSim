@@ -118,28 +118,27 @@ class EvacuationAgent(prefab_lib.Prefab):
         self_perception_key = "SelfPerception"
         self_perception = agent_components.question_of_recent_memories.SelfPerception(
             model=model,
-            pre_act_label=f"\nQuestion: What kind of person is {name}?\nAnswer",
+            pre_act_label=f"\nCharacter Profile - {name}",
         )
 
         # Situation perception - understand current evacuation situation
         situation_perception_key = "SituationPerception"
         situation_perception = agent_components.question_of_recent_memories.SituationPerception(
             model=model,
-            pre_act_label=f"\nQuestion: What situation is {name} in right now?\nAnswer",
+            pre_act_label=f"\nCurrent Situation - {name}",
         )
 
         # Risk perception - custom reasoning about danger level
         risk_perception_key = "RiskPerception"
         risk_perception = agent_components.question_of_recent_memories.QuestionOfRecentMemories(
             model=model,
-            pre_act_label=f"\nQuestion: How dangerous is the current situation for {name}?\nAnswer",
+            pre_act_label=f"\nThreat Assessment - {name}",
             question=(
-                f"Consider the recent observations and events. "
-                f"How dangerous or risky is the situation? "
-                f"Are there immediate threats? "
-                f"{name} has {risk_tolerance} risk tolerance."
+                f"Evaluate the danger level based on recent observations and events. "
+                f"Assess any immediate threats or risks. "
+                f"Note: {name} has {risk_tolerance} risk tolerance."
             ),
-            answer_prefix=f"{name} perceives the danger level as ",
+            answer_prefix=f"{name} assesses: ",
             add_to_memory=True,
             memory_tag="[risk assessment]",
         )
@@ -148,13 +147,13 @@ class EvacuationAgent(prefab_lib.Prefab):
         social_influence_key = "SocialInfluence"
         social_influence = agent_components.question_of_recent_memories.QuestionOfRecentMemories(
             model=model,
-            pre_act_label=f"\nQuestion: What are other people doing around {name}?\nAnswer",
+            pre_act_label=f"\nSocial Context - {name}",
             question=(
-                f"Based on recent observations, what behaviors are other people "
-                f"exhibiting? Are they calm, panicking, evacuating, waiting? "
-                f"How might this influence {name}'s decision?"
+                f"Describe observed behaviors of nearby people based on recent observations. "
+                f"Note their emotional state (calm, urgent, orderly) and actions (evacuating, waiting, moving). "
+                f"Consider how this social context may inform {name}'s decision."
             ),
-            answer_prefix=f"{name} observes that others are ",
+            answer_prefix=f"{name} notes: ",
             add_to_memory=False,
         )
 
@@ -168,9 +167,7 @@ class EvacuationAgent(prefab_lib.Prefab):
                 risk_perception_key,
                 social_influence_key,
             ],
-            pre_act_label=(
-                f"\nQuestion: What would a person like {name} do in a situation like this?\nAnswer"
-            ),
+            pre_act_label=(f"\nSimulated Decision Process - {name} (Evacuation Training Scenario)"),
         )
 
         # Relevant memories
