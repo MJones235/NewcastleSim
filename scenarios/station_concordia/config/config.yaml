@@ -1,0 +1,119 @@
+# Configuration for Station Concordia simulation
+
+# Simulation parameters
+simulation:
+  dt: 0.05  # JuPedSim timestep (seconds)
+  max_iterations: 3000  # Maximum simulation steps (3000 * 0.05 = 150 seconds)
+  decision_interval: 5.0  # Time between Concordia decisions (seconds)
+  spawn_interval: 2.0  # Time between agent spawns (seconds)
+
+# Station layout
+station:
+  # Exit locations (x, y coordinates)
+  exits:
+    north_exit: [50.0, 100.0]
+    south_exit: [50.0, 0.0]
+    east_exit: [100.0, 50.0]
+    west_exit: [0.0, 50.0]
+
+  # Zone definitions (for observation generation)
+  zones:
+    platform:
+      x_min: 20.0
+      x_max: 80.0
+      y_min: 40.0
+      y_max: 60.0
+    concourse:
+      x_min: 30.0
+      x_max: 70.0
+      y_min: 20.0
+      y_max: 40.0
+    entrance:
+      x_min: 45.0
+      x_max: 55.0
+      y_min: 0.0
+      y_max: 20.0
+
+# Agent configuration
+agents:
+  count: 1
+
+  # Personality distribution (percentage)
+  personalities:
+    ISTJ: 13.0
+    ISFJ: 12.0
+    INFJ: 2.0
+    INTJ: 3.0
+    ISTP: 6.0
+    ISFP: 9.0
+    INFP: 4.0
+    INTP: 3.0
+    ESTP: 6.0
+    ESFP: 9.0
+    ENFP: 8.0
+    ENTP: 3.0
+    ESTJ: 11.0
+    ESFJ: 12.0
+    ENFJ: 3.0
+    ENTJ: 2.0
+
+  # Risk tolerance distribution
+  risk_tolerance:
+    low: 30.0
+    moderate: 50.0
+    high: 20.0
+
+  # Age distribution
+  age:
+    min: 18
+    max: 75
+
+  # Initial zones
+  spawn_zones:
+    - platform
+    - concourse
+
+# Event configuration
+events:
+  - time: 30.0
+    message: "This is a test of the emergency announcement system."
+
+  - time: 60.0
+    message: "Attention all passengers: Please evacuate the station immediately via the nearest exit."
+
+  - time: 120.0
+    message: "Emergency services are on site. Continue evacuating calmly."
+
+# LLM configuration
+# Note: Credentials are loaded from .env file (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY, AZURE_LLM_MODEL)
+llm:
+  # Temperature for sampling (0.0 = deterministic, 2.0 = very random)
+  temperature: 0.7
+
+  # Maximum retry attempts for failed API calls
+  max_retries: 3
+
+  # Embedder model for memory retrieval
+  embedder: "sentence-transformers/all-mpnet-base-v2"
+
+# Output configuration
+output:
+  directory: "scenarios/station_concordia/output"
+  agent_decisions: "agent_decisions.json"
+  events: "events.json"
+  statistics: "statistics.json"
+  html_log: "simulation_log.html"
+
+# Performance optimization
+performance:
+  # Enable batch processing of LLM calls
+  batch_processing: true
+
+  # Cooldown between LLM queries per agent (seconds)
+  agent_cooldown: 10.0
+
+  # Cache similar decisions
+  decision_caching: true
+
+  # Maximum agents to process in parallel
+  max_parallel_agents: 10
