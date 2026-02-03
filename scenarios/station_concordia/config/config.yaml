@@ -6,7 +6,7 @@ simulation:
   max_iterations: 3000  # Maximum simulation steps (3000 * 0.05 = 150 seconds)
   decision_interval: 15.0  # Time between Concordia decisions (seconds) - reduced frequency for smoother movement
   spawn_interval: 2.0  # Time between agent spawns (seconds)
-  use_simple_geometry: true  # Use simple 100x100m room for testing (set false for real station)
+  network_path: "scenarios/station_sim/network"  # Path to real station geometry
 
 # Station layout (for simple geometry mode - 100m x 100m room)
 station:
@@ -93,6 +93,9 @@ llm:
 
   # Maximum retry attempts for failed API calls
   max_retries: 3
+
+  # Maximum completion tokens for LLM responses
+  max_completion_tokens: 8000
 
   # Embedder model for memory retrieval
   embedder: "sentence-transformers/all-mpnet-base-v2"

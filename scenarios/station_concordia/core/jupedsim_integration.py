@@ -19,8 +19,11 @@ import jupedsim as jps
 from shapely.geometry import Point
 
 from scenarios.common.logger import get_logger
+from scenarios.station_jupedsim.core.stage_manager import StageManager
 from scenarios.station_jupedsim.geometry import (
+    GeometryProcessor,
     load_entrance_areas,
+    load_obstacles,
     load_platform_areas,
     load_walkable_areas,
 )
@@ -37,20 +40,15 @@ class ConcordiaJuPedSimulation:
     """
 
     def __init__(
-        self,
-        network_path: Path | None = None,
-        dt: float = 0.05,
-        exit_radius: float = 10.0,
-        use_simple_geometry: bool = False,
+        self, network_path: Path | None = None, dt: float = 0.05, exit_radius: float = 10.0
     ):
         """
         Initialize JuPedSim simulation with station geometry.
 
         Args:
-            network_path: Path to network directory containing walking_areas.add.xml (optional if use_simple_geometry=True)
+            network_path: Path to network directory containing walking_areas.add.xml
             dt: Timestep in seconds (matches JuPedSim convention)
             exit_radius: Radius of circular exits in meters
-            use_simple_geometry: If True, use simple rectangular room instead of loading from files
         """
         self.dt = dt
         self.exit_radius = exit_radius
@@ -58,22 +56,21 @@ class ConcordiaJuPedSimulation:
         self.is_complete = False
 
         # Load geometry
-        if use_simple_geometry:
-            logger.info("Using simple rectangular room geometry for testing...")
-            self.walkable_areas, self.entrance_areas, self.platform_areas = (
-                self._load_simple_geometry()
-            )
-        else:
-            logger.info("Loading station geometry from network files...")
-            if network_path is None:
-                raise ValueError("network_path required when use_simple_geometry=False")
-            self.walkable_areas, self.entrance_areas, self.platform_areas = self._load_geometry(
-                network_path
-            )
+        logger.info("Loading station geometry from network files...")
+        if network_path is None:
+            raise ValueError("network_path required")
+        (
+            self.walkable_areas,
+            self.walkable_areas_with_obstacles,
+            self.entrance_areas,
+            self.platform_areas,
+            self.obstacles,
+        ) = self._load_geometry(network_path)
 
         # Create JuPedSim simulation
         logger.info("Initializing JuPedSim simulation...")
         self.simulation = self._create_simulation()
+        self.stage_manager = StageManager(self.simulation)
 
         # Setup evacuation exits and routes
         logger.info("Setting up evacuation exits...")
@@ -97,22 +94,7 @@ class ConcordiaJuPedSimulation:
             f"{len(self.evacuation_exits)} exits"
         )
 
-    def _load_simple_geometry(self) -> tuple[dict, dict, dict]:
-        """Load simple rectangular room geometry for testing."""
-        from scenarios.station_concordia.geometry.simple_room import create_simple_room
-
-        geometry = create_simple_room()
-        walkable_areas = geometry["walkable_areas"]
-        entrance_areas = geometry["entrance_areas"]
-        platform_areas = geometry["platform_areas"]
-
-        logger.info(f"  Loaded {len(walkable_areas)} walkable areas (simple room)")
-        logger.info(f"  Loaded {len(entrance_areas)} entrance/exit areas")
-        logger.info(f"  Loaded {len(platform_areas)} platform areas")
-
-        return walkable_areas, entrance_areas, platform_areas
-
-    def _load_geometry(self, network_path: Path) -> tuple[dict, dict, dict]:
+    def _load_geometry(self, network_path: Path) -> tuple[dict, dict, dict, dict, list]:
         """Load station geometry from SUMO network files."""
         walking_areas_file = network_path / "walking_areas.add.xml"
 
@@ -122,25 +104,37 @@ class ConcordiaJuPedSimulation:
         walkable_areas = load_walkable_areas(str(walking_areas_file))
         entrance_areas = load_entrance_areas(str(walking_areas_file))
         platform_areas = load_platform_areas(str(walking_areas_file))
+        obstacles = load_obstacles(str(walking_areas_file))
+
+        # Integrate obstacles into walkable areas as polygon holes
+        walkable_areas_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
+            walkable_areas, obstacles
+        )
 
         logger.info(f"  Loaded {len(walkable_areas)} walkable areas")
         logger.info(f"  Loaded {len(entrance_areas)} entrance areas")
         logger.info(f"  Loaded {len(platform_areas)} platform areas")
+        logger.info(f"  Loaded {len(obstacles)} obstacles")
+        logger.info(f"  Integrated {len(fixed_obstacles)} obstacles into walkable areas")
 
-        return walkable_areas, entrance_areas, platform_areas
+        return (
+            walkable_areas,
+            walkable_areas_with_obstacles,
+            entrance_areas,
+            platform_areas,
+            fixed_obstacles,
+        )
 
     def _create_simulation(self) -> jps.Simulation:
         """Create JuPedSim simulation with loaded geometry."""
-        # Merge all walkable areas into one geometry for simplicity
-        # In production, you might want more sophisticated geometry handling
-        all_areas = list(self.walkable_areas.values())
+        # Merge all walkable areas (with obstacles removed) into one geometry
+        all_areas = list(self.walkable_areas_with_obstacles.values())
 
         if not all_areas:
             raise ValueError("No walkable areas found in geometry")
 
-        # Use the first walkable area as the main simulation space
-        # TODO: Support multiple disconnected areas if needed
-        main_area = all_areas[0]
+        # Combine into a single geometry
+        main_area = GeometryProcessor.combine_geometry(all_areas)
 
         # Create JuPedSim simulation
         simulation = jps.Simulation(
@@ -149,7 +143,8 @@ class ConcordiaJuPedSimulation:
             dt=self.dt,
         )
 
-        logger.info(f"  Created simulation with area: {main_area.area:.1f} m²")
+        area = main_area.area if hasattr(main_area, "area") else 0.0
+        logger.info(f"  Created simulation with area: {area:.1f} m²")
 
         return simulation
 
@@ -158,16 +153,24 @@ class ConcordiaJuPedSimulation:
         evacuation_exits = {}
         evacuation_journeys = {}
 
+        walkable_geometry = GeometryProcessor.combine_geometry(
+            list(self.walkable_areas_with_obstacles.values())
+        )
+
         for entrance_name, entrance_polygon in self.entrance_areas.items():
             try:
-                # Create exit directly from the entrance polygon
-                # No need to create circular exit - use the entrance polygon itself
-                exit_id = self.simulation.add_exit_stage(polygon=entrance_polygon)
+                exit_id = self._create_convex_exit_from_polygon(
+                    entrance_name, entrance_polygon, walkable_geometry
+                )
+                if exit_id is None:
+                    raise RuntimeError("Unable to place convex exit within walkable area")
+
                 evacuation_exits[entrance_name] = exit_id
 
                 # Create journey to this exit
-                journey = jps.JourneyDescription([exit_id])
-                journey_id = self.simulation.add_journey(journey)
+                journey_id = self.stage_manager.create_simple_exit_journey(
+                    journey_name=f"journey_to_{entrance_name}", exit_id=exit_id
+                )
                 evacuation_journeys[entrance_name] = journey_id
 
                 logger.info(
@@ -188,6 +191,42 @@ class ConcordiaJuPedSimulation:
                 raise
 
         return evacuation_exits, evacuation_journeys
+
+    def _create_convex_exit_from_polygon(
+        self,
+        exit_name: str,
+        polygon,
+        walkable_geometry,
+    ) -> int | None:
+        """Create a convex rectangular exit centered on polygon centroid.
+
+        Uses the entrance centroid (or a nearby point inside the walkable
+        geometry) and creates a small convex rectangle around it.
+        """
+        centroid = polygon.centroid
+
+        if not walkable_geometry.contains(centroid):
+            intersection = polygon.intersection(walkable_geometry)
+            if not intersection.is_empty:
+                centroid = intersection.representative_point()
+            else:
+                centroid = polygon.representative_point()
+
+        # Try progressively smaller exits without strict containment checks
+        for width, height in [(6.0, 6.0), (4.0, 4.0), (2.0, 2.0)]:
+            exit_coords = [
+                (centroid.x - width / 2, centroid.y - height / 2),
+                (centroid.x + width / 2, centroid.y - height / 2),
+                (centroid.x + width / 2, centroid.y + height / 2),
+                (centroid.x - width / 2, centroid.y + height / 2),
+            ]
+
+            try:
+                return self.stage_manager.create_exit_at_coordinates(exit_name, exit_coords)
+            except Exception:
+                continue
+
+        return None
 
     def _setup_fallback_exits(self) -> tuple[dict[str, int], dict[str, int]]:
         """Create fallback exits within the walkable areas."""
@@ -506,8 +545,10 @@ class ConcordiaJuPedSimulation:
         """
         return {
             "walkable_areas": self.walkable_areas,
+            "walkable_areas_with_obstacles": self.walkable_areas_with_obstacles,
             "entrance_areas": self.entrance_areas,
             "platform_areas": self.platform_areas,
+            "obstacles": self.obstacles,
             "evacuation_exits": {
                 name: self.entrance_areas.get(name)
                 for name in self.evacuation_exits.keys()

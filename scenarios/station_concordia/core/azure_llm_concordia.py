@@ -10,6 +10,8 @@ structured evacuation decision responses.
 
 import json
 import os
+from datetime import datetime
+from pathlib import Path
 
 import requests
 
@@ -35,6 +37,7 @@ class AzureLLMConcordia:
         api_version: str = "2024-02-15-preview",
         temperature: float = 0.7,
         max_retries: int = 3,
+        max_completion_tokens: int = 8000,
     ):
         """
         Initialize Azure OpenAI client for Concordia.
@@ -52,6 +55,7 @@ class AzureLLMConcordia:
         self.api_version = api_version
         self.temperature = temperature
         self.max_retries = max_retries
+        self.max_completion_tokens = max_completion_tokens
 
         # Extract model/deployment name from endpoint if not provided
         if model:
@@ -67,7 +71,7 @@ class AzureLLMConcordia:
         logger.info(f"Initialized AzureLLMConcordia with model: {self.model}")
 
     def sample_text(
-        self, prompt: str, max_tokens: int = 1000, temperature: float | None = None, **kwargs
+        self, prompt: str, max_tokens: int | None = None, temperature: float | None = None, **kwargs
     ) -> str:
         """
         Generate text from a prompt.
@@ -88,6 +92,10 @@ class AzureLLMConcordia:
             Exception: If all retry attempts fail
         """
         temp = temperature if temperature is not None else self.temperature
+        if max_tokens is None:
+            max_tokens = self.max_completion_tokens
+        else:
+            max_tokens = max(max_tokens, self.max_completion_tokens)
 
         # Build the API URL
         url = f"{self.endpoint}/chat/completions?api-version={self.api_version}"
@@ -98,35 +106,51 @@ class AzureLLMConcordia:
             "api-key": self.api_key,
         }
 
-        # Convert prompt to chat format
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a simulation engine for evacuation training scenarios. "
-                    "Generate realistic behavioral responses for simulated agents based on their personality profiles, "
-                    "situational context, and safety protocols. "
-                    "This is for emergency preparedness training and research purposes."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-
-        payload = {
-            "messages": messages,
-            "max_completion_tokens": max_tokens,  # Use max_completion_tokens for newer models
-            "temperature": temp,
-        }
+        system_message = (
+            "You are a simulation engine for everyday station scenarios. "
+            "Generate realistic behavioral responses for simulated agents based on their personality profiles, "
+            "situational context, and normal station routines."
+        )
 
         # Retry logic
         last_error = None
+        base_prompt = prompt
         for attempt in range(1, self.max_retries + 1):
             try:
+                messages = [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt},
+                ]
+
+                payload = {
+                    "messages": messages,
+                    "max_completion_tokens": max_tokens,  # Use max_completion_tokens for newer models
+                    "temperature": temp,
+                }
+
                 response = requests.post(url, headers=headers, json=payload, timeout=30)
 
                 if response.status_code == 200:
                     result = response.json()
-                    text = result["choices"][0]["message"]["content"].strip()
+                    choice = result["choices"][0]
+                    text = choice.get("message", {}).get("content", "").strip()
+                    finish_reason = choice.get("finish_reason")
+
+                    self._log_prompt_response(
+                        prompt, text, result.get("usage", {}), finish_reason, max_tokens
+                    )
+
+                    if not text:
+                        logger.warning(
+                            f"Empty response received (attempt {attempt}/{self.max_retries}, "
+                            f"finish_reason={finish_reason}). Retrying with stricter instruction."
+                        )
+                        prompt = (
+                            f"{base_prompt}\n\nIMPORTANT: Respond with 1-3 complete sentences. "
+                            "Do not leave the answer blank."
+                        )
+                        last_error = Exception("Empty response")
+                        continue
 
                     # Log token usage
                     usage = result.get("usage", {})
@@ -183,7 +207,38 @@ class AzureLLMConcordia:
 
         # Return a fallback response rather than crashing the simulation
         logger.warning("Returning fallback response due to API failures")
-        return "I need to carefully consider my options and evacuate safely."
+        return "No clear information available."
+
+    def _log_prompt_response(
+        self,
+        prompt: str,
+        response: str,
+        usage: dict,
+        finish_reason: str | None,
+        max_completion_tokens: int,
+    ) -> None:
+        """Log the full prompt and response for debugging."""
+        try:
+            env_path = os.getenv("CONCORDIA_LLM_LOG_PATH")
+            log_path = (
+                Path(env_path)
+                if env_path
+                else Path("scenarios/station_concordia/output/llm_prompt_log.jsonl")
+            )
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "model": self.model,
+                "prompt": prompt,
+                "response": response,
+                "finish_reason": finish_reason,
+                "max_completion_tokens": max_completion_tokens,
+                "usage": usage,
+            }
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception as e:
+            logger.debug(f"Failed to log LLM prompt/response: {e}")
 
     @classmethod
     def from_env(cls, **kwargs) -> "AzureLLMConcordia":

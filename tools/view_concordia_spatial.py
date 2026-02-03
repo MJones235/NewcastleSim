@@ -7,12 +7,17 @@ Requires matplotlib for visualization.
 
 Usage:
     python tools/view_concordia_spatial.py --output-file PATH --geometry PATH
+    python tools/view_concordia_spatial.py --output-file PATH --network-path PATH
 """
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
+
+# Setup path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     import matplotlib
@@ -30,10 +35,16 @@ except ImportError:
 class SpatialConcordiaViewer:
     """Real-time spatial viewer for Concordia simulation."""
 
-    def __init__(self, output_file: Path, geometry_file: Path | None = None):
+    def __init__(
+        self,
+        output_file: Path,
+        geometry_file: Path | None = None,
+        network_path: Path | None = None,
+    ):
         """Initialize spatial viewer."""
         self.output_file = output_file
         self.geometry_file = geometry_file
+        self.network_path = network_path
         self.agent_positions = {}
         self.agent_decisions = {}
         self.last_update = 0
@@ -42,6 +53,8 @@ class SpatialConcordiaViewer:
         self.geometry = None
         if geometry_file and geometry_file.exists():
             self.geometry = self._load_geometry(geometry_file)
+        elif self.network_path and self.network_path.exists():
+            self.geometry = self._load_geometry_from_network(self.network_path)
 
         # Setup matplotlib figure
         self.fig, (self.ax_map, self.ax_decisions) = plt.subplots(
@@ -65,6 +78,55 @@ class SpatialConcordiaViewer:
                 return json.load(f)
         except Exception as e:
             print(f"Failed to load geometry: {e}")
+            return None
+
+    def _load_geometry_from_network(self, network_path: Path) -> dict | None:
+        """Load station geometry from SUMO walking_areas.add.xml files."""
+        try:
+            from scenarios.station_jupedsim.geometry import (
+                load_entrance_areas,
+                load_obstacles,
+                load_platform_areas,
+                load_walkable_areas,
+            )
+
+            walking_areas_file = network_path / "walking_areas.add.xml"
+            if not walking_areas_file.exists():
+                print(f"Geometry file not found: {walking_areas_file}")
+                return None
+
+            walkable_areas = load_walkable_areas(str(walking_areas_file))
+            entrance_areas = load_entrance_areas(str(walking_areas_file))
+            platform_areas = load_platform_areas(str(walking_areas_file))
+            obstacles = load_obstacles(str(walking_areas_file))
+
+            def poly_to_coords(poly):
+                return list(poly.exterior.coords)
+
+            geometry = {
+                "walkable_areas": {
+                    name: poly_to_coords(poly) for name, poly in walkable_areas.items()
+                },
+                "entrance_areas": {
+                    name: poly_to_coords(poly) for name, poly in entrance_areas.items()
+                },
+                "platform_areas": {
+                    name: poly_to_coords(poly) for name, poly in platform_areas.items()
+                },
+                "obstacles": [poly_to_coords(poly) for poly in obstacles],
+            }
+
+            print(
+                f"Loaded geometry from {walking_areas_file}: "
+                f"{len(walkable_areas)} walkable, "
+                f"{len(entrance_areas)} entrances, "
+                f"{len(platform_areas)} platforms, "
+                f"{len(obstacles)} obstacles"
+            )
+
+            return geometry
+        except Exception as e:
+            print(f"Failed to load geometry from network: {e}")
             return None
 
     def _setup_map_axes(self):
@@ -120,6 +182,15 @@ class SpatialConcordiaViewer:
                     )
                     self.ax_map.add_patch(polygon)
 
+        # Draw obstacles
+        if "obstacles" in self.geometry:
+            for coords in self.geometry["obstacles"]:
+                if coords:
+                    polygon = MPLPolygon(
+                        coords, fill=True, alpha=0.4, color="black", label="Obstacle"
+                    )
+                    self.ax_map.add_patch(polygon)
+
     def _set_fixed_limits(self, x_min: float, x_max: float, y_min: float, y_max: float):
         """Set fixed axis limits with small padding."""
         pad_x = (x_max - x_min) * 0.05 if x_max > x_min else 5.0
@@ -130,11 +201,16 @@ class SpatialConcordiaViewer:
     def _set_fixed_limits_from_geometry(self):
         """Compute geometry bounds and lock axis limits."""
         coords_list = []
-        for key in ("walkable_areas", "entrance_areas", "platform_areas"):
+        for key in ("walkable_areas", "entrance_areas", "platform_areas", "obstacles"):
             areas = self.geometry.get(key, {}) if self.geometry else {}
-            for coords in areas.values():
-                if coords:
-                    coords_list.extend(coords)
+            if isinstance(areas, dict):
+                for coords in areas.values():
+                    if coords:
+                        coords_list.extend(coords)
+            elif isinstance(areas, list):
+                for coords in areas:
+                    if coords:
+                        coords_list.extend(coords)
 
         if coords_list:
             xs = [c[0] for c in coords_list]
@@ -274,12 +350,19 @@ def main():
     parser.add_argument(
         "--geometry", type=str, default=None, help="Path to geometry JSON file (optional)"
     )
+    parser.add_argument(
+        "--network-path",
+        type=str,
+        default=None,
+        help="Path to station_sim network directory (optional)",
+    )
     args = parser.parse_args()
 
     output_file = Path(args.output_file)
     geometry_file = Path(args.geometry) if args.geometry else None
+    network_path = Path(args.network_path) if args.network_path else None
 
-    viewer = SpatialConcordiaViewer(output_file, geometry_file)
+    viewer = SpatialConcordiaViewer(output_file, geometry_file, network_path)
     viewer.run()
 
 

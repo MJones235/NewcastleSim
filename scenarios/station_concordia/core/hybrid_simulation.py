@@ -140,7 +140,8 @@ class HybridSimulationRunner:
             "I am at a train station.",
             f"I am in the {config.get('initial_zone', 'platform')} area.",
             "I am waiting for my train.",
-            "The station has multiple exits and clearly marked signs.",
+            "I am on my way to my destination.",
+            "The station has clear signage for platforms and exits.",
             "I notice other passengers waiting and walking around.",
             "The atmosphere is calm and routine.",
         ]
@@ -271,7 +272,7 @@ class HybridSimulationRunner:
 
                 # Get agent's action
                 action_spec = entity_lib.ActionSpec(
-                    call_to_action="What will you do next in this evacuation?",
+                    call_to_action="What will you do next?",
                     output_type=entity_lib.OutputType.FREE,
                 )
                 action = agent.act(action_spec)
@@ -290,6 +291,8 @@ class HybridSimulationRunner:
                 self.agent_decisions[agent_id]["decisions"].append(
                     {
                         "time": self.current_sim_time,
+                        "observation": observation,
+                        "prompt": action_spec.call_to_action,
                         "action": action,
                         "reasoning": reasoning,
                         "translated": translated,

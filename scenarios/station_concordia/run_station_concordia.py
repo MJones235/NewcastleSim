@@ -51,11 +51,6 @@ def parse_args():
         help="Output directory (overrides config)",
     )
     parser.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="Disable LLM (for testing)",
-    )
-    parser.add_argument(
         "--no-viewer",
         action="store_true",
         help="Don't launch the GUI viewer",
@@ -81,24 +76,8 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def setup_language_model(config: dict, disable_llm: bool = False):
+def setup_language_model(config: dict):
     """Setup the language model and embedder."""
-    # Mock mode - return early before checking API keys
-    if disable_llm:
-        logger.warning("LLM disabled - using mock model")
-
-        # Mock model for testing
-        class MockModel:
-            def sample_text(self, prompt: str, **kwargs) -> str:
-                return "I will evacuate via the nearest exit."
-
-        def mock_embedder(x):
-            return [0.0] * 384
-
-        model = MockModel()
-        embedder = mock_embedder
-        return model, embedder
-
     import os
 
     from dotenv import load_dotenv
@@ -127,6 +106,7 @@ def setup_language_model(config: dict, disable_llm: bool = False):
                 model=azure_model,
                 temperature=llm_config.get("temperature", 0.7),
                 max_retries=llm_config.get("max_retries", 3),
+                max_completion_tokens=llm_config.get("max_completion_tokens", 8000),
             )
 
             # Setup embedder (force CPU to avoid GPU compatibility issues)
@@ -147,9 +127,7 @@ def setup_language_model(config: dict, disable_llm: bool = False):
 
     # No Azure configured - show error
     raise ValueError(
-        "No LLM configured. Either:\n"
-        "  1. Set Azure credentials in .env (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY)\n"
-        "  2. Use --no-llm flag for testing without LLM"
+        "No LLM configured. Set Azure credentials in .env (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY)"
     )
 
 
@@ -181,27 +159,14 @@ def run_simulation(
     # Step 1: Setup JuPedSim simulation
     sim_config = config.get("simulation", {})
     dt = sim_config.get("dt", 0.05)
-    use_simple_geometry = sim_config.get(
-        "use_simple_geometry", True
-    )  # Default to simple for testing
-
-    if use_simple_geometry:
-        logger.info("Using simple rectangular room geometry (100m x 100m)")
-        jps_sim = ConcordiaJuPedSimulation(
-            dt=dt,
-            exit_radius=5.0,
-            use_simple_geometry=True,
-        )
-    else:
-        # Load station geometry from network files
-        network_path = Path("scenarios/station_sim/network")
-        logger.info(f"Loading real station geometry from {network_path}...")
-        jps_sim = ConcordiaJuPedSimulation(
-            network_path=network_path,
-            dt=dt,
-            exit_radius=10.0,
-            use_simple_geometry=False,
-        )
+    # Load station geometry from network files
+    network_path = Path(sim_config.get("network_path", "scenarios/station_sim/network"))
+    logger.info(f"Loading real station geometry from {network_path}...")
+    jps_sim = ConcordiaJuPedSimulation(
+        network_path=network_path,
+        dt=dt,
+        exit_radius=10.0,
+    )
 
     # Step 2: Create agent configurations
     agent_config = config.get("agents", {})
@@ -210,30 +175,95 @@ def run_simulation(
     agents_config = []
     station_layout = config.get("station", {})
 
-    # Get spawn positions from walkable areas (not entrances, which may be outside)
+    def _polygon_bounds(polygon):
+        min_x, min_y, max_x, max_y = polygon.bounds
+        return {"x_min": min_x, "x_max": max_x, "y_min": min_y, "y_max": max_y}
+
+    def _sample_point_in_polygon(polygon, rng, max_attempts: int = 200):
+        from shapely.geometry import Point
+
+        min_x, min_y, max_x, max_y = polygon.bounds
+        for _ in range(max_attempts):
+            x = rng.uniform(min_x, max_x)
+            y = rng.uniform(min_y, max_y)
+            if polygon.contains(Point(x, y)):
+                return (x, y)
+        rep = polygon.representative_point()
+        return (rep.x, rep.y)
+
+    def _point_in_any_polygon(point, polygons) -> bool:
+        from shapely.geometry import Point
+
+        pt = Point(point)
+        return any(poly.contains(pt) for poly in polygons)
+
+    entrance_areas = jps_sim.entrance_areas
+    platform_areas = jps_sim.platform_areas
+
+    station_layout = {
+        **station_layout,
+        "exits": {
+            name: (poly.centroid.x, poly.centroid.y) for name, poly in entrance_areas.items()
+        },
+        "exits_polygons": entrance_areas,
+        "zones": (
+            {name: _polygon_bounds(poly) for name, poly in platform_areas.items()}
+            if platform_areas
+            else {"main_area": _polygon_bounds(list(jps_sim.walkable_areas.values())[0])}
+        ),
+        "zones_polygons": (
+            platform_areas
+            if platform_areas
+            else {"main_area": list(jps_sim.walkable_areas.values())[0]}
+        ),
+        "obstacles": jps_sim.obstacles,
+    }
+
+    # Get spawn positions from geometry (platform areas preferred, then walkable)
     walkable_areas = jps_sim.walkable_areas
-    if walkable_areas:
-        # Use main walkable area for spawning
-        main_area = list(walkable_areas.values())[0]
-        logger.info(f"Spawning agents in main walkable area (area: {main_area.area:.1f} m²)")
+    platform_areas = jps_sim.platform_areas
 
-        # Use a more restricted spawn area in the center of the room
-        # to ensure agents are far from exits and have to walk there
-        import random
+    import random
 
-        random.seed(42)  # Reproducible
+    random.seed(42)
 
-        spawn_positions = []
-        for _ in range(num_agents):
-            # Spawn in central area: 30-70 for x and y (center 40x40 square)
-            x = random.uniform(30.0, 70.0)
-            y = random.uniform(30.0, 70.0)
-            spawn_positions.append((x, y))
+    spawn_polygons = list(platform_areas.values()) if platform_areas else []
+    if not spawn_polygons and walkable_areas:
+        spawn_polygons = list(walkable_areas.values())
 
-        logger.info(f"Generated {len(spawn_positions)} spawn positions in central area")
-    else:
-        logger.error("No walkable areas found!")
-        raise RuntimeError("Cannot spawn agents without walkable areas")
+    if not spawn_polygons:
+        logger.error("No valid spawn polygons found in geometry")
+        raise RuntimeError("Cannot spawn agents without geometry")
+
+    walkable_polygons = list(getattr(jps_sim, "walkable_areas_with_obstacles", {}).values())
+    if not walkable_polygons:
+        walkable_polygons = list(walkable_areas.values())
+
+    # Weighted choice by polygon area for better distribution
+    areas = [poly.area for poly in spawn_polygons]
+    spawn_positions = []
+    for _ in range(num_agents):
+        chosen = random.choices(spawn_polygons, weights=areas, k=1)[0]
+        candidate = _sample_point_in_polygon(chosen, random)
+
+        # Ensure the spawn point is inside walkable geometry (with obstacles removed)
+        if walkable_polygons and not _point_in_any_polygon(candidate, walkable_polygons):
+            for _ in range(50):
+                candidate = _sample_point_in_polygon(chosen, random)
+                if _point_in_any_polygon(candidate, walkable_polygons):
+                    break
+
+        # Final fallback: sample from walkable polygon directly
+        if walkable_polygons and not _point_in_any_polygon(candidate, walkable_polygons):
+            fallback_poly = random.choice(walkable_polygons)
+            candidate = _sample_point_in_polygon(fallback_poly, random)
+
+        spawn_positions.append(candidate)
+
+    logger.info(
+        f"Generated {len(spawn_positions)} spawn positions from "
+        f"{'platform' if platform_areas else 'walkable'} areas"
+    )
 
     for i in range(num_agents):
         agent_id = f"agent_{i}"
@@ -272,6 +302,11 @@ def run_simulation(
     logger.info(f"Run ID: {run_id}")
     logger.info(f"Output directory: {output_dir}")
 
+    # Point LLM prompt log to this run's output directory
+    import os
+
+    os.environ["CONCORDIA_LLM_LOG_PATH"] = str(output_dir / "llm_prompt_log.jsonl")
+
     # Launch GUI viewer BEFORE simulation starts (if enabled)
     _viewer_process = None
     if launch_viewer:
@@ -306,6 +341,8 @@ def run_simulation(
                     str(spatial_viewer_path),
                     "--output-file",
                     str(decisions_file.absolute()),
+                    "--network-path",
+                    str(network_path),
                 ]
             )
             logger.info("Spatial viewer launched - shows agent positions on map")
@@ -385,7 +422,7 @@ def main():
             config["output"]["directory"] = args.output_dir
 
         # Setup language model
-        model, embedder = setup_language_model(config, disable_llm=args.no_llm)
+        model, embedder = setup_language_model(config)
 
         # Run simulation (with viewers if enabled)
         # Run simulation (with viewers if enabled)

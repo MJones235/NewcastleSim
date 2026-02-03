@@ -115,8 +115,30 @@ class ActionTranslator:
         """
         action_lower = action.lower()
 
+        def _find_exit_by_number(text: str) -> tuple[str, tuple[float, float]] | None:
+            import re
+
+            match = re.search(r"\b(?:entrance|exit)\s*[_-]?(\d+)\b", text)
+            if not match:
+                return None
+            number = match.group(1)
+            for exit_name, exit_coords in self.exits.items():
+                if number in exit_name:
+                    return exit_name, exit_coords
+            return None
+
         # Pattern matching for common actions
-        if "evacuate" in action_lower or "exit" in action_lower:
+        if "evacuate" in action_lower or "exit" in action_lower or "entrance" in action_lower:
+            numbered_exit = _find_exit_by_number(action_lower)
+            if numbered_exit:
+                exit_name, exit_coords = numbered_exit
+                return {
+                    "action_type": "move",
+                    "target": exit_coords,
+                    "confidence": 0.85,
+                    "reasoning": f"Moving to {exit_name} exit",
+                }
+
             # Extract exit name if mentioned
             for exit_name, exit_coords in self.exits.items():
                 if exit_name.lower() in action_lower:
@@ -136,7 +158,13 @@ class ActionTranslator:
                 "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
             }
 
-        elif "wait" in action_lower or "stay" in action_lower:
+        elif (
+            "wait" in action_lower
+            or "stay here" in action_lower
+            or "stay put" in action_lower
+            or "remain here" in action_lower
+            or "stand by" in action_lower
+        ):
             return {
                 "action_type": "wait",
                 "target": current_position,
@@ -159,6 +187,26 @@ class ActionTranslator:
                 "target": None,  # Will be resolved by identifying crowd flow
                 "confidence": 0.6,
                 "reasoning": "Following the crowd",
+            }
+
+        # Movement intent without explicit exit
+        elif any(
+            phrase in action_lower
+            for phrase in (
+                "move",
+                "walk",
+                "head",
+                "go",
+                "proceed",
+                "leave",
+            )
+        ):
+            nearest_exit = self._find_nearest_exit(current_position)
+            return {
+                "action_type": "move",
+                "target": nearest_exit["coords"],
+                "confidence": 0.6,
+                "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
             }
 
         else:
@@ -208,6 +256,11 @@ class ObservationGenerator:
         """
         self.station_layout = station_layout
         self.zones = station_layout.get("zones", {})
+        self.zones_polygons = station_layout.get("zones_polygons", {})
+        self.exits = station_layout.get("exits", {})
+        self.exits_polygons = station_layout.get("exits_polygons", {})
+        self.obstacles = station_layout.get("obstacles", [])
+        self._agents_with_geometry_intro: set[str] = set()
 
     def generate_observation(
         self,
@@ -231,6 +284,10 @@ class ObservationGenerator:
             Natural language observation string
         """
         observations = []
+
+        if agent_id not in self._agents_with_geometry_intro:
+            observations.append(self._describe_geometry())
+            self._agents_with_geometry_intro.add(agent_id)
 
         # Time
         observations.append(f"[Time: {sim_time:.1f}s]")
@@ -271,12 +328,47 @@ class ObservationGenerator:
 
     def _identify_zone(self, position: tuple[float, float]) -> str:
         """Identify which zone a position is in."""
-        # Simple zone identification based on position
-        # TODO: Implement proper zone lookup from geometry
+        if self.zones_polygons:
+            try:
+                from shapely.geometry import Point
+
+                point = Point(position)
+                for zone_name, polygon in self.zones_polygons.items():
+                    if polygon.contains(point):
+                        return zone_name
+            except Exception:
+                pass
+
+        # Fallback to rectangular bounds
         for zone_name, zone_bounds in self.zones.items():
             if self._point_in_bounds(position, zone_bounds):
                 return zone_name
         return "unknown area"
+
+    def _describe_geometry(self) -> str:
+        """Create a short natural language summary of the station geometry."""
+        zone_names = list(self.zones_polygons.keys()) or list(self.zones.keys())
+        exit_names = list(self.exits_polygons.keys()) or list(self.exits.keys())
+
+        # Hardcoded operational context for Newcastle station
+        footbridge_note = (
+            "Platforms 3–8 are accessed via a footbridge. "
+            "Each platform zone has both a flight of stairs and a ramp onto the footbridge."
+        )
+
+        platform_zone_note = (
+            "Zone mapping: walkable_area_0 contains platforms 5–8; "
+            "walkable_area_2 contains platforms 3–4; "
+            "walkable_area_3 contains other platforms, the foyer, and all exits/entrances."
+        )
+
+        zone_part = (
+            f"Zones: {', '.join(zone_names)}." if zone_names else "Zones are not clearly marked."
+        )
+        exit_part = (
+            f"Exits: {', '.join(exit_names)}." if exit_names else "Exits are visible but unnamed."
+        )
+        return f"Station layout: {zone_part} {exit_part} {platform_zone_note} {footbridge_note}"
 
     def _point_in_bounds(self, point: tuple[float, float], bounds: dict) -> bool:
         """Check if a point is within rectangular bounds."""

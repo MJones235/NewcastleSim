@@ -121,7 +121,7 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label=f"\nCharacter Profile - {name}",
         )
 
-        # Situation perception - understand current evacuation situation
+        # Situation perception - understand current situation
         situation_perception_key = "SituationPerception"
         situation_perception = agent_components.question_of_recent_memories.SituationPerception(
             model=model,
@@ -150,7 +150,7 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label=f"\nSocial Context - {name}",
             question=(
                 f"Describe observed behaviors of nearby people based on recent observations. "
-                f"Note their emotional state (calm, urgent, orderly) and actions (evacuating, waiting, moving). "
+                f"Note their emotional state (calm, urgent, orderly) and actions (waiting, moving). "
                 f"Consider how this social context may inform {name}'s decision."
             ),
             answer_prefix=f"{name} notes: ",
@@ -167,7 +167,7 @@ class EvacuationAgent(prefab_lib.Prefab):
                 risk_perception_key,
                 social_influence_key,
             ],
-            pre_act_label=(f"\nSimulated Decision Process - {name} (Evacuation Training Scenario)"),
+            pre_act_label=(f"\nSimulated Decision Process - {name}"),
         )
 
         # Relevant memories
@@ -179,10 +179,10 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label="\nRelevant Memories",
         )
 
-        # Goal component - evacuation objective
+        # Goal component - everyday objective (no emergency framing)
         goal_key = "Goal"
         evacuation_goal = agent_components.constant.Constant(
-            state="Evacuate safely from the station to a designated exit.",
+            state="Continue your planned trip (e.g., wait for your train or head to your destination).",
             pre_act_label="\nGoal",
         )
 
