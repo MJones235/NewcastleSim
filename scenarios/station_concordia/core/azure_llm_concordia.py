@@ -92,6 +92,12 @@ class AzureLLMConcordia:
             Exception: If all retry attempts fail
         """
         temp = temperature if temperature is not None else self.temperature
+        if temp != 1:
+            logger.warning(
+                "Azure model only supports default temperature=1. Overriding temp=%s -> 1",
+                temp,
+            )
+            temp = 1
         if max_tokens is None:
             max_tokens = self.max_completion_tokens
         else:

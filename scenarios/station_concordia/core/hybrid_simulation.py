@@ -410,7 +410,9 @@ class HybridSimulationRunner:
         try:
             if action_type == "move" and target:
                 self.jps_sim.set_agent_target(agent_id, target)
-            # "wait" actions don't need to set a new target
+            elif action_type == "wait":
+                current_position = self._get_agent_position(agent_id)
+                self.jps_sim.set_agent_target(agent_id, current_position)
         except Exception as e:
             logger.error(f"Failed to apply action for {agent_id}: {e}")
 

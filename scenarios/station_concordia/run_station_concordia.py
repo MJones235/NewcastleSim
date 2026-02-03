@@ -206,6 +206,8 @@ def run_simulation(
             name: (poly.centroid.x, poly.centroid.y) for name, poly in entrance_areas.items()
         },
         "exits_polygons": entrance_areas,
+        "walkable_areas": getattr(jps_sim, "walkable_areas_with_obstacles", None)
+        or jps_sim.walkable_areas,
         "zones": (
             {name: _polygon_bounds(poly) for name, poly in platform_areas.items()}
             if platform_areas
