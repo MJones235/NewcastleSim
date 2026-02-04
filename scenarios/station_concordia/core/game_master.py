@@ -105,11 +105,11 @@ class ActionTranslator:
         self, agent_id: str, action: str, current_position: tuple[float, float]
     ) -> dict[str, Any]:
         """
-        Translate a natural language action to a concrete goal.
+        Translate a JSON action response to a concrete goal.
 
         Args:
             agent_id: ID of the acting agent
-            action: Natural language action from Concordia agent
+            action: JSON action from Concordia agent
             current_position: Agent's current (x, y) position
 
         Returns:
@@ -119,18 +119,70 @@ class ActionTranslator:
                 - confidence: Parsing confidence (0-1)
                 - reasoning: Explanation of translation
         """
+        # Try parsing as JSON first
+        try:
+            # Strip agent name prefix (e.g., "Agent 0 {" -> "{")
+            json_start = action.find("{")
+            if json_start > 0:
+                action = action[json_start:]
+
+            data = json.loads(action)
+            action_type = data.get("action_type")
+            target_type = data.get("target_type")
+            exit_name = data.get("exit_name")
+            zone_name = data.get("zone_name")
+
+            if action_type == "wait" or target_type == "current_position":
+                return {
+                    "action_type": "wait",
+                    "target": current_position,
+                    "confidence": 0.9,
+                    "reasoning": "Agent chose to wait at current position",
+                }
+
+            if action_type == "move" and target_type == "exit":
+                if exit_name == "nearest" or not exit_name:
+                    nearest_exit = self._find_nearest_exit(current_position)
+                    return {
+                        "action_type": "move",
+                        "target": nearest_exit["coords"],
+                        "confidence": 0.9,
+                        "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
+                    }
+
+                if exit_name in self.exits:
+                    return {
+                        "action_type": "move",
+                        "target": self.exits[exit_name],
+                        "confidence": 0.95,
+                        "reasoning": f"Moving to exit {exit_name}",
+                    }
+
+            if action_type == "move" and target_type == "zone" and zone_name:
+                zone_target = self._find_zone_target(zone_name.lower())
+                if zone_target:
+                    zone_name, zone_coords = zone_target
+                    return {
+                        "action_type": "move",
+                        "target": zone_coords,
+                        "confidence": 0.9,
+                        "reasoning": f"Moving to zone {zone_name}",
+                    }
+
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse action as JSON, trying LLM fallback: {action[:100]}")
+
+        # Fallback to LLM if JSON parsing fails
         if self.model:
             llm_result = self._interpret_with_llm(action, current_position)
             if llm_result:
                 return llm_result
-        else:
-            logger.warning("ActionTranslator has no LLM model configured; using wait fallback.")
 
         return {
             "action_type": "wait",
             "target": current_position,
             "confidence": 0.3,
-            "reasoning": f"LLM unavailable or unclear action, defaulting to wait: {action}",
+            "reasoning": f"Parse failed, defaulting to wait: {action[:100]}",
         }
 
     def _find_nearest_exit(self, position: tuple[float, float]) -> dict[str, Any]:

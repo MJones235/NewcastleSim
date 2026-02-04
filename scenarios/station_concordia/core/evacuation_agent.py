@@ -96,13 +96,6 @@ class EvacuationAgent(prefab_lib.Prefab):
         memory_key = agent_components.memory.DEFAULT_MEMORY_COMPONENT_KEY
         memory = agent_components.memory.AssociativeMemory(memory_bank=memory_bank)
 
-        # Instructions component with evacuation context
-        instructions_key = "Instructions"
-        instructions = agent_components.instructions.Instructions(
-            agent_name=name,
-            pre_act_label="\nAgent Profile",
-        )
-
         # Observation to memory - automatically stores observations
         observation_to_memory_key = "ObservationToMemory"
         observation_to_memory = agent_components.observation.ObservationToMemory()
@@ -110,72 +103,27 @@ class EvacuationAgent(prefab_lib.Prefab):
         # Recent observations
         observation_key = agent_components.observation.DEFAULT_OBSERVATION_COMPONENT_KEY
         observation = agent_components.observation.LastNObservations(
-            history_length=20,
+            history_length=10,
             pre_act_label="\nRecent Events (newest last)",
         )
 
-        # Self perception with personality
+        # Static personality (no LLM call needed)
         self_perception_key = "SelfPerception"
-        self_perception = agent_components.question_of_recent_memories.SelfPerception(
-            model=model,
+        self_perception = agent_components.constant.Constant(
+            state=(
+                f"I am {name}, a {age}-year-old {gender}. "
+                f"Personality type: {personality} - {personality_desc} "
+                f"Risk tolerance: {risk_tolerance}."
+            ),
             pre_act_label=f"\nCharacter Profile - {name}",
         )
 
-        # Situation perception - understand current situation
-        situation_perception_key = "SituationPerception"
-        situation_perception = agent_components.question_of_recent_memories.SituationPerception(
-            model=model,
-            pre_act_label=f"\nCurrent Situation - {name}",
-        )
-
-        # Risk perception - custom reasoning about danger level
-        risk_perception_key = "RiskPerception"
-        risk_perception = agent_components.question_of_recent_memories.QuestionOfRecentMemories(
-            model=model,
-            pre_act_label=f"\nThreat Assessment - {name}",
-            question=(
-                f"Evaluate the danger level based on recent observations and events. "
-                f"Assess any immediate threats or risks. "
-                f"Note: {name} has {risk_tolerance} risk tolerance."
-            ),
-            answer_prefix=f"{name} assesses: ",
-            add_to_memory=True,
-            memory_tag="[risk assessment]",
-        )
-
-        # Social influence - observe what others are doing
-        social_influence_key = "SocialInfluence"
-        social_influence = agent_components.question_of_recent_memories.QuestionOfRecentMemories(
-            model=model,
-            pre_act_label=f"\nSocial Context - {name}",
-            question=(
-                f"Describe observed behaviors of nearby people based on recent observations. "
-                f"Note their emotional state (calm, urgent, orderly) and actions (waiting, moving). "
-                f"Consider how this social context may inform {name}'s decision."
-            ),
-            answer_prefix=f"{name} notes: ",
-            add_to_memory=False,
-        )
-
-        # Person by situation - core decision reasoning
-        person_by_situation_key = "PersonBySituation"
-        person_by_situation = agent_components.question_of_recent_memories.PersonBySituation(
-            model=model,
-            components=[
-                self_perception_key,
-                situation_perception_key,
-                risk_perception_key,
-                social_influence_key,
-            ],
-            pre_act_label=(f"\nSimulated Decision Process - {name}"),
-        )
-
-        # Relevant memories
+        # Relevant memories (uses embeddings, not LLM inference)
         relevant_memories_key = "RelevantMemories"
         relevant_memories = agent_components.all_similar_memories.AllSimilarMemories(
             model=model,
-            components=[situation_perception_key],
-            num_memories_to_retrieve=10,
+            components=[observation_key],
+            num_memories_to_retrieve=5,
             pre_act_label="\nRelevant Memories",
         )
 
@@ -186,43 +134,21 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label="\nGoal",
         )
 
-        # Personality component
-        personality_key = "Personality"
-        personality_component = agent_components.constant.Constant(
-            state=(
-                f"{name} is a {age}-year-old {gender}. "
-                f"Personality type: {personality} - {personality_desc}"
-            ),
-            pre_act_label="\nPersonality",
-        )
-
         # Assemble all components
         components_of_agent = {
-            instructions_key: instructions,
-            personality_key: personality_component,
-            goal_key: evacuation_goal,
             observation_to_memory_key: observation_to_memory,
-            relevant_memories_key: relevant_memories,
             self_perception_key: self_perception,
-            situation_perception_key: situation_perception,
-            risk_perception_key: risk_perception,
-            social_influence_key: social_influence,
-            person_by_situation_key: person_by_situation,
+            relevant_memories_key: relevant_memories,
+            goal_key: evacuation_goal,
             observation_key: observation,
             memory_key: memory,
         }
 
-        # Component order for prompt construction
+        # Component order for prompt construction - minimal context
         component_order = [
-            instructions_key,
-            personality_key,
+            self_perception_key,
             goal_key,
             relevant_memories_key,
-            self_perception_key,
-            situation_perception_key,
-            risk_perception_key,
-            social_influence_key,
-            person_by_situation_key,
             observation_key,
         ]
 

@@ -14,6 +14,7 @@ Key features:
 
 import json
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,57 @@ from scenarios.station_concordia.core.evacuation_agent import EvacuationAgent
 from scenarios.station_concordia.core.game_master import ActionTranslator, ObservationGenerator
 
 logger = get_logger(__name__)
+
+
+# Performance timing utility
+class PerformanceTimer:
+    """Simple performance timer for profiling simulation bottlenecks."""
+
+    def __init__(self):
+        self.timings = {}
+        self.counts = {}
+
+    def record(self, name: str, duration: float):
+        """Record a timing measurement."""
+        if name not in self.timings:
+            self.timings[name] = 0.0
+            self.counts[name] = 0
+        self.timings[name] += duration
+        self.counts[name] += 1
+
+    @contextmanager
+    def measure(self, name: str):
+        """Context manager for timing a block of code."""
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration = time.perf_counter() - start
+            self.record(name, duration)
+
+    def report(self):
+        """Generate performance report."""
+        if not self.timings:
+            return "No timings recorded"
+
+        lines = ["\n=== PERFORMANCE PROFILE ==="]
+        total_time = sum(self.timings.values())
+
+        # Sort by total time descending
+        sorted_items = sorted(self.timings.items(), key=lambda x: x[1], reverse=True)
+
+        for name, total in sorted_items:
+            count = self.counts[name]
+            avg = total / count if count > 0 else 0
+            percent = (total / total_time * 100) if total_time > 0 else 0
+            lines.append(
+                f"{name:30s}: {total:8.3f}s total | {avg:8.3f}s avg | {count:5d} calls | {percent:5.1f}%"
+            )
+
+        lines.append(f"{'TOTAL':30s}: {total_time:8.3f}s")
+        lines.append("=" * 80)
+
+        return "\n".join(lines)
 
 
 class HybridSimulationRunner:
@@ -109,6 +161,11 @@ class HybridSimulationRunner:
         self.current_sim_time = 0.0
         self.agent_decisions: dict[str, dict[str, Any]] = {}
         self.event_history: list[dict[str, Any]] = []
+        self.last_observations: dict[str, str] = {}  # Cache observations for change detection
+        self.last_actions: dict[str, str] = {}  # Cache actions to reuse
+
+        # Performance profiling
+        self.perf_timer = PerformanceTimer()
 
     def _build_agents(self):
         """Build Concordia agents from configurations."""
@@ -185,24 +242,29 @@ class HybridSimulationRunner:
 
                 for step in range(self.max_steps):
                     step_start = time.perf_counter()
+
                     # Advance JuPedSim simulation
-                    if not self._step_jupedsim():
-                        logger.info("JuPedSim simulation complete")
-                        break
+                    with self.perf_timer.measure("jupedsim_step"):
+                        if not self._step_jupedsim():
+                            logger.info("JuPedSim simulation complete")
+                            break
 
                     self.current_sim_time = step * self.jps_sim.dt
 
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
-                        self._process_agent_decisions()
+                        with self.perf_timer.measure("agent_decisions_total"):
+                            self._process_agent_decisions()
 
                     # Check for events
-                    self._check_and_trigger_events()
+                    with self.perf_timer.measure("event_checking"):
+                        self._check_and_trigger_events()
 
                     # Save positions every 10 steps (0.5s) for smooth visualization
                     # Writing every single step (0.05s) is too slow for file I/O
                     if self.output_file and step % 10 == 0:
-                        self._save_incremental()
+                        with self.perf_timer.measure("file_io"):
+                            self._save_incremental()
 
                     results["steps"] = step + 1
                     results["sim_time"] = self.current_sim_time
@@ -236,6 +298,9 @@ class HybridSimulationRunner:
             f"{elapsed_time:.1f}s real time"
         )
 
+        # Print performance profile
+        print(self.perf_timer.report())
+
         return results
 
     def _step_jupedsim(self) -> bool:
@@ -261,28 +326,81 @@ class HybridSimulationRunner:
         logger.info(f"Agent decisions at t={self.current_sim_time:.1f}s")
 
         # Generate observations for all agents
-        observations = self._generate_observations()
+        with self.perf_timer.measure("generate_observations"):
+            observations = self._generate_observations()
+
+        # Get available exits and zones for structured output
+        exits = [
+            {"name": name, "coords": coords}
+            for name, coords in self.action_translator.exits.items()
+        ]
+        zones = list(self.action_translator.zones_polygons.keys()) or list(
+            self.action_translator.zones.keys()
+        )
 
         # Process each agent
         for agent_id, agent in self.concordia_agents.items():
             try:
-                # Provide observation to agent
+                # Get observation for this agent
                 observation = observations.get(agent_id, "")
-                agent.observe(observation)
 
-                # Get agent's action
-                action_spec = entity_lib.ActionSpec(
-                    call_to_action="What will you do next?",
-                    output_type=entity_lib.OutputType.FREE,
+                # Check if observation changed since last decision
+                observation_changed = (
+                    agent_id not in self.last_observations
+                    or self.last_observations[agent_id] != observation
                 )
-                action = agent.act(action_spec)
 
-                # Extract component states for display
-                reasoning = self._extract_agent_reasoning(agent)
+                if observation_changed:
+                    # Observation changed - provide to agent and call LLM
+                    with self.perf_timer.measure("agent_observe"):
+                        agent.observe(observation)
+
+                    # Call LLM with comprehensive single prompt
+                    action_spec = entity_lib.ActionSpec(
+                        call_to_action=(
+                            "Analyze the situation and decide your next action. Respond with ONLY valid JSON:\n\n"
+                            "{{\n"
+                            '  "situation": "Brief 1-2 sentence situation summary",\n'
+                            '  "risk_level": "low|moderate|high",\n'
+                            '  "risk_assessment": "Brief danger/threat assessment",\n'
+                            '  "social_context": "What others are doing (if any)",\n'
+                            '  "reasoning": "Why you chose this action (1-2 sentences)",\n'
+                            '  "action_type": "wait|move",\n'
+                            '  "target_type": "current_position|exit|zone",\n'
+                            '  "exit_name": "exit name or null",\n'
+                            '  "zone_name": "zone name or null"\n'
+                            "}}\n\n"
+                            f"Available exits: {[e['name'] for e in exits]}\n"
+                            f"Available zones: {zones}\n\n"
+                            "Action rules:\n"
+                            "- Use action_type='wait' and target_type='current_position' if staying put\n"
+                            "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
+                            "- Use action_type='move' and target_type='zone' to move to a platform/area"
+                        ),
+                        output_type=entity_lib.OutputType.FREE,
+                    )
+
+                    with self.perf_timer.measure("agent_act_llm"):
+                        action = agent.act(action_spec)
+
+                    self.last_observations[agent_id] = observation
+                    self.last_actions[agent_id] = action
+                    logger.info(f"{agent_id}: Observation changed, calling LLM")
+                else:
+                    # Observation unchanged - reuse last action without calling observe/act
+                    action = self.last_actions.get(
+                        agent_id, '{"action_type": "wait", "target_type": "current_position"}'
+                    )
+                    logger.info(f"{agent_id}: Observation unchanged, reusing last action")
+
+                # Parse JSON response
+                with self.perf_timer.measure("parse_json_response"):
+                    reasoning = self._parse_json_response(action)
 
                 # Translate action to JuPedSim command
                 position = self._get_agent_position(agent_id)
-                translated = self.action_translator.translate(agent_id, action, position)
+                with self.perf_timer.measure("translate_action"):
+                    translated = self.action_translator.translate(agent_id, action, position)
 
                 # Store decision
                 if agent_id not in self.agent_decisions:
@@ -292,7 +410,7 @@ class HybridSimulationRunner:
                     {
                         "time": self.current_sim_time,
                         "observation": observation,
-                        "prompt": action_spec.call_to_action,
+                        "prompt": action_spec.call_to_action if observation_changed else "cached",
                         "action": action,
                         "reasoning": reasoning,
                         "translated": translated,
@@ -300,14 +418,38 @@ class HybridSimulationRunner:
                 )
 
                 # Apply to JuPedSim
-                self._apply_action_to_jupedsim(agent_id, translated)
+                with self.perf_timer.measure("apply_to_jupedsim"):
+                    self._apply_action_to_jupedsim(agent_id, translated)
 
-                logger.info(f"{agent_id} action: {action}")
+                logger.info(f"{agent_id} action: {action[:100]}...")
 
             except Exception as e:
                 logger.error(f"Error processing {agent_id}: {e}", exc_info=True)
 
         self.last_decision_time = self.current_sim_time
+
+    def _parse_json_response(self, response: str) -> dict[str, str]:
+        """Parse JSON response from agent, extracting reasoning components."""
+        try:
+            # Strip agent name prefix (e.g., "Agent 0 {" -> "{")
+            json_start = response.find("{")
+            if json_start > 0:
+                response = response[json_start:]
+
+            data = json.loads(response)
+            return {
+                "situation": data.get("situation", ""),
+                "risk_level": data.get("risk_level", ""),
+                "risk_assessment": data.get("risk_assessment", ""),
+                "social_context": data.get("social_context", ""),
+                "reasoning": data.get("reasoning", ""),
+            }
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse JSON response: {response[:200]}")
+            return {
+                "situation": "Parse error",
+                "reasoning": response[:200],
+            }
 
     def _extract_agent_reasoning(self, agent: entity_lib.Entity) -> dict[str, str]:
         """
