@@ -31,13 +31,13 @@ station:
       y_max: 40.0
     entrance:
       x_min: 45.0
-      x_max: 55.0
+      x_max: 55.0\
       y_min: 0.0
       y_max: 20.0
 
 # Agent configuration
 agents:
-  count: 1  # Start with 1 agent for testing
+  count: 10  # Start with 10 agents for testing
 
   # Personality distribution (percentage)
   personalities:

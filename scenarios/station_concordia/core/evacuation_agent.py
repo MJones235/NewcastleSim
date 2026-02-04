@@ -118,15 +118,6 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label=f"\nCharacter Profile - {name}",
         )
 
-        # Relevant memories (uses embeddings, not LLM inference)
-        relevant_memories_key = "RelevantMemories"
-        relevant_memories = agent_components.all_similar_memories.AllSimilarMemories(
-            model=model,
-            components=[observation_key],
-            num_memories_to_retrieve=5,
-            pre_act_label="\nRelevant Memories",
-        )
-
         # Goal component - everyday objective (no emergency framing)
         goal_key = "Goal"
         evacuation_goal = agent_components.constant.Constant(
@@ -134,11 +125,10 @@ class EvacuationAgent(prefab_lib.Prefab):
             pre_act_label="\nGoal",
         )
 
-        # Assemble all components
+        # Assemble all components (removed RelevantMemories - it was making extra LLM calls)
         components_of_agent = {
             observation_to_memory_key: observation_to_memory,
             self_perception_key: self_perception,
-            relevant_memories_key: relevant_memories,
             goal_key: evacuation_goal,
             observation_key: observation,
             memory_key: memory,
@@ -148,8 +138,7 @@ class EvacuationAgent(prefab_lib.Prefab):
         component_order = [
             self_perception_key,
             goal_key,
-            relevant_memories_key,
-            observation_key,
+            observation_key,  # Current observation only
         ]
 
         # Action component - generates final action

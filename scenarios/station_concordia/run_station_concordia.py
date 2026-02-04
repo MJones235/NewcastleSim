@@ -58,7 +58,13 @@ def parse_args():
     parser.add_argument(
         "--spatial-viewer",
         action="store_true",
+        default=True,
         help="Launch spatial matplotlib viewer (shows agent positions on map)",
+    )
+    parser.add_argument(
+        "--no-spatial-viewer",
+        action="store_true",
+        help="Don't launch spatial matplotlib viewer",
     )
     return parser.parse_args()
 
@@ -132,7 +138,7 @@ def setup_language_model(config: dict):
 
 
 def run_simulation(
-    config: dict, model, embedder, launch_viewer: bool = True, launch_spatial: bool = False
+    config: dict, model, embedder, launch_viewer: bool = True, launch_spatial: bool = True
 ):
     """
     Run the hybrid Concordia + JuPedSim simulation.
@@ -433,7 +439,7 @@ def main():
             model,
             embedder,
             launch_viewer=not args.no_viewer,
-            launch_spatial=args.spatial_viewer,
+            launch_spatial=args.spatial_viewer and not args.no_spatial_viewer,
         )
 
         # Log results

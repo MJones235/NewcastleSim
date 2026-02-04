@@ -12,6 +12,7 @@ Key features:
 - Observation generation from simulation state
 """
 
+import asyncio
 import json
 import time
 from contextlib import contextmanager
@@ -50,31 +51,45 @@ class PerformanceTimer:
     def __init__(self):
         self.timings = {}
         self.counts = {}
+        self.parallel_operations = set()  # Track which operations run in parallel
 
-    def record(self, name: str, duration: float):
+    def record(self, name: str, duration: float, is_parallel: bool = False):
         """Record a timing measurement."""
         if name not in self.timings:
             self.timings[name] = 0.0
             self.counts[name] = 0
-        self.timings[name] += duration
-        self.counts[name] += 1
+
+        if is_parallel:
+            # For parallel operations, store max duration instead of sum
+            self.parallel_operations.add(name)
+            self.timings[name] = max(self.timings[name], duration)
+            self.counts[name] += 1
+        else:
+            # For sequential operations, sum as normal
+            self.timings[name] += duration
+            self.counts[name] += 1
 
     @contextmanager
-    def measure(self, name: str):
-        """Context manager for timing a block of code."""
+    def measure(self, name: str, is_parallel: bool = False):
+        """Context manager for timing a block of code.
+
+        Args:
+            name: Name of the operation
+            is_parallel: If True, uses max instead of sum (for parallel operations)
+        """
         start = time.perf_counter()
         try:
             yield
         finally:
             duration = time.perf_counter() - start
-            self.record(name, duration)
+            self.record(name, duration, is_parallel=is_parallel)
 
     def report(self):
         """Generate performance report."""
         if not self.timings:
             return "No timings recorded"
 
-        lines = ["\n=== PERFORMANCE PROFILE ==="]
+        lines = ["\n=== PERFORMANCE PROFILE (Wall-Clock Time) ==="]
         total_time = sum(self.timings.values())
 
         # Sort by total time descending
@@ -84,8 +99,12 @@ class PerformanceTimer:
             count = self.counts[name]
             avg = total / count if count > 0 else 0
             percent = (total / total_time * 100) if total_time > 0 else 0
+
+            # Add indicator for parallel operations
+            parallel_mark = " [parallel]" if name in self.parallel_operations else ""
+
             lines.append(
-                f"{name:30s}: {total:8.3f}s total | {avg:8.3f}s avg | {count:5d} calls | {percent:5.1f}%"
+                f"{name:30s}: {total:8.3f}s total | {avg:8.3f}s avg | {count:5d} calls | {percent:5.1f}%{parallel_mark}"
             )
 
         lines.append(f"{'TOTAL':30s}: {total_time:8.3f}s")
@@ -137,18 +156,15 @@ class HybridSimulationRunner:
         self.max_steps = max_steps
         self.output_file = output_file
 
+        # Store LLM provider reference (for usage stats)
+        # The language_model is an AzureLLMConcordia instance directly
+        self.llm_provider = language_model if hasattr(language_model, "get_usage_stats") else None
+
         # Translation layer components
         self.action_translator = ActionTranslator(station_layout, language_model)
         self.observation_generator = ObservationGenerator(station_layout)
 
-        # Create memory bank for all agents
-        logger.info("Creating memory bank with sentence embedder...")
-
-        self.memory_bank = basic_associative_memory.AssociativeMemoryBank(
-            sentence_embedder=embedder
-        )
-
-        # Build Concordia agents
+        # Build Concordia agents (each with their own memory bank)
         self.concordia_agents: dict[str, entity_lib.Entity] = {}
         self.agent_configs = agents_config
 
@@ -175,13 +191,18 @@ class HybridSimulationRunner:
             agent_id = agent_config["id"]
             logger.info(f"Building {agent_id}...")
 
+            # Create separate memory bank for each agent
+            memory_bank = basic_associative_memory.AssociativeMemoryBank(
+                sentence_embedder=self.embedder
+            )
+
             # Create agent prefab
             prefab = EvacuationAgent(params=agent_config)
 
             # Build agent
             agent = prefab.build(
                 model=self.model,
-                memory_bank=self.memory_bank,
+                memory_bank=memory_bank,
             )
 
             self.concordia_agents[agent_id] = agent
@@ -193,11 +214,15 @@ class HybridSimulationRunner:
 
     def _initialize_agent_memory(self, agent: entity_lib.Entity, config: dict[str, Any]):
         """Initialize an agent's memory with background knowledge."""
+        # Add station layout as formative memory
+        layout_description = self.observation_generator._describe_geometry()
+
         initial_memories = [
             "I am at a train station.",
             f"I am in the {config.get('initial_zone', 'platform')} area.",
             "I am waiting for my train.",
             "I am on my way to my destination.",
+            layout_description,  # Station layout info
             "The station has clear signage for platforms and exits.",
             "I notice other passengers waiting and walking around.",
             "The atmosphere is calm and routine.",
@@ -301,6 +326,9 @@ class HybridSimulationRunner:
         # Print performance profile
         print(self.perf_timer.report())
 
+        # Print financial report
+        print(self._generate_financial_report())
+
         return results
 
     def _step_jupedsim(self) -> bool:
@@ -322,7 +350,7 @@ class HybridSimulationRunner:
         return (self.current_sim_time - self.last_decision_time) >= self.decision_interval
 
     def _process_agent_decisions(self):
-        """Process decision-making for all agents (batch processing)."""
+        """Process decision-making for all agents (parallel processing)."""
         logger.info(f"Agent decisions at t={self.current_sim_time:.1f}s")
 
         # Generate observations for all agents
@@ -338,95 +366,119 @@ class HybridSimulationRunner:
             self.action_translator.zones.keys()
         )
 
-        # Process each agent
-        for agent_id, agent in self.concordia_agents.items():
-            try:
-                # Get observation for this agent
-                observation = observations.get(agent_id, "")
-
-                # Check if observation changed since last decision
-                observation_changed = (
-                    agent_id not in self.last_observations
-                    or self.last_observations[agent_id] != observation
-                )
-
-                if observation_changed:
-                    # Observation changed - provide to agent and call LLM
-                    with self.perf_timer.measure("agent_observe"):
-                        agent.observe(observation)
-
-                    # Call LLM with comprehensive single prompt
-                    action_spec = entity_lib.ActionSpec(
-                        call_to_action=(
-                            "Analyze the situation and decide your next action. Respond with ONLY valid JSON:\n\n"
-                            "{{\n"
-                            '  "situation": "Brief 1-2 sentence situation summary",\n'
-                            '  "risk_level": "low|moderate|high",\n'
-                            '  "risk_assessment": "Brief danger/threat assessment",\n'
-                            '  "social_context": "What others are doing (if any)",\n'
-                            '  "reasoning": "Why you chose this action (1-2 sentences)",\n'
-                            '  "action_type": "wait|move",\n'
-                            '  "target_type": "current_position|exit|zone",\n'
-                            '  "exit_name": "exit name or null",\n'
-                            '  "zone_name": "zone name or null"\n'
-                            "}}\n\n"
-                            f"Available exits: {[e['name'] for e in exits]}\n"
-                            f"Available zones: {zones}\n\n"
-                            "Action rules:\n"
-                            "- Use action_type='wait' and target_type='current_position' if staying put\n"
-                            "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
-                            "- Use action_type='move' and target_type='zone' to move to a platform/area"
-                        ),
-                        output_type=entity_lib.OutputType.FREE,
-                    )
-
-                    with self.perf_timer.measure("agent_act_llm"):
-                        action = agent.act(action_spec)
-
-                    self.last_observations[agent_id] = observation
-                    self.last_actions[agent_id] = action
-                    logger.info(f"{agent_id}: Observation changed, calling LLM")
-                else:
-                    # Observation unchanged - reuse last action without calling observe/act
-                    action = self.last_actions.get(
-                        agent_id, '{"action_type": "wait", "target_type": "current_position"}'
-                    )
-                    logger.info(f"{agent_id}: Observation unchanged, reusing last action")
-
-                # Parse JSON response
-                with self.perf_timer.measure("parse_json_response"):
-                    reasoning = self._parse_json_response(action)
-
-                # Translate action to JuPedSim command
-                position = self._get_agent_position(agent_id)
-                with self.perf_timer.measure("translate_action"):
-                    translated = self.action_translator.translate(agent_id, action, position)
-
-                # Store decision
-                if agent_id not in self.agent_decisions:
-                    self.agent_decisions[agent_id] = {"decisions": []}
-
-                self.agent_decisions[agent_id]["decisions"].append(
-                    {
-                        "time": self.current_sim_time,
-                        "observation": observation,
-                        "prompt": action_spec.call_to_action if observation_changed else "cached",
-                        "action": action,
-                        "reasoning": reasoning,
-                        "translated": translated,
-                    }
-                )
-
-                # Apply to JuPedSim
-                with self.perf_timer.measure("apply_to_jupedsim"):
-                    self._apply_action_to_jupedsim(agent_id, translated)
-
-                logger.info(f"{agent_id} action: {action[:100]}...")
-
-            except Exception as e:
-                logger.error(f"Error processing {agent_id}: {e}", exc_info=True)
+        # Run agent processing in parallel using asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._process_agents_parallel(observations, exits, zones))
+        finally:
+            loop.close()
 
         self.last_decision_time = self.current_sim_time
+
+    async def _process_agents_parallel(self, observations: dict, exits: list, zones: list):
+        """Process all agents in parallel using async/await."""
+        tasks = []
+        for agent_id, agent in self.concordia_agents.items():
+            task = self._process_single_agent(agent_id, agent, observations, exits, zones)
+            tasks.append(task)
+
+        # Process all agents concurrently
+        with self.perf_timer.measure("parallel_agent_processing"):
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _process_single_agent(
+        self, agent_id: str, agent, observations: dict, exits: list, zones: list
+    ):
+        """Process a single agent's decision (async)."""
+        try:
+            # Get observation for this agent
+            observation = observations.get(agent_id, "")
+
+            # Check if observation changed since last decision
+            observation_changed = (
+                agent_id not in self.last_observations
+                or self.last_observations[agent_id] != observation
+            )
+
+            if observation_changed:
+                # Observation changed - provide to agent and call LLM
+                with self.perf_timer.measure("agent_observe", is_parallel=True):
+                    agent.observe(observation)
+
+                # Call LLM with comprehensive single prompt
+                action_spec = entity_lib.ActionSpec(
+                    call_to_action=(
+                        "Analyze the situation and decide your next action. Respond with ONLY valid JSON:\n\n"
+                        "{{\n"
+                        '  "situation": "Brief 1-2 sentence situation summary",\n'
+                        '  "risk_level": "low|moderate|high",\n'
+                        '  "risk_assessment": "Brief danger/threat assessment",\n'
+                        '  "social_context": "What others are doing (if any)",\n'
+                        '  "reasoning": "Why you chose this action (1-2 sentences)",\n'
+                        '  "action_type": "wait|move",\n'
+                        '  "target_type": "current_position|exit|zone",\n'
+                        '  "exit_name": "exit name or null",\n'
+                        '  "zone_name": "zone name or null"\n'
+                        "}}\n\n"
+                        f"Available exits: {[e['name'] for e in exits]}\n"
+                        f"Available zones: {zones}\n\n"
+                        "Action rules:\n"
+                        "- Use action_type='wait' and target_type='current_position' if staying put\n"
+                        "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
+                        "- Use action_type='move' and target_type='zone' to move to a platform/area"
+                    ),
+                    output_type=entity_lib.OutputType.FREE,
+                )
+
+                # Run the LLM call in a thread pool to avoid blocking
+                # (agent.act() is synchronous, so we wrap it in run_in_executor)
+                with self.perf_timer.measure("agent_act_llm", is_parallel=True):
+                    loop = asyncio.get_event_loop()
+                    action = await loop.run_in_executor(None, agent.act, action_spec)
+
+                self.last_observations[agent_id] = observation
+                self.last_actions[agent_id] = action
+                logger.info(f"{agent_id}: Observation changed, calling LLM")
+            else:
+                # Observation unchanged - reuse last action without calling observe/act
+                action = self.last_actions.get(
+                    agent_id, '{"action_type": "wait", "target_type": "current_position"}'
+                )
+                logger.info(f"{agent_id}: Observation unchanged, reusing last action")
+
+            # Parse JSON response
+            with self.perf_timer.measure("parse_json_response", is_parallel=True):
+                reasoning = self._parse_json_response(action)
+
+            # Translate action to JuPedSim command
+            position = self._get_agent_position(agent_id)
+            with self.perf_timer.measure("translate_action", is_parallel=True):
+                translated = self.action_translator.translate(agent_id, action, position)
+
+            # Store decision
+            if agent_id not in self.agent_decisions:
+                self.agent_decisions[agent_id] = {"decisions": []}
+
+            self.agent_decisions[agent_id]["decisions"].append(
+                {
+                    "time": self.current_sim_time,
+                    "observation": observation,
+                    "prompt": action_spec.call_to_action if observation_changed else "cached",
+                    "action": action,
+                    "reasoning": reasoning,
+                    "translated": translated,
+                }
+            )
+
+            # Apply to JuPedSim
+            with self.perf_timer.measure("apply_to_jupedsim", is_parallel=True):
+                self._apply_action_to_jupedsim(agent_id, translated)
+
+            logger.info(f"{agent_id} action: {action[:100]}...")
+
+        except Exception as e:
+            logger.error(f"Error processing {agent_id}: {e}", exc_info=True)
 
     def _parse_json_response(self, response: str) -> dict[str, str]:
         """Parse JSON response from agent, extracting reasoning components."""
@@ -650,3 +702,50 @@ class HybridSimulationRunner:
             json.dump(results, f, indent=2)
 
         logger.info(f"Results saved to {output_path}")
+
+        # Save performance report
+        perf_report_path = output_path.parent / "performance_report.txt"
+        with open(perf_report_path, "w") as f:
+            f.write(self.perf_timer.report())
+        logger.info(f"Performance report saved to {perf_report_path}")
+
+        # Save financial report
+        financial_report_path = output_path.parent / "financial_report.txt"
+        financial_report = self._generate_financial_report()
+        with open(financial_report_path, "w") as f:
+            f.write(financial_report)
+        logger.info(f"Financial report saved to {financial_report_path}")
+
+    def _generate_financial_report(self) -> str:
+        """Generate a financial report from LLM usage statistics."""
+        if not self.llm_provider or not hasattr(self.llm_provider, "get_usage_stats"):
+            return "\n=== FINANCIAL REPORT ===\nLLM provider usage stats not available\n"
+
+        try:
+            stats = self.llm_provider.get_usage_stats()
+
+            lines = []
+            lines.append("\n=== FINANCIAL REPORT ===")
+            lines.append("\nLLM Token Usage:")
+            lines.append(f"  Prompt tokens:      {stats['prompt_tokens']:,}")
+            lines.append(f"  Completion tokens:  {stats['completion_tokens']:,}")
+            lines.append(f"  Total tokens:       {stats['total_tokens']:,}")
+            lines.append(f"  Total requests:     {stats['total_requests']:,}")
+            lines.append("\nCost Breakdown (£):")
+            lines.append(f"  Input cost:         £{stats['input_cost_gbp']:.4f}")
+            lines.append(f"  Output cost:        £{stats['output_cost_gbp']:.4f}")
+            lines.append(f"  TOTAL COST:         £{stats['estimated_cost_gbp']:.4f}")
+            lines.append("\nPer-Agent Averages:")
+            num_agents = len(self.concordia_agents)
+            if num_agents > 0:
+                lines.append(f"  Tokens per agent:   {stats['total_tokens'] / num_agents:.0f}")
+                lines.append(
+                    f"  Cost per agent:     £{stats['estimated_cost_gbp'] / num_agents:.4f}"
+                )
+                lines.append(f"  Requests per agent: {stats['total_requests'] / num_agents:.1f}")
+            lines.append("\n" + "=" * 40)
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"Failed to generate financial report: {e}")
+            return f"\n=== FINANCIAL REPORT ===\nError generating report: {e}\n"

@@ -61,7 +61,10 @@ class SpatialConcordiaViewer:
             1, 2, figsize=(16, 8), gridspec_kw={"width_ratios": [2, 1]}
         )
 
-        self.fig.suptitle("Concordia Station Evacuation - Real-Time View", fontsize=14)
+        self.title_text = self.fig.suptitle(
+            "Concordia Station Evacuation - Real-Time View | Time: 0.0s", fontsize=14
+        )
+        self.current_time = 0.0
 
         self._setup_map_axes()
         self._setup_decision_axes()
@@ -233,6 +236,17 @@ class SpatialConcordiaViewer:
             # Update agent decisions
             if "agent_decisions" in data:
                 self.agent_decisions = data["agent_decisions"]
+
+            # Get current simulation time (use current_time from incremental saves, or final_time from final save)
+            if "current_time" in data:
+                self.current_time = data["current_time"]
+            elif "final_time" in data:
+                self.current_time = data["final_time"]
+
+            # Update title with time
+            self.title_text.set_text(
+                f"Concordia Station Evacuation - Real-Time View | Time: {self.current_time:.1f}s"
+            )
 
             self.last_update = time.time()
             return True

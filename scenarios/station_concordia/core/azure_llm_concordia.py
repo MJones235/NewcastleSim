@@ -29,6 +29,10 @@ class AzureLLMConcordia:
     async/sync event loop conflicts.
     """
 
+    # Pricing per million tokens (in £) - same as AzureLLMProvider
+    PRICE_INPUT_PER_M = 0.04
+    PRICE_OUTPUT_PER_M = 0.30
+
     def __init__(
         self,
         endpoint: str,
@@ -56,6 +60,12 @@ class AzureLLMConcordia:
         self.temperature = temperature
         self.max_retries = max_retries
         self.max_completion_tokens = max_completion_tokens
+
+        # Token usage tracking
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_tokens = 0
+        self.total_requests = 0
 
         # Extract model/deployment name from endpoint if not provided
         if model:
@@ -158,12 +168,21 @@ class AzureLLMConcordia:
                         last_error = Exception("Empty response")
                         continue
 
-                    # Log token usage
+                    # Log and accumulate token usage
                     usage = result.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+
+                    self.total_prompt_tokens += prompt_tokens
+                    self.total_completion_tokens += completion_tokens
+                    self.total_tokens += total_tokens
+                    self.total_requests += 1
+
                     logger.debug(
                         f"LLM call successful. Tokens: "
-                        f"{usage.get('prompt_tokens', 0)} prompt, "
-                        f"{usage.get('completion_tokens', 0)} completion"
+                        f"{prompt_tokens} prompt, "
+                        f"{completion_tokens} completion"
                     )
 
                     return text
@@ -214,6 +233,29 @@ class AzureLLMConcordia:
         # Return a fallback response rather than crashing the simulation
         logger.warning("Returning fallback response due to API failures")
         return "No clear information available."
+
+    def get_usage_stats(self) -> dict:
+        """
+        Get cumulative token usage statistics with cost estimates.
+
+        Returns:
+            Dict with prompt_tokens, completion_tokens, total_tokens, total_requests,
+            and estimated_cost_gbp
+        """
+        # Calculate cost in £
+        input_cost = (self.total_prompt_tokens / 1_000_000) * self.PRICE_INPUT_PER_M
+        output_cost = (self.total_completion_tokens / 1_000_000) * self.PRICE_OUTPUT_PER_M
+        total_cost = input_cost + output_cost
+
+        return {
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "total_tokens": self.total_tokens,
+            "total_requests": self.total_requests,
+            "estimated_cost_gbp": total_cost,
+            "input_cost_gbp": input_cost,
+            "output_cost_gbp": output_cost,
+        }
 
     def _log_prompt_response(
         self,

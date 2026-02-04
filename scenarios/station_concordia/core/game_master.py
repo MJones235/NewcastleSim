@@ -358,29 +358,26 @@ class ObservationGenerator:
         """
         observations = []
 
-        if agent_id not in self._agents_with_geometry_intro:
-            observations.append(self._describe_geometry())
-            self._agents_with_geometry_intro.add(agent_id)
-
-        # Time
-        observations.append(f"[Time: {sim_time:.1f}s]")
+        # Note: Station layout is now in agent formative memory, not observations
+        # This keeps observations stable when nothing changes
+        # Time is also omitted as it's not meaningful for agent decisions
 
         # Current location
         zone = self._identify_zone(position)
         observations.append(f"You are in the {zone}.")
 
-        # Crowd density
+        # Crowd density (categorized to prevent constant LLM calls as people move)
         num_nearby = len(nearby_agents)
         if num_nearby == 0:
-            density = "empty"
-        elif num_nearby < 5:
-            density = "sparse"
-        elif num_nearby < 15:
-            density = "moderate"
+            density = "empty (no one nearby)"
+        elif num_nearby <= 3:
+            density = "sparse (a few people nearby)"
+        elif num_nearby <= 10:
+            density = "moderate crowd nearby"
         else:
-            density = "crowded"
+            density = "crowded (many people nearby)"
 
-        observations.append(f"The area is {density} with {num_nearby} people nearby.")
+        observations.append(f"The area is {density}.")
 
         # Nearby agent behaviors
         if nearby_agents:
@@ -400,7 +397,14 @@ class ObservationGenerator:
         return " ".join(observations)
 
     def _identify_zone(self, position: tuple[float, float]) -> str:
-        """Identify which zone a position is in."""
+        """Identify which zone a position is in.
+
+        Priority order (highest to lowest):
+        1. Main footbridge (foot_bridge)
+        2. Platform zones (jps.platform_N)
+        3. Connector zones (platform_N_to_M)
+        4. General zones (everything else)
+        """
 
         def _covers_or_contains(polygon, point):
             try:
@@ -413,14 +417,57 @@ class ObservationGenerator:
             except Exception:
                 return False
 
+        def _is_main_footbridge(zone_name: str) -> bool:
+            """Check if this is the main footbridge zone."""
+            name_lower = zone_name.lower()
+            # Match: foot_bridge, footbridge (but not connectors)
+            return "foot" in name_lower and "bridge" in name_lower and "_to_" not in name_lower
+
+        def _is_platform_zone(zone_name: str) -> bool:
+            """Check if this is a platform zone."""
+            name_lower = zone_name.lower()
+            # Match: jps.platform_3, platform_3 (but not platform_3_to_4)
+            return "platform" in name_lower and "_to_" not in name_lower
+
+        def _is_connector_zone(zone_name: str) -> bool:
+            """Check if this is a connector zone between platforms."""
+            name_lower = zone_name.lower()
+            # Match: platform_3_to_4, platform_1_to_2, etc.
+            return "platform_" in name_lower and "_to_" in name_lower
+
         if self.zones_polygons:
             try:
                 from shapely.geometry import Point
 
                 point = Point(position)
+
+                # Priority 1: Check main footbridge first
                 for zone_name, polygon in self.zones_polygons.items():
-                    if _covers_or_contains(polygon, point):
-                        return zone_name
+                    if _is_main_footbridge(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 2: Check platform zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if _is_platform_zone(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 3: Check connector zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if _is_connector_zone(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 4: Check all other zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if (
+                        not _is_main_footbridge(zone_name)
+                        and not _is_platform_zone(zone_name)
+                        and not _is_connector_zone(zone_name)
+                    ):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
             except Exception:
                 pass
 
@@ -499,4 +546,11 @@ class ObservationGenerator:
                 min_dist = dist
                 nearest_name = name
 
-        return f"{nearest_name} ({min_dist:.1f}m away)"
+        # Categorize distance to prevent small changes from triggering LLM calls
+        if min_dist >= 100:
+            dist_category = "100m+"
+        elif min_dist >= 50:
+            dist_category = "50-100m"
+        else:
+            dist_category = "<50m"
+        return f"{nearest_name} ({dist_category})"
