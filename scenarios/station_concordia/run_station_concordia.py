@@ -235,9 +235,17 @@ def run_simulation(
 
     random.seed(42)
 
-    spawn_polygons = list(platform_areas.values()) if platform_areas else []
-    if not spawn_polygons and walkable_areas:
-        spawn_polygons = list(walkable_areas.values())
+    # TEMPORARY: Only spawn in 'entrance' area (near exits) for shorter evacuation distances
+    spawn_polygons = []
+    if "entrance" in walkable_areas:
+        spawn_polygons = [walkable_areas["entrance"]]
+        logger.info("🎯 Using 'entrance' area only for spawning (near exits)")
+    else:
+        logger.warning(f"⚠️ 'entrance' area not found! Available: {list(walkable_areas.keys())}")
+        # Fallback to original behavior if entrance not found
+        spawn_polygons = list(platform_areas.values()) if platform_areas else []
+        if not spawn_polygons and walkable_areas:
+            spawn_polygons = list(walkable_areas.values())
 
     if not spawn_polygons:
         logger.error("No valid spawn polygons found in geometry")
@@ -255,16 +263,15 @@ def run_simulation(
         candidate = _sample_point_in_polygon(chosen, random)
 
         # Ensure the spawn point is inside walkable geometry (with obstacles removed)
+        # Try up to 50 times to find a valid point within the chosen spawn polygon
         if walkable_polygons and not _point_in_any_polygon(candidate, walkable_polygons):
             for _ in range(50):
                 candidate = _sample_point_in_polygon(chosen, random)
                 if _point_in_any_polygon(candidate, walkable_polygons):
                     break
 
-        # Final fallback: sample from walkable polygon directly
-        if walkable_polygons and not _point_in_any_polygon(candidate, walkable_polygons):
-            fallback_poly = random.choice(walkable_polygons)
-            candidate = _sample_point_in_polygon(fallback_poly, random)
+        # If still no valid point after retries, just use the last candidate
+        # (removed fallback that would sample from ANY walkable area)
 
         spawn_positions.append(candidate)
 
@@ -392,6 +399,23 @@ def run_simulation(
         logger.info(f"Loaded {len(events_config)} events from configuration")
     else:
         logger.warning("No events defined in configuration")
+
+    # Phase 4.2: Check for blocked exit test scenario
+    test_scenarios = config.get("test_scenarios", {})
+    blocked_exit_config = test_scenarios.get("blocked_exit", {})
+
+    if blocked_exit_config.get("enabled", False):
+        block_time = blocked_exit_config.get("block_time", 30.0)
+        blocked_exit = blocked_exit_config.get("blocked_exit", "north_exit")
+        logger.info(f"⚠️  Test scenario: {blocked_exit} will be blocked at t={block_time}s")
+
+        # Schedule the blocking to happen during simulation
+        # We'll check this in the simulation loop
+        runner.test_block_exit_time = block_time
+        runner.test_block_exit_name = blocked_exit
+    else:
+        runner.test_block_exit_time = None
+        runner.test_block_exit_name = None
 
     # Step 4: Run simulation
     logger.info("Starting simulation run...")

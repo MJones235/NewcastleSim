@@ -175,10 +175,18 @@ class HybridSimulationRunner:
             -decision_interval
         )  # Start negative so first decision happens immediately
         self.current_sim_time = 0.0
+        self.current_step = 0  # Track current simulation step for logging
         self.agent_decisions: dict[str, dict[str, Any]] = {}
         self.event_history: list[dict[str, Any]] = []
         self.last_observations: dict[str, str] = {}  # Cache observations for change detection
         self.last_actions: dict[str, str] = {}  # Cache actions to reuse
+
+        # Phase 4.2: Route changing tracking
+        self.agent_destinations: dict[str, str] = {}  # agent_id -> current exit name
+        self.blocked_exits: set[str] = set()  # Set of blocked exit names
+
+        # Track exited agents (those who have evacuated)
+        self.exited_agents: set[str] = set()  # agent_ids who have reached exits
 
         # Performance profiling
         self.perf_timer = PerformanceTimer()
@@ -267,6 +275,7 @@ class HybridSimulationRunner:
 
                 for step in range(self.max_steps):
                     step_start = time.perf_counter()
+                    self.current_step = step
 
                     # Advance JuPedSim simulation
                     with self.perf_timer.measure("jupedsim_step"):
@@ -275,6 +284,9 @@ class HybridSimulationRunner:
                             break
 
                     self.current_sim_time = step * self.jps_sim.dt
+
+                    # Check for agents who have exited and remove them
+                    self._check_exited_agents()
 
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
@@ -349,6 +361,38 @@ class HybridSimulationRunner:
         """Check if it's time for agents to make decisions."""
         return (self.current_sim_time - self.last_decision_time) >= self.decision_interval
 
+    def _check_exited_agents(self):
+        """Check for agents who have reached exits and mark them as exited."""
+        if not hasattr(self.jps_sim, "get_all_agent_positions"):
+            return
+
+        # Get current agent positions from JuPedSim
+        current_positions = self.jps_sim.get_all_agent_positions()
+
+        # Log agent count for debugging
+        total_agents = len(self.concordia_agents)
+        active_agents = len(current_positions)
+        exited_count = len(self.exited_agents)
+
+        # Find agents that are no longer in JuPedSim (they've exited)
+        newly_exited = []
+        for agent_id in list(self.concordia_agents.keys()):
+            if agent_id not in self.exited_agents and agent_id not in current_positions:
+                self.exited_agents.add(agent_id)
+                exit_name = self.agent_destinations.get(agent_id, "unknown")
+                newly_exited.append((agent_id, exit_name))
+
+        # Log newly exited agents
+        for agent_id, exit_name in newly_exited:
+            logger.info(f"✅ {agent_id} has evacuated through {exit_name}")
+
+        # Periodic status update every 50 steps
+        if self.current_step % 50 == 0 and self.current_step > 0:
+            logger.info(
+                f"📊 Agent status: {active_agents} active, {exited_count} exited, "
+                f"{total_agents} total (t={self.current_sim_time:.1f}s)"
+            )
+
     def _process_agent_decisions(self):
         """Process decision-making for all agents (parallel processing)."""
         logger.info(f"Agent decisions at t={self.current_sim_time:.1f}s")
@@ -380,6 +424,9 @@ class HybridSimulationRunner:
         """Process all agents in parallel using async/await."""
         tasks = []
         for agent_id, agent in self.concordia_agents.items():
+            # Skip agents who have already exited
+            if agent_id in self.exited_agents:
+                continue
             task = self._process_single_agent(agent_id, agent, observations, exits, zones)
             tasks.append(task)
 
@@ -456,20 +503,42 @@ class HybridSimulationRunner:
             with self.perf_timer.measure("translate_action", is_parallel=True):
                 translated = self.action_translator.translate(agent_id, action, position)
 
+            # Phase 4.2: Detect route changes
+            new_exit = self._extract_exit_name(translated)
+            old_exit = self.agent_destinations.get(agent_id)
+            route_changed = False
+
+            if new_exit:
+                if old_exit and old_exit != new_exit:
+                    # Route change detected!
+                    logger.info(f"🔄 {agent_id} changed route: {old_exit} → {new_exit}")
+                    route_changed = True
+
+                # Update destination tracking
+                self.agent_destinations[agent_id] = new_exit
+
             # Store decision
             if agent_id not in self.agent_decisions:
                 self.agent_decisions[agent_id] = {"decisions": []}
 
-            self.agent_decisions[agent_id]["decisions"].append(
-                {
-                    "time": self.current_sim_time,
-                    "observation": observation,
-                    "prompt": action_spec.call_to_action if observation_changed else "cached",
-                    "action": action,
-                    "reasoning": reasoning,
-                    "translated": translated,
+            decision_record = {
+                "time": self.current_sim_time,
+                "observation": observation,
+                "prompt": action_spec.call_to_action if observation_changed else "cached",
+                "action": action,
+                "reasoning": reasoning,
+                "translated": translated,
+            }
+
+            # Add route change metadata if it occurred
+            if route_changed:
+                decision_record["route_change"] = {
+                    "from_exit": old_exit,
+                    "to_exit": new_exit,
+                    "reason": reasoning.get("reasoning", ""),
                 }
-            )
+
+            self.agent_decisions[agent_id]["decisions"].append(decision_record)
 
             # Apply to JuPedSim
             with self.perf_timer.measure("apply_to_jupedsim", is_parallel=True):
@@ -537,10 +606,21 @@ class HybridSimulationRunner:
         observations = {}
 
         for agent_id in self.concordia_agents.keys():
+            # Skip exited agents
+            if agent_id in self.exited_agents:
+                continue
+
             try:
                 # Get agent state from JuPedSim
                 position = self._get_agent_position(agent_id)
                 nearby_agents = self._get_nearby_agents(agent_id, radius=10.0)
+
+                # Enrich nearby_agents with target exit info (Phase 4.2)
+                for agent_info in nearby_agents:
+                    other_id = agent_info.get("id")
+                    if other_id:
+                        agent_info["target_exit"] = self.agent_destinations.get(other_id)
+
                 recent_events = self._get_recent_events()
 
                 # Generate observation
@@ -550,6 +630,7 @@ class HybridSimulationRunner:
                     nearby_agents=nearby_agents,
                     events=recent_events,
                     sim_time=self.current_sim_time,
+                    blocked_exits=self.blocked_exits,
                 )
 
                 observations[agent_id] = obs
@@ -589,6 +670,31 @@ class HybridSimulationRunner:
         # Return last 3
         return occurred_events[-3:]
 
+    def _extract_exit_name(self, translated_action: dict[str, Any]) -> str | None:
+        """
+        Extract the target exit name from a translated action.
+
+        Returns:
+            Exit name if action is moving to an exit, None otherwise
+        """
+        if translated_action["action_type"] != "move":
+            return None
+
+        target_coords = translated_action.get("target")
+        if not target_coords:
+            return None
+
+        # Match coordinates to exit name
+        for exit_name, exit_coords in self.station_layout["exits"].items():
+            # Check if coordinates match (within 1m tolerance)
+            if (
+                abs(target_coords[0] - exit_coords[0]) < 1.0
+                and abs(target_coords[1] - exit_coords[1]) < 1.0
+            ):
+                return exit_name
+
+        return None
+
     def _apply_action_to_jupedsim(self, agent_id: str, translated_action: dict[str, Any]):
         """Apply a translated action to the JuPedSim simulation."""
         action_type = translated_action["action_type"]
@@ -603,7 +709,23 @@ class HybridSimulationRunner:
         # For now, using simple target setting
         try:
             if action_type == "move" and target:
-                self.jps_sim.set_agent_target(agent_id, target)
+                # Check if agent is moving to an exit - if so, switch their journey
+                exit_name = self.agent_destinations.get(agent_id)
+                if exit_name and hasattr(self.jps_sim, "set_agent_evacuation_exit"):
+                    # DON'T switch to a blocked exit - it would allow them to evacuate through it!
+                    if exit_name in self.blocked_exits:
+                        logger.warning(
+                            f"⚠️ {agent_id} tried to switch to blocked exit {exit_name} - "
+                            f"keeping waypoint only"
+                        )
+                        self.jps_sim.set_agent_target(agent_id, target)
+                    else:
+                        # Switch the agent's evacuation journey to this exit
+                        self.jps_sim.set_agent_evacuation_exit(agent_id, exit_name)
+                        logger.debug(f"Switched {agent_id} to journey for {exit_name}")
+                else:
+                    # Fallback to waypoint setting
+                    self.jps_sim.set_agent_target(agent_id, target)
             elif action_type == "wait":
                 current_position = self._get_agent_position(agent_id)
                 self.jps_sim.set_agent_target(agent_id, current_position)
@@ -612,12 +734,58 @@ class HybridSimulationRunner:
 
     def _check_and_trigger_events(self):
         """Check for and trigger simulation events."""
-        # TODO: Implement event triggering logic
-        # Events could include:
-        # - Announcements at specific times
-        # - Alarms based on conditions
-        # - Dynamic obstacles
-        pass
+        # Phase 4.2: Check for exit blocking test scenario
+        if hasattr(self, "test_block_exit_time") and self.test_block_exit_time:
+            # Check if we've reached the blocking time (within one timestep)
+            if self.current_sim_time >= self.test_block_exit_time and not hasattr(
+                self, "_test_exit_blocked"
+            ):
+                # Trigger the blocking
+                self.block_exit(self.test_block_exit_name)
+                self._test_exit_blocked = True  # Flag to prevent repeated blocking
+
+    def block_exit(self, exit_name: str):
+        """
+        Block an exit by placing a physical obstacle in JuPedSim.
+
+        Agents will discover the blockage when they get close (visual range ~20m)
+        or observe others turning back from it.
+
+        Args:
+            exit_name: Name of the exit to block
+        """
+        if exit_name not in self.station_layout["exits"]:
+            logger.warning(f"Cannot block unknown exit: {exit_name}")
+            return
+
+        exit_pos = self.station_layout["exits"][exit_name]
+
+        # Add to blocked exits set (for observations)
+        self.blocked_exits.add(exit_name)
+
+        # Place physical obstacle in JuPedSim (if supported)
+        # Use a radius that blocks the entrance (typically 2-3m wide, so 3-4m radius covers it)
+        # This makes the exit unreachable in pathfinding - agents cannot get close enough
+        # to evacuate through it, and will naturally reroute when they observe the blockage
+        try:
+            if hasattr(self.jps_sim, "add_obstacle"):
+                # Obstacle radius sized for typical entrance width (2-3m)
+                obstacle_radius = 4.0
+                self.jps_sim.add_obstacle(exit_pos, radius=obstacle_radius)
+                logger.info(
+                    f"🚧 Exit {exit_name} physically blocked at {exit_pos} "
+                    f"(obstacle radius: {obstacle_radius}m)"
+                )
+            else:
+                logger.info(
+                    f"🚧 Exit {exit_name} marked as blocked (visual only, "
+                    f"JuPedSim obstacle not supported)"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to add physical obstacle at {exit_name}: {e}")
+
+        # NO announcement - agents discover naturally through observation
+        logger.info(f"Exit {exit_name} blocked - agents will discover naturally")
 
     def broadcast_event(self, event_message: str):
         """
@@ -659,6 +827,7 @@ class HybridSimulationRunner:
             "agent_positions": agent_positions,  # Current positions only
             "current_time": self.current_sim_time,
             "events": self.event_history,
+            "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -685,11 +854,28 @@ class HybridSimulationRunner:
             for agent_id in self.concordia_agents.keys():
                 agent_positions[agent_id] = self.jps_sim.get_agent_position(agent_id)
 
+        # Phase 4.2: Extract route changes for analytics
+        route_changes = []
+        for agent_id, data in self.agent_decisions.items():
+            for decision in data.get("decisions", []):
+                if "route_change" in decision:
+                    route_changes.append(
+                        {
+                            "agent": agent_id,
+                            "time": decision["time"],
+                            "from_exit": decision["route_change"]["from_exit"],
+                            "to_exit": decision["route_change"]["to_exit"],
+                            "reason": decision["route_change"]["reason"],
+                        }
+                    )
+
         results = {
             "agent_decisions": self.agent_decisions,
             "agent_positions": agent_positions,
             "final_time": self.current_sim_time,
             "events": self.event_history,
+            "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
+            "route_changes": route_changes,  # Phase 4.2: Route change analytics
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -715,6 +901,24 @@ class HybridSimulationRunner:
         with open(financial_report_path, "w") as f:
             f.write(financial_report)
         logger.info(f"Financial report saved to {financial_report_path}")
+
+        # Save route change analytics (Phase 4.2)
+        if route_changes:
+            route_changes_path = output_path.parent / "route_changes.txt"
+            with open(route_changes_path, "w") as f:
+                f.write("=== ROUTE CHANGE ANALYTICS ===\n\n")
+                f.write(f"Total route changes: {len(route_changes)}\n")
+                f.write(
+                    f"Agents who changed routes: {len({rc['agent'] for rc in route_changes})}\n\n"
+                )
+                f.write("Route Changes:\n")
+                for rc in route_changes:
+                    f.write(
+                        f"  - {rc['agent']} at t={rc['time']:.1f}s: "
+                        f"{rc['from_exit']} → {rc['to_exit']}\n"
+                        f"    Reason: {rc['reason']}\n"
+                    )
+            logger.info(f"Route change analytics saved to {route_changes_path}")
 
     def _generate_financial_report(self) -> str:
         """Generate a financial report from LLM usage statistics."""

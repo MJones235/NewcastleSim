@@ -342,6 +342,7 @@ class ObservationGenerator:
         nearby_agents: list[dict[str, Any]],
         events: list[str],
         sim_time: float,
+        blocked_exits: set[str] | None = None,
     ) -> str:
         """
         Generate a natural language observation for an agent.
@@ -352,11 +353,14 @@ class ObservationGenerator:
             nearby_agents: List of nearby agents with their info
             events: Recent events (announcements, alarms, etc.)
             sim_time: Current simulation time
+            blocked_exits: Set of blocked exit names (for visual observation)
 
         Returns:
             Natural language observation string
         """
         observations = []
+        if blocked_exits is None:
+            blocked_exits = set()
 
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
@@ -384,11 +388,48 @@ class ObservationGenerator:
             behaviors = self._summarize_behaviors(nearby_agents)
             observations.append(behaviors)
 
+            # Exit crowd information (Phase 4.2: helps agents make informed route decisions)
+            exit_crowds = self._count_agents_per_exit(nearby_agents)
+            if exit_crowds:
+                observations.append("People heading toward exits:")
+                for exit_name, count in sorted(exit_crowds.items()):
+                    observations.append(f"  - {exit_name}: {self._categorize_count(count)}")
+
         # Recent events
         if events:
             observations.append("Recent events:")
             for event in events[-3:]:  # Last 3 events
                 observations.append(f"  - {event}")
+
+        # Visual observation of blocked exits (Phase 4.2: Realistic discovery)
+        # Only observe blocked exits within visual range (~20m)
+        if blocked_exits:
+            visible_blocked = []
+            for exit_name in blocked_exits:
+                if exit_name in self.exits:
+                    exit_pos = self.exits[exit_name]
+                    distance = (
+                        (position[0] - exit_pos[0]) ** 2 + (position[1] - exit_pos[1]) ** 2
+                    ) ** 0.5
+
+                    # Visual range: 20m
+                    if distance < 20.0:
+                        if distance >= 50:
+                            dist_cat = "50-100m"
+                        elif distance >= 10:
+                            dist_cat = "<50m"
+                        else:
+                            dist_cat = "very close"
+
+                        visible_blocked.append({"name": exit_name, "distance": dist_cat})
+
+            if visible_blocked:
+                observations.append("⚠️ Visual observations:")
+                for blocked in visible_blocked:
+                    observations.append(
+                        f"  - The {blocked['name']} appears blocked/obstructed "
+                        f"({blocked['distance']} away)"
+                    )
 
         # Exit information
         nearest_exit = self._get_nearest_exit_info(position)
@@ -530,6 +571,34 @@ class ObservationGenerator:
             return "Many people are waiting or stationary."
         else:
             return "People are mixed between moving and waiting."
+
+    def _count_agents_per_exit(self, nearby_agents: list[dict[str, Any]]) -> dict[str, int]:
+        """
+        Count how many nearby agents appear to be heading toward each exit.
+
+        Returns:
+            Dict mapping exit name to approximate agent count
+        """
+        exit_counts: dict[str, int] = {}
+
+        for agent in nearby_agents:
+            # Check if agent has a target exit (if available from agent data)
+            target_exit = agent.get("target_exit")
+            if target_exit and target_exit in self.exits:
+                exit_counts[target_exit] = exit_counts.get(target_exit, 0) + 1
+
+        return exit_counts
+
+    def _categorize_count(self, count: int) -> str:
+        """Categorize people count to prevent minor changes from triggering LLM."""
+        if count == 0:
+            return "empty"
+        elif count <= 3:
+            return "sparse (few people)"
+        elif count <= 10:
+            return "moderate crowd"
+        else:
+            return "crowded (many people)"
 
     def _get_nearest_exit_info(self, position: tuple[float, float]) -> str:
         """Get information about the nearest exit."""

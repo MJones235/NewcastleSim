@@ -508,6 +508,7 @@ class ConcordiaJuPedSimulation:
                         "distance": dist,
                         "position": (float(agent.position[0]), float(agent.position[1])),
                         "is_moving": is_moving,
+                        "target_exit": None,  # Will be enriched by HybridSimulationRunner
                     }
                 )
 

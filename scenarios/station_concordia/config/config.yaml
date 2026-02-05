@@ -8,33 +8,6 @@ simulation:
   spawn_interval: 2.0  # Time between agent spawns (seconds)
   network_path: "scenarios/station_sim/network"  # Path to real station geometry
 
-# Station layout (for simple geometry mode - 100m x 100m room)
-station:
-  # Exit locations (x, y coordinates)
-  exits:
-    north_exit: [50.0, 95.0]
-    south_exit: [50.0, 5.0]
-    east_exit: [95.0, 50.0]
-    west_exit: [5.0, 50.0]
-
-  # Zone definitions (for observation generation)
-  zones:
-    platform:
-      x_min: 40.0
-      x_max: 60.0
-      y_min: 40.0
-      y_max: 60.0
-    concourse:
-      x_min: 30.0
-      x_max: 70.0
-      y_min: 20.0
-      y_max: 40.0
-    entrance:
-      x_min: 45.0
-      x_max: 55.0\
-      y_min: 0.0
-      y_max: 20.0
-
 # Agent configuration
 agents:
   count: 10  # Start with 10 agents for testing
@@ -76,15 +49,22 @@ agents:
 
 # Event configuration
 events:
-  - time: 30.0
-    message: "This is a test of the emergency announcement system."
+  #- time: 30.0
+  #  message: "This is a test of the emergency announcement system."
 
-  - time: 60.0
+  - time: 15.0
     message: "Attention all passengers: Please evacuate the station immediately via the nearest exit."
 
-  - time: 120.0
-    message: "Emergency services are on site. Continue evacuating calmly."
-
+  #- time: 120.0
+  #  message: "Emergency services are on site. Continue evacuating calmly."
+# Phase 4.2: Test scenarios for route changing behavior
+test_scenarios:
+  blocked_exit:
+    # Test realistic blocked exit discovery
+    enabled: true  # Set to true to run this scenario
+    block_time: 30.0  # Block the exit at 30 seconds
+    blocked_exit: "jps.entrance_1"  # Which exit to block (jps.entrance_1, jps.entrance_2, or jps.entrance_3)
+    description: "Test blocked exit discovery. Entrance 1 blocks at t=30s. Agents discover visually (<20m) or by observing others turning back."
 # LLM configuration
 # Note: Credentials are loaded from .env file (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY, AZURE_LLM_MODEL)
 llm:

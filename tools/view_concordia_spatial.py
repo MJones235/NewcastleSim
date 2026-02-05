@@ -48,6 +48,7 @@ class SpatialConcordiaViewer:
         self.agent_positions = {}
         self.agent_decisions = {}
         self.last_update = 0
+        self.blocked_exits = []  # Phase 4.2: Track blocked exits for visualization
 
         # Load geometry if provided
         self.geometry = None
@@ -73,6 +74,7 @@ class SpatialConcordiaViewer:
         self.agent_dots = {}
         self.agent_labels = {}
         self.decision_texts = []
+        self.blocked_exit_markers = []  # Phase 4.2: Visual markers for blocked exits
 
     def _load_geometry(self, geometry_file: Path) -> dict:
         """Load station geometry from file."""
@@ -248,6 +250,10 @@ class SpatialConcordiaViewer:
                 f"Concordia Station Evacuation - Real-Time View | Time: {self.current_time:.1f}s"
             )
 
+            # Phase 4.2: Update blocked exits list
+            if "blocked_exits" in data:
+                self.blocked_exits = data["blocked_exits"]
+
             self.last_update = time.time()
             return True
 
@@ -263,8 +269,61 @@ class SpatialConcordiaViewer:
         # Update agent positions on map
         self._update_agent_positions()
 
+        # Update blocked exit markers (Phase 4.2)
+        self._update_blocked_exits()
+
         # Update decision log
         self._update_decision_log()
+
+    def _update_blocked_exits(self):
+        """Draw visual markers for blocked exits (Phase 4.2)."""
+        # Remove old markers
+        for marker in self.blocked_exit_markers:
+            marker.remove()
+        self.blocked_exit_markers = []
+
+        if not self.blocked_exits or not self.geometry:
+            return
+
+        # Get entrance areas from geometry
+        entrance_areas = self.geometry.get("entrance_areas", {})
+
+        for exit_name in self.blocked_exits:
+            if exit_name in entrance_areas:
+                # Get exit polygon coordinates
+                coords = entrance_areas[exit_name]
+                if coords:
+                    # Calculate centroid
+                    xs = [c[0] for c in coords]
+                    ys = [c[1] for c in coords]
+                    center_x = sum(xs) / len(xs)
+                    center_y = sum(ys) / len(ys)
+
+                    # Draw red X over the exit
+                    size = 8
+                    marker1 = self.ax_map.plot(
+                        [center_x - size, center_x + size],
+                        [center_y - size, center_y + size],
+                        "r-",
+                        linewidth=4,
+                    )[0]
+                    marker2 = self.ax_map.plot(
+                        [center_x - size, center_x + size],
+                        [center_y + size, center_y - size],
+                        "r-",
+                        linewidth=4,
+                    )[0]
+                    label = self.ax_map.text(
+                        center_x,
+                        center_y - size - 3,
+                        "🚧 BLOCKED",
+                        ha="center",
+                        fontsize=10,
+                        color="red",
+                        weight="bold",
+                    )
+
+                    self.blocked_exit_markers.extend([marker1, marker2, label])
 
     def _update_agent_positions(self):
         """Update agent position markers."""
