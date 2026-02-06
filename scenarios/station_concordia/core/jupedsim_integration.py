@@ -307,13 +307,16 @@ class ConcordiaJuPedSimulation:
 
         return evacuation_exits, evacuation_journeys
 
-    def add_agent(self, agent_id: str, position: tuple[float, float]) -> bool:
+    def add_agent(
+        self, agent_id: str, position: tuple[float, float], walking_speed: float = 1.34
+    ) -> bool:
         """
         Add an agent to the simulation.
 
         Args:
             agent_id: Concordia agent ID
             position: Initial (x, y) position
+            walking_speed: Desired walking speed in m/s (default: 1.34 m/s)
 
         Returns:
             True if agent added successfully
@@ -332,13 +335,14 @@ class ConcordiaJuPedSimulation:
                 f"Using exit '{exit_name}' (stage={stage_id}, journey={journey_id}) for agent {agent_id}"
             )
 
-            # Add agent to JuPedSim
+            # Add agent to JuPedSim with specified walking speed
             # Set both journey_id AND stage_id (the first stage in the journey)
             jps_id = self.simulation.add_agent(
                 jps.CollisionFreeSpeedModelAgentParameters(
                     position=position,
                     journey_id=journey_id,
                     stage_id=stage_id,  # Start at the first stage of the journey
+                    v0=walking_speed,  # Set desired walking speed (v0 parameter)
                 )
             )
 
@@ -346,7 +350,9 @@ class ConcordiaJuPedSimulation:
             self.agent_ids[agent_id] = jps_id
             self.jps_to_concordia[jps_id] = agent_id
 
-            logger.debug(f"Added agent {agent_id} at position {position} (JuPedSim ID: {jps_id})")
+            logger.debug(
+                f"Added agent {agent_id} at position {position} with speed {walking_speed} m/s (JuPedSim ID: {jps_id})"
+            )
             return True
 
         except Exception as e:
@@ -460,6 +466,33 @@ class ConcordiaJuPedSimulation:
 
         except Exception as e:
             logger.warning(f"Failed to set evacuation exit for agent {agent_id}: {e}")
+
+    def set_agent_speed(self, agent_id: str, speed: float):
+        """
+        Set an agent's walking speed mid-simulation.
+
+        Args:
+            agent_id: Concordia agent ID
+            speed: Walking speed in m/s
+        """
+        if agent_id not in self.agent_ids:
+            logger.warning(f"Cannot set speed for unknown agent {agent_id}")
+            return
+
+        jps_id = self.agent_ids[agent_id]
+
+        try:
+            # Get the agent object from JuPedSim simulation
+            agent = self.simulation.agent(jps_id)
+
+            # Change the agent's desired speed (v0 parameter)
+            # This works with velocity-based models and applies from next timestep
+            agent.model.v0 = speed
+
+            logger.debug(f"Set {agent_id} speed to {speed} m/s")
+
+        except Exception as e:
+            logger.warning(f"Failed to set speed for agent {agent_id}: {e}")
 
     def get_nearby_agents(self, agent_id: str, radius: float) -> list[dict[str, Any]]:
         """

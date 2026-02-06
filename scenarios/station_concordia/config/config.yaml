@@ -10,7 +10,7 @@ simulation:
 
 # Agent configuration
 agents:
-  count: 10  # Start with 10 agents for testing
+  count: 50  # Start with 10 agents for testing
 
   # Personality distribution (percentage)
   personalities:
@@ -65,6 +65,18 @@ test_scenarios:
     block_time: 30.0  # Block the exit at 30 seconds
     blocked_exit: "jps.entrance_1"  # Which exit to block (jps.entrance_1, jps.entrance_2, or jps.entrance_3)
     description: "Test blocked exit discovery. Entrance 1 blocks at t=30s. Agents discover visually (<20m) or by observing others turning back."
+
+  # Phase 4.1: Help behavior scenario
+  help_behavior:
+    enabled: true  # Set to true to test helping behavior
+    injured_agent_percentage: 0.2  # 20% of agents are injured/slow
+    injured_walking_speed: 0.5  # m/s (normal is ~1.34 m/s)
+    normal_walking_speed: 1.34  # m/s (default walking speed for healthy agents)
+    assisted_speed: 0.8  # m/s (speed when helper and injured travel together)
+    approach_distance: 1.5  # meters (distance threshold to transition from approaching to traveling)
+    observation_radius: 20.0  # meters (distance agents can observe injured/helping behavior)
+    help_duration: 600.0  # Seconds helper stays with injured agent
+    description: "Test personality-driven helping. Some agents are injured/slow. Helpers (ENFJ/ESFJ) may stop to assist."
 # LLM configuration
 # Note: Credentials are loaded from .env file (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY, AZURE_LLM_MODEL)
 llm:

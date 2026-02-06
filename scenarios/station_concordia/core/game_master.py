@@ -132,6 +132,16 @@ class ActionTranslator:
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
 
+            # BUG FIX: Check for help/follow BEFORE checking target_type == "current_position"
+            # Otherwise "help" with target_type="current_position" gets converted to "wait"
+            if action_type in {"help", "follow"}:
+                return {
+                    "action_type": action_type,
+                    "target": current_position,  # Use current position as placeholder
+                    "confidence": 0.4,
+                    "reasoning": f"LLM selected {action_type} intent",
+                }
+
             if action_type == "wait" or target_type == "current_position":
                 return {
                     "action_type": "wait",
@@ -260,6 +270,16 @@ class ActionTranslator:
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
 
+            # BUG FIX: Check for help/follow BEFORE checking target_type == "current_position"
+            # Otherwise "help" with target_type="current_position" gets converted to "wait"
+            if action_type in {"help", "follow"}:
+                return {
+                    "action_type": action_type,
+                    "target": None,
+                    "confidence": 0.4,
+                    "reasoning": f"LLM selected {action_type} intent",
+                }
+
             if action_type == "wait" or target_type == "current_position":
                 return {
                     "action_type": "wait",
@@ -296,14 +316,6 @@ class ActionTranslator:
                         "confidence": 0.55,
                         "reasoning": f"LLM selected zone {zone_name}",
                     }
-
-            if action_type in {"help", "follow"}:
-                return {
-                    "action_type": action_type,
-                    "target": None,
-                    "confidence": 0.4,
-                    "reasoning": f"LLM selected {action_type} intent",
-                }
 
             return None
         except Exception as e:
@@ -343,6 +355,7 @@ class ObservationGenerator:
         events: list[str],
         sim_time: float,
         blocked_exits: set[str] | None = None,
+        agent_status: dict[str, str] | None = None,
     ) -> str:
         """
         Generate a natural language observation for an agent.
@@ -354,6 +367,7 @@ class ObservationGenerator:
             events: Recent events (announcements, alarms, etc.)
             sim_time: Current simulation time
             blocked_exits: Set of blocked exit names (for visual observation)
+            agent_status: Dict mapping agent_id to status (EVACUATING, HELPING, WAITING, INJURED)
 
         Returns:
             Natural language observation string
@@ -361,6 +375,8 @@ class ObservationGenerator:
         observations = []
         if blocked_exits is None:
             blocked_exits = set()
+        if agent_status is None:
+            agent_status = {}
 
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
@@ -383,9 +399,22 @@ class ObservationGenerator:
 
         observations.append(f"The area is {density}.")
 
+        # Phase 4.1: Agent's own status
+        own_status = agent_status.get(agent_id, "EVACUATING")
+        if own_status == "HELPING":
+            # Find who they're helping
+            for helped_id, helper_id in agent_status.items():
+                if helped_id.startswith("helped_by_") and helper_id == agent_id:
+                    observations.append("You are currently helping another person.")
+                    break
+        elif own_status == "INJURED":
+            observations.append("You are injured and moving slowly.")
+        elif own_status == "WAITING":
+            observations.append("You are waiting for assistance.")
+
         # Nearby agent behaviors
         if nearby_agents:
-            behaviors = self._summarize_behaviors(nearby_agents)
+            behaviors = self._summarize_behaviors(nearby_agents, agent_status)
             observations.append(behaviors)
 
             # Exit crowd information (Phase 4.2: helps agents make informed route decisions)
@@ -559,18 +588,49 @@ class ObservationGenerator:
         x, y = point
         return bounds["x_min"] <= x <= bounds["x_max"] and bounds["y_min"] <= y <= bounds["y_max"]
 
-    def _summarize_behaviors(self, nearby_agents: list[dict[str, Any]]) -> str:
+    def _summarize_behaviors(
+        self, nearby_agents: list[dict[str, Any]], agent_status: dict[str, str]
+    ) -> str:
         """Summarize what nearby agents are doing."""
+        # Phase 4.1: Detect injured/slow-moving agents
+        injured_nearby = []
+        helping_nearby = []
+
+        for agent in nearby_agents:
+            agent_id = agent.get("id")
+            if agent_id:
+                status = agent_status.get(agent_id, "EVACUATING")
+                distance = agent.get("distance", 999)
+
+                if (
+                    status == "INJURED" and distance < 20.0
+                ):  # Within 20m - can see struggling person from distance
+                    injured_nearby.append(agent_id)
+                elif status == "HELPING" and distance < 20.0:
+                    helping_nearby.append(agent_id)
+
+        # Build behavior summary
+        parts = []
+
         # Count movement patterns
         moving_count = sum(1 for a in nearby_agents if a.get("is_moving", True))
         waiting_count = len(nearby_agents) - moving_count
 
         if moving_count > waiting_count:
-            return "Most people are moving toward exits."
+            parts.append("Most people are moving toward exits.")
         elif waiting_count > moving_count:
-            return "Many people are waiting or stationary."
+            parts.append("Many people are waiting or stationary.")
         else:
-            return "People are mixed between moving and waiting."
+            parts.append("People are mixed between moving and waiting.")
+
+        # Phase 4.1: Note injured agents nearby
+        if injured_nearby:
+            parts.append("You notice someone nearby who appears injured or moving very slowly.")
+
+        if helping_nearby:
+            parts.append("Someone nearby is helping another person.")
+
+        return " ".join(parts)
 
     def _count_agents_per_exit(self, nearby_agents: list[dict[str, Any]]) -> dict[str, int]:
         """

@@ -135,6 +135,7 @@ class HybridSimulationRunner:
         decision_interval: float = 5.0,
         max_steps: int = 3600,
         output_file: Path | None = None,
+        test_scenarios: dict[str, Any] | None = None,
     ):
         """
         Initialize the hybrid simulation runner.
@@ -155,6 +156,7 @@ class HybridSimulationRunner:
         self.decision_interval = decision_interval
         self.max_steps = max_steps
         self.output_file = output_file
+        self.test_scenarios = test_scenarios or {}
 
         # Store LLM provider reference (for usage stats)
         # The language_model is an AzureLLMConcordia instance directly
@@ -167,6 +169,19 @@ class HybridSimulationRunner:
         # Build Concordia agents (each with their own memory bank)
         self.concordia_agents: dict[str, entity_lib.Entity] = {}
         self.agent_configs = agents_config
+
+        # Phase 4.1: Help behavior tracking (must be initialized before _build_agents)
+        self.agent_status: dict[str, str] = (
+            {}
+        )  # agent_id -> "EVACUATING"|"HELPING"|"WAITING"|"INJURED"
+        self.agents_being_helped: dict[str, str] = {}  # helped_agent_id -> helper_agent_id
+        self.help_events: list[dict[str, Any]] = []  # Track all help interactions
+        self.active_helping_pairs: dict[str, dict[str, Any]] = (
+            {}
+        )  # helper_id -> {helped, start_time, duration}
+        self.agent_original_speeds: dict[str, float] = (
+            {}
+        )  # Store original walking speeds for restoration
 
         self._build_agents()
 
@@ -215,6 +230,12 @@ class HybridSimulationRunner:
 
             self.concordia_agents[agent_id] = agent
 
+            # Phase 4.1: Initialize agent status
+            if agent_config.get("is_injured", False):
+                self.agent_status[agent_id] = "INJURED"
+            else:
+                self.agent_status[agent_id] = "EVACUATING"
+
             # Add initial memories
             self._initialize_agent_memory(agent, agent_config)
 
@@ -235,6 +256,16 @@ class HybridSimulationRunner:
             "I notice other passengers waiting and walking around.",
             "The atmosphere is calm and routine.",
         ]
+
+        # Phase 4.1: Add injury-specific memories
+        if config.get("is_injured", False):
+            initial_memories.extend(
+                [
+                    "I am injured and moving slowly.",
+                    "I may need assistance during the evacuation.",
+                    "I am moving at a reduced pace due to my injury.",
+                ]
+            )
 
         for memory in initial_memories:
             agent.observe(memory)
@@ -287,6 +318,9 @@ class HybridSimulationRunner:
 
                     # Check for agents who have exited and remove them
                     self._check_exited_agents()
+
+                    # Phase 4.1: Update helping relationships (check for expired help durations)
+                    self._update_helping_relationships()
 
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
@@ -393,6 +427,85 @@ class HybridSimulationRunner:
                 f"{total_agents} total (t={self.current_sim_time:.1f}s)"
             )
 
+    def _update_helping_relationships(self):
+        """Update active helping relationships and release them when duration expires."""
+        if not self.active_helping_pairs:
+            return
+
+        expired_pairs = []
+        for helper_id, pair_info in self.active_helping_pairs.items():
+            helped_id = pair_info["helped"]
+            start_time = pair_info["start_time"]
+            duration = pair_info["duration"]
+            phase = pair_info.get("phase", "traveling")
+
+            # Phase 1: Approaching - check if helper has reached injured agent
+            if phase == "approaching":
+                helper_pos = self._get_agent_position(helper_id)
+                injured_pos = self._get_agent_position(helped_id)
+
+                # Calculate distance between helper and injured agent
+                distance = (
+                    (helper_pos[0] - injured_pos[0]) ** 2 + (helper_pos[1] - injured_pos[1]) ** 2
+                ) ** 0.5
+
+                # Get approach distance threshold from config
+                help_config = self.test_scenarios.get("help_behavior", {})
+                approach_distance = help_config.get("approach_distance", 1.5)
+
+                # If within approach distance, transition to traveling phase
+                if distance < approach_distance:
+                    pair_info["phase"] = "traveling"
+
+                    # Phase 2: Traveling together
+                    # Get assisted speed from config
+                    help_config = self.test_scenarios.get("help_behavior", {})
+                    assisted_speed = help_config.get("assisted_speed", 0.8)
+                    self.jps_sim.set_agent_speed(helper_id, assisted_speed)
+                    self.jps_sim.set_agent_speed(helped_id, assisted_speed)
+
+                    # Both agents target the same exit (helper's current destination)
+                    helper_exit = self.agent_destinations.get(helper_id)
+                    if helper_exit:
+                        if hasattr(self.jps_sim, "set_agent_evacuation_exit"):
+                            self.jps_sim.set_agent_evacuation_exit(helped_id, helper_exit)
+                            logger.debug(f"Set {helped_id} to follow {helper_id} to {helper_exit}")
+
+                    logger.info(
+                        f"🚶 {helper_id} reached {helped_id} - "
+                        f"now traveling together at {assisted_speed} m/s toward {helper_exit}"
+                    )
+
+            # Check if help duration has expired (only for traveling phase)
+            if phase == "traveling" and self.current_sim_time >= start_time + duration:
+                expired_pairs.append(helper_id)
+
+                # Restore original speeds using JuPedSim agent.model.v0
+                if helper_id in self.agent_original_speeds:
+                    original_speed = self.agent_original_speeds[helper_id]
+                    self.jps_sim.set_agent_speed(helper_id, original_speed)
+
+                if helped_id in self.agent_original_speeds:
+                    original_speed = self.agent_original_speeds[helped_id]
+                    self.jps_sim.set_agent_speed(helped_id, original_speed)
+
+                # Update statuses back to EVACUATING/INJURED
+                self.agent_status[helper_id] = "EVACUATING"
+                self.agent_status[helped_id] = "INJURED"  # Still injured but now independent
+
+                # Remove from being helped tracking
+                if helped_id in self.agents_being_helped:
+                    del self.agents_being_helped[helped_id]
+
+                logger.info(
+                    f"👋 {helper_id} finished helping {helped_id} - "
+                    f"both resuming independent evacuation"
+                )
+
+        # Remove expired pairs
+        for helper_id in expired_pairs:
+            del self.active_helping_pairs[helper_id]
+
     def _process_agent_decisions(self):
         """Process decision-making for all agents (parallel processing)."""
         logger.info(f"Agent decisions at t={self.current_sim_time:.1f}s")
@@ -473,7 +586,8 @@ class HybridSimulationRunner:
                         "Action rules:\n"
                         "- Use action_type='wait' and target_type='current_position' if staying put\n"
                         "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
-                        "- Use action_type='move' and target_type='zone' to move to a platform/area"
+                        "- Use action_type='move' and target_type='zone' to move to a platform/area\n"
+                        "- Use action_type='help' and target_type='current_position' to stop and assist an injured person nearby"
                     ),
                     output_type=entity_lib.OutputType.FREE,
                 )
@@ -613,7 +727,10 @@ class HybridSimulationRunner:
             try:
                 # Get agent state from JuPedSim
                 position = self._get_agent_position(agent_id)
-                nearby_agents = self._get_nearby_agents(agent_id, radius=10.0)
+                # Get observation radius from config
+                help_config = self.test_scenarios.get("help_behavior", {})
+                observation_radius = help_config.get("observation_radius", 20.0)
+                nearby_agents = self._get_nearby_agents(agent_id, radius=observation_radius)
 
                 # Enrich nearby_agents with target exit info (Phase 4.2)
                 for agent_info in nearby_agents:
@@ -623,7 +740,7 @@ class HybridSimulationRunner:
 
                 recent_events = self._get_recent_events()
 
-                # Generate observation
+                # Generate observation (Phase 4.1: Include agent status)
                 obs = self.observation_generator.generate_observation(
                     agent_id=agent_id,
                     position=position,
@@ -631,6 +748,7 @@ class HybridSimulationRunner:
                     events=recent_events,
                     sim_time=self.current_sim_time,
                     blocked_exits=self.blocked_exits,
+                    agent_status=self.agent_status,
                 )
 
                 observations[agent_id] = obs
@@ -708,23 +826,112 @@ class HybridSimulationRunner:
         # TODO: With real JuPedSim, use proper waypoint/goal setting API
         # For now, using simple target setting
         try:
-            if action_type == "move" and target:
-                # Check if agent is moving to an exit - if so, switch their journey
-                exit_name = self.agent_destinations.get(agent_id)
-                if exit_name and hasattr(self.jps_sim, "set_agent_evacuation_exit"):
-                    # DON'T switch to a blocked exit - it would allow them to evacuate through it!
-                    if exit_name in self.blocked_exits:
-                        logger.warning(
-                            f"⚠️ {agent_id} tried to switch to blocked exit {exit_name} - "
+            if action_type == "help":
+                # Phase 4.1: Agent is helping an injured person
+                # Helper and injured agent will travel together at intermediate speed
+                self.agent_status[agent_id] = "HELPING"
+
+                # Get observation radius from config
+                help_config = self.test_scenarios.get("help_behavior", {})
+                observation_radius = help_config.get("observation_radius", 20.0)
+
+                # Find nearest injured agent within observation radius
+                position = self._get_agent_position(agent_id)
+                nearby_agents = self._get_nearby_agents(agent_id, radius=observation_radius)
+
+                injured_nearby = None
+                for agent_info in nearby_agents:
+                    other_id = agent_info.get("id")
+                    if other_id and self.agent_status.get(other_id) == "INJURED":
+                        injured_nearby = other_id
+                        break
+
+                if injured_nearby:
+                    # Record help event
+                    helper_config = next((c for c in self.agent_configs if c["id"] == agent_id), {})
+
+                    # Get help configuration from test_scenarios
+                    help_config = self.test_scenarios.get("help_behavior", {})
+                    help_duration = help_config.get(
+                        "help_duration", 15.0
+                    )  # Default 15s if not in config
+
+                    # Get injured agent's position
+                    injured_position = self._get_agent_position(injured_nearby)
+
+                    self.help_events.append(
+                        {
+                            "time": self.current_sim_time,
+                            "helper": agent_id,
+                            "helped": injured_nearby,
+                            "helper_personality": helper_config.get("personality_type", "UNKNOWN"),
+                            "location": position,
+                            "duration": help_duration,
+                        }
+                    )
+
+                    # Track active helping pair with two phases:
+                    # 1. "approaching" - helper walks to injured agent (who stops)
+                    # 2. "traveling" - both travel together at intermediate speed
+                    self.active_helping_pairs[agent_id] = {
+                        "helped": injured_nearby,
+                        "start_time": self.current_sim_time,
+                        "duration": help_duration,
+                        "phase": "approaching",
+                        "injured_position": injured_position,
+                    }
+
+                    # Update helped agent's status to WAITING (receiving assistance)
+                    self.agents_being_helped[injured_nearby] = agent_id
+                    self.agent_status[injured_nearby] = "WAITING"
+
+                    # Store original speeds if not already stored
+                    help_config = self.test_scenarios.get("help_behavior", {})
+                    if agent_id not in self.agent_original_speeds:
+                        normal_speed = help_config.get("normal_walking_speed", 1.34)
+                        self.agent_original_speeds[agent_id] = normal_speed
+                    if injured_nearby not in self.agent_original_speeds:
+                        injured_speed = help_config.get("injured_walking_speed", 0.5)
+                        self.agent_original_speeds[injured_nearby] = injured_speed
+
+                    # Phase 1: Approaching
+                    # - Injured agent stops (speed = 0) so helper can reach them
+                    # - Helper walks toward injured agent's current position
+                    self.jps_sim.set_agent_speed(injured_nearby, 0.0)
+                    self.jps_sim.set_agent_target(agent_id, injured_position)
+
+                    logger.info(
+                        f"🤝 {agent_id} is approaching {injured_nearby} to help "
+                        f"(distance: {((position[0]-injured_position[0])**2 + (position[1]-injured_position[1])**2)**0.5:.1f}m)"
+                    )
+                else:
+                    logger.warning(f"{agent_id} wanted to help but no injured agents nearby")
+
+            elif action_type == "move" and target:
+                # Extract the NEW exit name from this action (if moving to an exit)
+                new_exit_name = self._extract_exit_name(translated_action)
+
+                if new_exit_name:
+                    # Agent is moving to an exit - update destination tracking
+                    self.agent_destinations[agent_id] = new_exit_name
+
+                    # Check if agent is trying to switch to a blocked exit
+                    if new_exit_name in self.blocked_exits:
+                        logger.debug(
+                            f"⚠️ {agent_id} tried to switch to blocked exit {new_exit_name} - "
                             f"keeping waypoint only"
                         )
+                        # Only set waypoint, don't switch journey (would let them evacuate through blocked exit)
                         self.jps_sim.set_agent_target(agent_id, target)
                     else:
                         # Switch the agent's evacuation journey to this exit
-                        self.jps_sim.set_agent_evacuation_exit(agent_id, exit_name)
-                        logger.debug(f"Switched {agent_id} to journey for {exit_name}")
+                        if hasattr(self.jps_sim, "set_agent_evacuation_exit"):
+                            self.jps_sim.set_agent_evacuation_exit(agent_id, new_exit_name)
+                            logger.debug(f"Switched {agent_id} to journey for {new_exit_name}")
+                        else:
+                            self.jps_sim.set_agent_target(agent_id, target)
                 else:
-                    # Fallback to waypoint setting
+                    # Not moving to an exit, just a waypoint
                     self.jps_sim.set_agent_target(agent_id, target)
             elif action_type == "wait":
                 current_position = self._get_agent_position(agent_id)
@@ -828,6 +1035,10 @@ class HybridSimulationRunner:
             "current_time": self.current_sim_time,
             "events": self.event_history,
             "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
+            "active_helping_pairs": {
+                helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
+                for helper, info in self.active_helping_pairs.items()
+            },  # Phase 4.1: For visualization
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -876,6 +1087,10 @@ class HybridSimulationRunner:
             "events": self.event_history,
             "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
             "route_changes": route_changes,  # Phase 4.2: Route change analytics
+            "active_helping_pairs": {
+                helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
+                for helper, info in self.active_helping_pairs.items()
+            },  # Phase 4.1: For visualization
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -919,6 +1134,35 @@ class HybridSimulationRunner:
                         f"    Reason: {rc['reason']}\n"
                     )
             logger.info(f"Route change analytics saved to {route_changes_path}")
+
+        # Phase 4.1: Save help behavior analytics
+        if self.help_events:
+            help_analytics_path = output_path.parent / "help_behavior.txt"
+            with open(help_analytics_path, "w") as f:
+                f.write("=== HELP BEHAVIOR ANALYTICS ===\n\n")
+                f.write(f"Total help events: {len(self.help_events)}\n")
+                f.write(f"Agents who helped: {len({h['helper'] for h in self.help_events})}\n\n")
+
+                # Breakdown by personality type
+                personality_counts = {}
+                for event in self.help_events:
+                    personality = event.get("helper_personality", "UNKNOWN")
+                    personality_counts[personality] = personality_counts.get(personality, 0) + 1
+
+                f.write("Help events by personality:\n")
+                for personality, count in sorted(
+                    personality_counts.items(), key=lambda x: x[1], reverse=True
+                ):
+                    percentage = (count / len(self.help_events)) * 100 if self.help_events else 0
+                    f.write(f"  {personality}: {count} helps ({percentage:.1f}%)\n")
+
+                f.write("\nHelp Events:\n")
+                for event in self.help_events:
+                    f.write(
+                        f"  - t={event['time']:.1f}s: {event['helper']} ({event['helper_personality']}) "
+                        f"helped {event['helped']}\n"
+                    )
+            logger.info(f"Help behavior analytics saved to {help_analytics_path}")
 
     def _generate_financial_report(self) -> str:
         """Generate a financial report from LLM usage statistics."""

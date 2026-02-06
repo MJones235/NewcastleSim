@@ -19,6 +19,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from scenarios.common.logger import get_logger  # noqa: E402
+from scenarios.common.walking_speed import sample_walking_speed  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -280,8 +281,18 @@ def run_simulation(
         f"{'platform' if platform_areas else 'walkable'} areas"
     )
 
+    # Phase 4.1: Determine which agents are injured (if help scenario enabled)
+    help_config = config.get("test_scenarios", {}).get("help_behavior", {})
+    injured_agents = set()
+    if help_config.get("enabled", False):
+        injured_percentage = help_config.get("injured_agent_percentage", 0.2)
+        num_injured = max(1, int(num_agents * injured_percentage))
+        injured_agents = set(random.sample(range(num_agents), num_injured))
+        logger.info(f"Phase 4.1: {num_injured} agents will be injured/slow-moving")
+
     for i in range(num_agents):
         agent_id = f"agent_{i}"
+        is_injured = i in injured_agents
 
         # Create agent config
         agent_cfg = {
@@ -293,12 +304,20 @@ def run_simulation(
             "risk_tolerance": "moderate",
             "initial_zone": "platform",
             "destination": "exit",
+            "is_injured": is_injured,  # Phase 4.1: Mark injured agents
         }
         agents_config.append(agent_cfg)
 
         # Add agent to JuPedSim at spawn position
+        # Use reduced walking speed for injured agents, sample from distribution for normal agents
         start_pos = spawn_positions[i]
-        jps_sim.add_agent(agent_id, start_pos)
+        if is_injured:
+            walking_speed = help_config.get("injured_walking_speed", 0.5)
+            jps_sim.add_agent(agent_id, start_pos, walking_speed=walking_speed)
+        else:
+            # Sample walking speed from realistic distribution
+            walking_speed = sample_walking_speed()
+            jps_sim.add_agent(agent_id, start_pos, walking_speed=walking_speed)
 
     logger.info(f"Created {num_agents} agent configuration(s)")
 
@@ -366,6 +385,9 @@ def run_simulation(
 
     logger.info("Creating HybridSimulationRunner...")
 
+    # Get test scenarios config to pass to runner
+    test_scenarios_config = config.get("test_scenarios", {})
+
     try:
         runner = HybridSimulationRunner(
             jupedsim_simulation=jps_sim,
@@ -376,6 +398,7 @@ def run_simulation(
             decision_interval=decision_interval,
             max_steps=max_steps,
             output_file=decisions_file,
+            test_scenarios=test_scenarios_config,
         )
         logger.info("HybridSimulationRunner initialized")
     except Exception as e:

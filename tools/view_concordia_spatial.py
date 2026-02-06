@@ -75,6 +75,8 @@ class SpatialConcordiaViewer:
         self.agent_labels = {}
         self.decision_texts = []
         self.blocked_exit_markers = []  # Phase 4.2: Visual markers for blocked exits
+        self.legend_created = False  # Track if legend has been added
+        self.current_data = {}  # Store current simulation data
 
     def _load_geometry(self, geometry_file: Path) -> dict:
         """Load station geometry from file."""
@@ -254,6 +256,9 @@ class SpatialConcordiaViewer:
             if "blocked_exits" in data:
                 self.blocked_exits = data["blocked_exits"]
 
+            # Store the full data for use in other methods
+            self.current_data = data
+
             self.last_update = time.time()
             return True
 
@@ -340,14 +345,92 @@ class SpatialConcordiaViewer:
         if not self.agent_positions:
             return  # No positions yet
 
+        # Determine which agents are helping/being helped
+        helping_agents = set()
+        helped_agents = set()
+
+        # Use active_helping_pairs from the data if available
+        if "active_helping_pairs" in self.current_data:
+            active_helping_pairs = self.current_data["active_helping_pairs"]
+            if isinstance(active_helping_pairs, dict):
+                for helper_id, pair_info in active_helping_pairs.items():
+                    helping_agents.add(helper_id)
+                    helped_id = pair_info.get("helped")
+                    if helped_id:
+                        helped_agents.add(helped_id)
+
+        # Fallback: check decisions if active_helping_pairs not available
+        elif isinstance(self.agent_decisions, dict):
+            for agent_id, agent_data in self.agent_decisions.items():
+                if isinstance(agent_data, dict) and "decisions" in agent_data:
+                    decisions_list = agent_data["decisions"]
+                    # Check most recent decision
+                    if decisions_list:
+                        latest_decision = decisions_list[-1]
+                        if isinstance(latest_decision, dict):
+                            # Check the translated action (the actual action executed)
+                            translated = latest_decision.get("translated", {})
+                            if isinstance(translated, dict):
+                                action_type = translated.get("action_type", "")
+                                if action_type == "help":
+                                    helping_agents.add(agent_id)
+
         for agent_id, pos in self.agent_positions.items():
             if pos and len(pos) >= 2:
                 x, y = pos[0], pos[1]  # Handle both list and tuple from JSON
-                dot = self.ax_map.plot(x, y, "ro", markersize=8)[0]
+
+                # Color code based on helping status
+                if agent_id in helping_agents:
+                    color = "blue"  # Helpers are blue
+                    size = 10
+                elif agent_id in helped_agents:
+                    color = "orange"  # Being helped are orange
+                    size = 10
+                else:
+                    color = "red"  # Normal agents are red
+                    size = 8
+
+                dot = self.ax_map.plot(x, y, "o", color=color, markersize=size)[0]
                 label = self.ax_map.text(x, y + 1, agent_id, ha="center", fontsize=8)
 
                 self.agent_dots[agent_id] = dot
                 self.agent_labels[agent_id] = label
+
+        # Add legend if not already created
+        if not self.legend_created and self.agent_dots:
+            from matplotlib.lines import Line2D
+
+            legend_elements = [
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="red",
+                    markersize=8,
+                    label="Normal Agent",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="blue",
+                    markersize=10,
+                    label="Helping Agent",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="orange",
+                    markersize=10,
+                    label="Being Helped",
+                ),
+            ]
+            self.ax_map.legend(handles=legend_elements, loc="upper right")
+            self.legend_created = True
 
         # Keep fixed axis limits (do not autoscale)
 
