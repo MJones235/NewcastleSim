@@ -375,6 +375,8 @@ class ObservationGenerator:
         sim_time: float,
         blocked_exits: set[str] | None = None,
         agent_status: dict[str, str] | None = None,
+        received_messages: list[dict[str, Any]] | None = None,
+        conversation_history: dict[str, list[dict]] | None = None,
     ) -> str:
         """
         Generate a natural language observation for an agent.
@@ -387,6 +389,8 @@ class ObservationGenerator:
             sim_time: Current simulation time
             blocked_exits: Set of blocked exit names (for visual observation)
             agent_status: Dict mapping agent_id to status (EVACUATING, HELPING, WAITING, INJURED)
+            received_messages: List of messages received from nearby agents
+            conversation_history: Dict mapping other_agent_id to conversation history
 
         Returns:
             Natural language observation string
@@ -396,6 +400,10 @@ class ObservationGenerator:
             blocked_exits = set()
         if agent_status is None:
             agent_status = {}
+        if received_messages is None:
+            received_messages = []
+        if conversation_history is None:
+            conversation_history = {}
 
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
@@ -436,6 +444,15 @@ class ObservationGenerator:
             behaviors = self._summarize_behaviors(nearby_agents, agent_status)
             observations.append(behaviors)
 
+            # Phase 5.1: List nearby agent IDs for targeting messages
+            if len(nearby_agents) > 0 and len(nearby_agents) <= 5:
+                # Only list IDs when there are a few people (not in crowds)
+                nearby_ids = [a.get("id") for a in nearby_agents[:5] if a.get("id")]
+                if nearby_ids:
+                    observations.append(f"Nearby: {', '.join(nearby_ids)}")
+
+            observations.append(behaviors)
+
             # Exit crowd information (Phase 4.2: helps agents make informed route decisions)
             exit_crowds = self._count_agents_per_exit(nearby_agents)
             if exit_crowds:
@@ -465,6 +482,62 @@ class ObservationGenerator:
             observations.append("Recent events:")
             for event in events[-3:]:  # Last 3 events
                 observations.append(f"  - {event}")
+
+        # Phase 5: Messages from nearby people
+        if received_messages:
+            # Show recent unique messages (last 5)
+            unique_messages = []
+            seen_texts = set()
+            for msg in reversed(received_messages):
+                msg_key = msg["text"][:30].lower()  # Match dedup key
+                if msg_key not in seen_texts:
+                    unique_messages.append(msg)
+                    seen_texts.add(msg_key)
+                if len(unique_messages) >= 5:
+                    break
+
+            if unique_messages:
+                observations.append("What people just said to you:")
+                for msg in reversed(unique_messages):
+                    sender_name = msg["from"].replace("agent_", "Person ")
+                    msg_type = msg.get("message_type", "")
+                    type_indicator = {
+                        "directed": " (to you)",
+                        "quiet": " (quietly)",
+                        "shout": " (shouting)",
+                    }.get(msg_type, "")
+                    observations.append(f'  - {sender_name}{type_indicator}: "{msg["text"]}"')
+
+        # Add conversation history context for active conversations
+        if conversation_history:
+            # Only show conversations with nearby people who have exchanged multiple messages
+            active_conversations = []
+            nearby_ids = {a.get("id") for a in nearby_agents}
+
+            for other_agent_id, messages in conversation_history.items():
+                if other_agent_id in nearby_ids and len(messages) >= 2:  # At least 2 exchanges
+                    # Get last 3 messages in this conversation
+                    recent = messages[-3:]
+                    convo_summary = []
+                    for m in recent:
+                        direction = (
+                            "You"
+                            if m["from"] == agent_id
+                            else other_agent_id.replace("agent_", "Person ")
+                        )
+                        convo_summary.append(f'{direction}: "{m["text"]}"')
+
+                    active_conversations.append(
+                        {
+                            "other": other_agent_id.replace("agent_", "Person "),
+                            "summary": " → ".join(convo_summary),
+                        }
+                    )
+
+            if active_conversations:
+                observations.append("Recent conversation context:")
+                for convo in active_conversations[:2]:  # Max 2 to keep it concise
+                    observations.append(f"  - With {convo['other']}: {convo['summary']}")
 
         # Visual observation of blocked exits (Phase 4.2: Realistic discovery)
         # Only observe blocked exits within visual range (~20m)
@@ -661,7 +734,14 @@ class ObservationGenerator:
 
         # Phase 4.1: Note injured agents nearby
         if injured_nearby:
-            parts.append("You notice someone nearby who appears injured or moving very slowly.")
+            if len(injured_nearby) == 1:
+                parts.append(
+                    f"You notice {injured_nearby[0]} appears injured or moving very slowly."
+                )
+            else:
+                parts.append(
+                    f"You notice {len(injured_nearby)} people nearby appear injured or moving very slowly: {', '.join(injured_nearby[:3])}"
+                )
 
         if helping_nearby:
             parts.append("Someone nearby is helping another person.")

@@ -203,6 +203,25 @@ class HybridSimulationRunner:
         # Phase 4.3: Waiting and information seeking tracking
         self.wait_events: list[dict[str, Any]] = []  # Track all wait decisions with reasons
 
+        # Phase 5: Agent-to-agent messaging
+        self.agent_messages: dict[str, list[dict[str, Any]]] = (
+            {}
+        )  # agent_id -> list of received messages
+        self.message_history: list[dict[str, Any]] = []  # All messages sent
+        self.message_radius = 10.0  # Messages heard within 10m
+
+        # Phase 5.1: Message memory for repetition prevention
+        self.agent_sent_messages: dict[str, list[dict[str, Any]]] = (
+            {}
+        )  # agent_id -> recent messages they sent
+        self.agent_heard_messages: dict[str, set[str]] = (
+            {}
+        )  # agent_id -> set of message content they've heard
+        self.agent_conversations: dict[str, dict[str, list[dict]]] = (
+            {}
+        )  # agent_id -> {other_agent_id -> conversation history}
+        self.message_memory_window = 60.0  # Remember messages for 60 seconds
+
         # Track exited agents (those who have evacuated)
         self.exited_agents: set[str] = set()  # agent_ids who have reached exits
 
@@ -608,10 +627,9 @@ class HybridSimulationRunner:
             if agent_id in self.exited_agents:
                 continue
 
-            # Skip agents who are currently being helped (they're passively following the helper)
-            if agent_id in self.agents_being_helped:
-                logger.debug(f"{agent_id} is being helped, skipping decision-making")
-                continue
+            # Agents being helped still make decisions (can receive/send messages)
+            # but their movement is controlled by the helper via speed synchronization
+            # NOTE: We don't skip them here anymore so they can respond to messages
 
             # Note: Helper agents are NOT skipped - they make free decisions
             # Their observations will indicate they're helping someone
@@ -693,7 +711,10 @@ class HybridSimulationRunner:
                         '  "exit_name": "exit name or null",\n'
                         '  "zone_name": "zone name or null",\n'
                         '  "wait_reason": "seeking_information|waiting_for_help|observing_others|assessing_situation or null",\n'
-                        '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)"\n'
+                        '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)",\n'
+                        '  "message": "Short casual message or null",\n'
+                        '  "message_type": "directed|shout|quiet or null",\n'
+                        '  "target_agent": "agent_id, nearest_injured, or null"\n'
                         "}}\n\n"
                         f"Available exits: {[e['name'] for e in exits]}\n"
                         f"Available zones: {zones}\n\n"
@@ -707,7 +728,20 @@ class HybridSimulationRunner:
                         "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
                         "  * Set speed based on risk: 'normal_walk' (1.0 m/s) for low risk, 'brisk_walk' (1.5 m/s) for moderate, 'jog' (2.0 m/s) or 'run' (2.5 m/s) for high risk\n"
                         "- Use action_type='move' and target_type='zone' to move to a platform/area\n"
-                        "- Use action_type='help' and target_type='current_position' to stop and assist an injured person nearby"
+                        "- Use action_type='help' and target_type='current_position' to stop and assist an injured person nearby\n\n"
+                        "Communication (SPOKEN, not text - keep it brief and natural):\n"
+                        "- These are SPOKEN words, not written messages - be conversational\n"
+                        "- If someone speaks to you (marked 'to you'), respond naturally\n"
+                        "  * Use target_agent to reply (e.g., 'Person 15' → target_agent='agent_15')\n"
+                        "- Look at your conversation history - PROGRESS the dialogue, don't repeat:\n"
+                        "  * If you already asked 'You ok?' and they answered, move on or stay quiet\n"
+                        "  * If you're coordinating help, confirm and act - don't keep discussing it\n"
+                        "- Keep it SHORT: 'You ok?' not 'Are you okay and do you need assistance?'\n"
+                        "- DO NOT narrate actions: Bad: 'I'm heading to exit' / Good: 'Come on, let's go'\n"
+                        "- Message types:\n"
+                        "  * directed: to specific person (set target_agent='agent_5')\n"
+                        "  * shout: urgent warning to everyone nearby\n"
+                        "  * quiet: brief comment to very close people (<3m)"
                     ),
                     output_type=entity_lib.OutputType.FREE,
                 )
@@ -736,6 +770,9 @@ class HybridSimulationRunner:
             position = self._get_agent_position(agent_id)
             with self.perf_timer.measure("translate_action", is_parallel=True):
                 translated = self.action_translator.translate(agent_id, action, position)
+
+            # Phase 5: Extract and deliver any message
+            self._extract_and_deliver_message(agent_id, action, position)
 
             # Phase 4.2: Detect route changes
             new_exit = self._extract_exit_name(translated)
@@ -860,6 +897,12 @@ class HybridSimulationRunner:
 
                 recent_events = self._get_recent_events()
 
+                # Phase 5: Get messages received by this agent
+                received_messages = self.agent_messages.get(agent_id, [])
+
+                # Get conversation history for this agent
+                conversation_history = self.agent_conversations.get(agent_id, {})
+
                 # Generate observation (Phase 4.1: Include agent status)
                 obs = self.observation_generator.generate_observation(
                     agent_id=agent_id,
@@ -869,9 +912,16 @@ class HybridSimulationRunner:
                     sim_time=self.current_sim_time,
                     blocked_exits=self.blocked_exits,
                     agent_status=self.agent_status,
+                    received_messages=received_messages,
+                    conversation_history=conversation_history,
                 )
 
                 observations[agent_id] = obs
+
+                # Clear messages after they've been included in observation
+                # This ensures new messages cause observation changes
+                if agent_id in self.agent_messages:
+                    self.agent_messages[agent_id] = []
 
             except Exception as e:
                 logger.error(f"Error generating observation for {agent_id}: {e}")
@@ -932,6 +982,186 @@ class HybridSimulationRunner:
                 return exit_name
 
         return None
+
+    def _extract_and_deliver_message(
+        self, sender_id: str, action: str, sender_position: tuple[float, float]
+    ) -> dict[str, Any] | None:
+        """
+        Extract message from action JSON and deliver to nearby agents with targeting and memory.
+
+        Args:
+            sender_id: ID of the agent sending the message
+            action: JSON action string from agent
+            sender_position: Current position of sender
+
+        Returns:
+            Message info dict if message was sent, None otherwise
+        """
+        try:
+            # Parse action JSON to extract message
+            json_start = action.find("{")
+            if json_start > 0:
+                action = action[json_start:]
+
+            data = json.loads(action)
+            message_text = data.get("message")
+            message_type = data.get("message_type")  # directed, shout, quiet
+            target_agent = data.get("target_agent")  # agent_id, nearest_injured, or null
+
+            if not message_text or message_text == "null":
+                return None
+
+            # Phase 5.1: Check message memory - prevent repetition
+            if sender_id in self.agent_sent_messages:
+                # Clean old messages outside memory window
+                recent_cutoff = self.current_sim_time - self.message_memory_window
+                self.agent_sent_messages[sender_id] = [
+                    msg
+                    for msg in self.agent_sent_messages[sender_id]
+                    if msg["time"] >= recent_cutoff
+                ]
+
+                # Check if similar message was recently sent
+                for recent_msg in self.agent_sent_messages[sender_id]:
+                    if recent_msg["text"].lower() == message_text.lower():
+                        logger.debug(
+                            f"{sender_id} suppressed repeat message: '{message_text}' "
+                            f"(last sent {self.current_sim_time - recent_msg['time']:.0f}s ago)"
+                        )
+                        return None
+
+            # Determine message radius based on type
+            if message_type == "quiet":
+                radius = 3.0  # Only very close people
+            elif message_type == "shout":
+                radius = 15.0  # Wider range for warnings
+            else:
+                radius = self.message_radius  # Default 10m
+
+            # Find nearby agents
+            nearby_agents = self._get_nearby_agents(sender_id, radius)
+
+            # Filter recipients based on target_agent
+            recipient_ids = []
+            if target_agent and target_agent != "null":
+                if target_agent == "nearest_injured":
+                    # Find nearest injured agent
+                    injured = [
+                        a
+                        for a in nearby_agents
+                        if self.agent_status.get(a["id"], "").startswith("INJURED")
+                    ]
+                    if injured:
+                        recipient_ids = [injured[0]["id"]]
+                elif target_agent.startswith("agent_"):
+                    # Specific agent targeted
+                    if any(a["id"] == target_agent for a in nearby_agents):
+                        recipient_ids = [target_agent]
+            else:
+                # Broadcast to all nearby (but filter out exited)
+                recipient_ids = [
+                    agent["id"]
+                    for agent in nearby_agents
+                    if agent["id"] != sender_id and agent["id"] not in self.exited_agents
+                ]
+
+            if not recipient_ids:
+                logger.debug(f"📢 {sender_id} sent message but no valid recipients nearby")
+                return None
+
+            # Create message record
+            message_record = {
+                "time": self.current_sim_time,
+                "sender": sender_id,
+                "position": sender_position,
+                "text": message_text,
+                "message_type": message_type or "broadcast",
+                "target_agent": target_agent,
+                "recipients": recipient_ids,
+                "num_recipients": len(recipient_ids),
+            }
+
+            # Deliver message to each recipient
+            for recipient_id in recipient_ids:
+                # Skip if recipient has heard this exact message recently
+                if recipient_id not in self.agent_heard_messages:
+                    self.agent_heard_messages[recipient_id] = set()
+
+                # Clean old heard messages
+                # (for simplicity, we keep a set and periodically clear it)
+                if len(self.agent_heard_messages[recipient_id]) > 50:
+                    self.agent_heard_messages[recipient_id].clear()
+
+                # Check if already heard
+                msg_key = f"{message_text.lower()[:30]}"  # First 30 chars normalized
+                if msg_key in self.agent_heard_messages[recipient_id]:
+                    continue  # Skip delivering duplicate
+
+                self.agent_heard_messages[recipient_id].add(msg_key)
+
+                # Deliver to recipient
+                if recipient_id not in self.agent_messages:
+                    self.agent_messages[recipient_id] = []
+
+                self.agent_messages[recipient_id].append(
+                    {
+                        "time": self.current_sim_time,
+                        "from": sender_id,
+                        "text": message_text,
+                        "message_type": message_type or "broadcast",
+                    }
+                )
+
+                # Track conversation history between sender and recipient
+                if sender_id not in self.agent_conversations:
+                    self.agent_conversations[sender_id] = {}
+                if recipient_id not in self.agent_conversations[sender_id]:
+                    self.agent_conversations[sender_id][recipient_id] = []
+
+                self.agent_conversations[sender_id][recipient_id].append(
+                    {
+                        "time": self.current_sim_time,
+                        "from": sender_id,
+                        "to": recipient_id,
+                        "text": message_text,
+                    }
+                )
+
+                # Also track on recipient's side
+                if recipient_id not in self.agent_conversations:
+                    self.agent_conversations[recipient_id] = {}
+                if sender_id not in self.agent_conversations[recipient_id]:
+                    self.agent_conversations[recipient_id][sender_id] = []
+
+                self.agent_conversations[recipient_id][sender_id].append(
+                    {
+                        "time": self.current_sim_time,
+                        "from": sender_id,
+                        "to": recipient_id,
+                        "text": message_text,
+                    }
+                )
+
+            # Store in message history
+            self.message_history.append(message_record)
+
+            # Track this message in sender's sent history
+            if sender_id not in self.agent_sent_messages:
+                self.agent_sent_messages[sender_id] = []
+            self.agent_sent_messages[sender_id].append(
+                {"time": self.current_sim_time, "text": message_text}
+            )
+
+            # Log message with type indicator
+            type_emoji = {"directed": "💬", "shout": "📢", "quiet": "🤫"}.get(message_type, "📣")
+            logger.info(f"{type_emoji} {sender_id} → {len(recipient_ids)} people: '{message_text}'")
+            return message_record
+
+        except json.JSONDecodeError:
+            return None
+        except Exception as e:
+            logger.warning(f"Error extracting message from {sender_id}: {e}")
+            return None
 
     def _convert_speed_to_ms(self, speed_str: str | None) -> float | None:
         """Convert speed string to m/s value sampled from normal distribution.
@@ -1257,6 +1487,7 @@ class HybridSimulationRunner:
                 helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
                 for helper, info in self.active_helping_pairs.items()
             },  # Phase 4.1: For visualization
+            "messages": self.message_history,  # Phase 5: Agent messages
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -1305,6 +1536,7 @@ class HybridSimulationRunner:
             "events": self.event_history,
             "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
             "route_changes": route_changes,  # Phase 4.2: Route change analytics
+            "messages": self.message_history,  # Phase 5: Agent messages
             "active_helping_pairs": {
                 helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
                 for helper, info in self.active_helping_pairs.items()
@@ -1424,6 +1656,68 @@ class HybridSimulationRunner:
                         f"waited ({reason})\n"
                     )
             logger.info(f"Wait behavior analytics saved to {wait_analytics_path}")
+
+        # Phase 5: Save messaging analytics
+        if self.message_history:
+            message_analytics_path = output_path.parent / "message_analytics.txt"
+            with open(message_analytics_path, "w") as f:
+                f.write("=== MESSAGING ANALYTICS ===\n\n")
+                f.write(f"Total messages sent: {len(self.message_history)}\n")
+                f.write(
+                    f"Agents who sent messages: {len({m['sender'] for m in self.message_history})}\n"
+                )
+                total_recipients = sum(m["num_recipients"] for m in self.message_history)
+                f.write(f"Total message deliveries: {total_recipients}\n")
+                if self.message_history:
+                    avg_recipients = total_recipients / len(self.message_history)
+                    f.write(f"Average recipients per message: {avg_recipients:.1f}\n\n")
+
+                # Breakdown by sender
+                sender_counts = {}
+                for msg in self.message_history:
+                    sender = msg["sender"]
+                    sender_counts[sender] = sender_counts.get(sender, 0) + 1
+
+                f.write("Messages by sender:\n")
+                for sender, count in sorted(
+                    sender_counts.items(), key=lambda x: x[1], reverse=True
+                ):
+                    f.write(f"  {sender}: {count} messages\n")
+
+                # Breakdown by message type
+                type_counts = {}
+                for msg in self.message_history:
+                    msg_type = msg.get("message_type", "broadcast")
+                    type_counts[msg_type] = type_counts.get(msg_type, 0) + 1
+
+                f.write("\nMessages by type:\n")
+                for msg_type, count in sorted(
+                    type_counts.items(), key=lambda x: x[1], reverse=True
+                ):
+                    percentage = (count / len(self.message_history)) * 100
+                    f.write(f"  {msg_type}: {count} messages ({percentage:.1f}%)\n")
+
+                # Count targeted vs broadcast
+                targeted = sum(1 for m in self.message_history if m.get("target_agent"))
+                broadcast = len(self.message_history) - targeted
+                f.write(
+                    f"\nTargeted messages: {targeted} ({targeted/len(self.message_history)*100:.1f}%)\n"
+                )
+                f.write(
+                    f"Broadcast messages: {broadcast} ({broadcast/len(self.message_history)*100:.1f}%)\n"
+                )
+
+                f.write("\nAll Messages:\n")
+                for msg in self.message_history:
+                    msg_type = msg.get("message_type", "broadcast")
+                    target = msg.get("target_agent")
+                    type_indicator = f"[{msg_type}]" if msg_type != "broadcast" else ""
+                    target_indicator = f" → {target}" if target and target != "null" else ""
+                    f.write(
+                        f"  - t={msg['time']:.1f}s: {msg['sender']}{target_indicator} {type_indicator} to {msg['num_recipients']} "
+                        f"people: \"{msg['text']}\"\n"
+                    )
+            logger.info(f"Message analytics saved to {message_analytics_path}")
 
     def _generate_financial_report(self) -> str:
         """Generate a financial report from LLM usage statistics."""
