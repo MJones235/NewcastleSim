@@ -345,9 +345,10 @@ class SpatialConcordiaViewer:
         if not self.agent_positions:
             return  # No positions yet
 
-        # Determine which agents are helping/being helped
+        # Determine which agents are helping/being helped and waiting
         helping_agents = set()
         helped_agents = set()
+        waiting_agents = {}  # Maps agent_id -> wait_reason
 
         # Use active_helping_pairs from the data if available
         if "active_helping_pairs" in self.current_data:
@@ -359,8 +360,8 @@ class SpatialConcordiaViewer:
                     if helped_id:
                         helped_agents.add(helped_id)
 
-        # Fallback: check decisions if active_helping_pairs not available
-        elif isinstance(self.agent_decisions, dict):
+        # Check decisions for wait actions and helping (fallback)
+        if isinstance(self.agent_decisions, dict):
             for agent_id, agent_data in self.agent_decisions.items():
                 if isinstance(agent_data, dict) and "decisions" in agent_data:
                     decisions_list = agent_data["decisions"]
@@ -372,20 +373,41 @@ class SpatialConcordiaViewer:
                             translated = latest_decision.get("translated", {})
                             if isinstance(translated, dict):
                                 action_type = translated.get("action_type", "")
-                                if action_type == "help":
+
+                                # Track wait actions with reasons
+                                if action_type == "wait":
+                                    wait_reason = translated.get("wait_reason", "unknown")
+                                    waiting_agents[agent_id] = wait_reason
+
+                                # Fallback: check for help actions if no active_helping_pairs
+                                if action_type == "help" and not helping_agents:
                                     helping_agents.add(agent_id)
 
         for agent_id, pos in self.agent_positions.items():
             if pos and len(pos) >= 2:
                 x, y = pos[0], pos[1]  # Handle both list and tuple from JSON
 
-                # Color code based on helping status
+                # Color code priority: helping > helped > waiting > normal
                 if agent_id in helping_agents:
                     color = "blue"  # Helpers are blue
                     size = 10
                 elif agent_id in helped_agents:
                     color = "orange"  # Being helped are orange
                     size = 10
+                elif agent_id in waiting_agents:
+                    # Color by wait reason (Phase 4.3)
+                    wait_reason = waiting_agents[agent_id]
+                    if wait_reason == "seeking_information":
+                        color = "purple"
+                    elif wait_reason == "waiting_for_help":
+                        color = "gold"
+                    elif wait_reason == "observing_others":
+                        color = "cyan"
+                    elif wait_reason == "assessing_situation":
+                        color = "magenta"
+                    else:
+                        color = "gray"  # Unknown wait reason
+                    size = 9
                 else:
                     color = "red"  # Normal agents are red
                     size = 8
@@ -408,7 +430,7 @@ class SpatialConcordiaViewer:
                     color="w",
                     markerfacecolor="red",
                     markersize=8,
-                    label="Normal Agent",
+                    label="Moving",
                 ),
                 Line2D(
                     [0],
@@ -417,7 +439,7 @@ class SpatialConcordiaViewer:
                     color="w",
                     markerfacecolor="blue",
                     markersize=10,
-                    label="Helping Agent",
+                    label="Helping",
                 ),
                 Line2D(
                     [0],
@@ -428,8 +450,44 @@ class SpatialConcordiaViewer:
                     markersize=10,
                     label="Being Helped",
                 ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="purple",
+                    markersize=9,
+                    label="Wait: Seeking Info",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="gold",
+                    markersize=9,
+                    label="Wait: For Help",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="cyan",
+                    markersize=9,
+                    label="Wait: Observing",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="magenta",
+                    markersize=9,
+                    label="Wait: Assessing",
+                ),
             ]
-            self.ax_map.legend(handles=legend_elements, loc="upper right")
+            self.ax_map.legend(handles=legend_elements, loc="upper right", fontsize=8)
             self.legend_created = True
 
         # Keep fixed axis limits (do not autoscale)

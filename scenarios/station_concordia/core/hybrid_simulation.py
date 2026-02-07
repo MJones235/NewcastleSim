@@ -200,6 +200,9 @@ class HybridSimulationRunner:
         self.agent_destinations: dict[str, str] = {}  # agent_id -> current exit name
         self.blocked_exits: set[str] = set()  # Set of blocked exit names
 
+        # Phase 4.3: Waiting and information seeking tracking
+        self.wait_events: list[dict[str, Any]] = []  # Track all wait decisions with reasons
+
         # Track exited agents (those who have evacuated)
         self.exited_agents: set[str] = set()  # agent_ids who have reached exits
 
@@ -453,6 +456,16 @@ class HybridSimulationRunner:
                 help_config = self.test_scenarios.get("help_behavior", {})
                 approach_distance = help_config.get("approach_distance", 1.5)
 
+                # Injured agent should wait (speed = 0) for helper to arrive
+                self.jps_sim.set_agent_speed(helped_id, 0.0)
+
+                # Log progress occasionally
+                if int(self.current_sim_time) % 5 == 0:  # Every 5 seconds
+                    logger.debug(
+                        f"🚶 {helper_id} approaching {helped_id}: distance={distance:.1f}m "
+                        f"(threshold={approach_distance}m)"
+                    )
+
                 # If within approach distance, transition to traveling phase
                 if distance < approach_distance:
                     pair_info["phase"] = "traveling"
@@ -474,6 +487,58 @@ class HybridSimulationRunner:
                     logger.info(
                         f"🚶 {helper_id} reached {helped_id} - "
                         f"now traveling together at {assisted_speed} m/s toward {helper_exit}"
+                    )
+
+            # Phase 2: Traveling - continuously update helped agent to follow helper
+            if phase == "traveling":
+                # Check if helper has exited - if so, terminate helping relationship
+                if helper_id in self.exited_agents:
+                    logger.info(
+                        f"🚪 {helper_id} has exited, releasing {helped_id} to evacuate independently"
+                    )
+                    expired_pairs.append(helper_id)
+
+                    # Restore helped agent's speed and status
+                    if helped_id in self.agent_original_speeds:
+                        original_speed = self.agent_original_speeds[helped_id]
+                        self.jps_sim.set_agent_speed(helped_id, original_speed)
+
+                    self.agent_status[helped_id] = "INJURED"
+
+                    # Remove from being helped tracking
+                    if helped_id in self.agents_being_helped:
+                        del self.agents_being_helped[helped_id]
+
+                    # Skip to next pair (don't try to update positions)
+                    continue
+
+                # Ensure helper maintains their evacuation journey and assisted speed
+                help_config = self.test_scenarios.get("help_behavior", {})
+                assisted_speed = help_config.get("assisted_speed", 0.8)
+                self.jps_sim.set_agent_speed(helper_id, assisted_speed)
+                self.jps_sim.set_agent_speed(helped_id, assisted_speed)
+
+                # Keep helped agent following helper by setting their target to helper's current position
+                helper_pos = self._get_agent_position(helper_id)
+
+                # Sanity check: if position is (0, 0), helper may have been removed
+                if helper_pos == (0.0, 0.0) or helper_pos == (0, 0):
+                    logger.warning(
+                        f"⚠️ {helper_id} has invalid position (0,0), releasing {helped_id}"
+                    )
+                    expired_pairs.append(helper_id)
+                    continue
+
+                self.jps_sim.set_agent_target(helped_id, helper_pos)
+
+                # Log occasionally to verify they're staying together
+                if int(self.current_sim_time) % 5 == 0:  # Every 5 seconds
+                    helped_pos = self._get_agent_position(helped_id)
+                    distance = (
+                        (helper_pos[0] - helped_pos[0]) ** 2 + (helper_pos[1] - helped_pos[1]) ** 2
+                    ) ** 0.5
+                    logger.debug(
+                        f"👥 {helper_id} and {helped_id} traveling together (distance: {distance:.1f}m)"
                     )
 
             # Check if help duration has expired (only for traveling phase)
@@ -536,16 +601,63 @@ class HybridSimulationRunner:
     async def _process_agents_parallel(self, observations: dict, exits: list, zones: list):
         """Process all agents in parallel using async/await."""
         tasks = []
+        agents_to_process = []  # Track which agents will make decisions this cycle
+
         for agent_id, agent in self.concordia_agents.items():
             # Skip agents who have already exited
             if agent_id in self.exited_agents:
                 continue
+
+            # Skip agents who are currently being helped (they're passively following the helper)
+            if agent_id in self.agents_being_helped:
+                logger.debug(f"{agent_id} is being helped, skipping decision-making")
+                continue
+
+            # Note: Helper agents are NOT skipped - they make free decisions
+            # Their observations will indicate they're helping someone
+            # We enforce speed synchronization separately in _update_helping_relationships()
+
+            agents_to_process.append(agent_id)
             task = self._process_single_agent(agent_id, agent, observations, exits, zones)
             tasks.append(task)
 
         # Process all agents concurrently
         with self.perf_timer.measure("parallel_agent_processing"):
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Phase 4.1: Check if any helpers abandoned their helping commitment
+        # Helpers can make free decisions, but if they change away from HELPING status, they abandoned
+        abandoned_helps = []
+        for helper_id, pair_info in list(self.active_helping_pairs.items()):
+            # Check if helper's status is still HELPING
+            if self.agent_status.get(helper_id) != "HELPING":
+                helped_id = pair_info["helped"]
+                logger.warning(
+                    f"⚠️ {helper_id} abandoned helping {helped_id} "
+                    f"(status changed from HELPING to {self.agent_status.get(helper_id)}) - "
+                    f"releasing {helped_id} to independent movement"
+                )
+                abandoned_helps.append(helper_id)
+
+        # Remove abandoned helping relationships
+        for helper_id in abandoned_helps:
+            pair_info = self.active_helping_pairs[helper_id]
+            helped_id = pair_info["helped"]
+
+            # Remove from tracking
+            if helped_id in self.agents_being_helped:
+                del self.agents_being_helped[helped_id]
+
+            # Restore helped agent's original status (INJURED)
+            self.agent_status[helped_id] = "INJURED"
+
+            # Restore helped agent's speed
+            if helped_id in self.agent_original_speeds:
+                original_speed = self.agent_original_speeds[helped_id]
+                self.jps_sim.set_agent_speed(helped_id, original_speed)
+
+            # Remove the helping pair
+            del self.active_helping_pairs[helper_id]
 
     async def _process_single_agent(
         self, agent_id: str, agent, observations: dict, exits: list, zones: list
@@ -579,13 +691,21 @@ class HybridSimulationRunner:
                         '  "action_type": "wait|move",\n'
                         '  "target_type": "current_position|exit|zone",\n'
                         '  "exit_name": "exit name or null",\n'
-                        '  "zone_name": "zone name or null"\n'
+                        '  "zone_name": "zone name or null",\n'
+                        '  "wait_reason": "seeking_information|waiting_for_help|observing_others|assessing_situation or null",\n'
+                        '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)"\n'
                         "}}\n\n"
                         f"Available exits: {[e['name'] for e in exits]}\n"
                         f"Available zones: {zones}\n\n"
                         "Action rules:\n"
                         "- Use action_type='wait' and target_type='current_position' if staying put\n"
+                        "  * Set wait_reason='seeking_information' if looking for directions/information\n"
+                        "  * Set wait_reason='waiting_for_help' if injured and need assistance\n"
+                        "  * Set wait_reason='observing_others' if watching to see what others do\n"
+                        "  * Set wait_reason='assessing_situation' if evaluating risk/options\n"
+                        "  * Set speed='slow_walk' (0.5 m/s) for seeking_information\n"
                         "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
+                        "  * Set speed based on risk: 'normal_walk' (1.0 m/s) for low risk, 'brisk_walk' (1.5 m/s) for moderate, 'jog' (2.0 m/s) or 'run' (2.5 m/s) for high risk\n"
                         "- Use action_type='move' and target_type='zone' to move to a platform/area\n"
                         "- Use action_type='help' and target_type='current_position' to stop and assist an injured person nearby"
                     ),
@@ -813,6 +933,38 @@ class HybridSimulationRunner:
 
         return None
 
+    def _convert_speed_to_ms(self, speed_str: str | None) -> float | None:
+        """Convert speed string to m/s value sampled from normal distribution.
+
+        Args:
+            speed_str: Speed descriptor (slow_walk, normal_walk, brisk_walk, jog, run)
+
+        Returns:
+            Speed in m/s sampled from appropriate distribution, or None if not specified
+        """
+        if not speed_str:
+            return None
+
+        import numpy as np
+
+        # Define mean and std for each speed category
+        # Based on pedestrian dynamics research, with variation for different urgency levels
+        speed_distributions = {
+            "slow_walk": {"mean": 0.5, "std": 0.10, "min": 0.3, "max": 0.8},
+            "normal_walk": {"mean": 1.0, "std": 0.20, "min": 0.6, "max": 1.4},
+            "brisk_walk": {"mean": 1.5, "std": 0.25, "min": 1.0, "max": 2.0},
+            "jog": {"mean": 2.0, "std": 0.30, "min": 1.5, "max": 2.5},
+            "run": {"mean": 2.5, "std": 0.35, "min": 2.0, "max": 3.0},
+        }
+
+        dist = speed_distributions.get(speed_str.lower())
+        if not dist:
+            return None
+
+        # Sample from normal distribution and clip to min/max
+        speed = np.random.normal(dist["mean"], dist["std"])
+        return max(dist["min"], min(dist["max"], speed))
+
     def _apply_action_to_jupedsim(self, agent_id: str, translated_action: dict[str, Any]):
         """Apply a translated action to the JuPedSim simulation."""
         action_type = translated_action["action_type"]
@@ -826,6 +978,18 @@ class HybridSimulationRunner:
         # TODO: With real JuPedSim, use proper waypoint/goal setting API
         # For now, using simple target setting
         try:
+            # Phase 4.3: Apply dynamic speed if specified
+            speed_str = translated_action.get("speed")
+            if speed_str:
+                speed_ms = self._convert_speed_to_ms(speed_str)
+                if speed_ms:
+                    self.jps_sim.set_agent_speed(agent_id, speed_ms)
+                    logger.debug(f"Set {agent_id} speed to {speed_ms:.2f} m/s ({speed_str})")
+            else:
+                # No speed specified - for wait actions without speed, keep current speed
+                # This prevents agents from getting stuck at speed=0
+                pass
+
             if action_type == "help":
                 # Phase 4.1: Agent is helping an injured person
                 # Helper and injured agent will travel together at intermediate speed
@@ -843,8 +1007,10 @@ class HybridSimulationRunner:
                 for agent_info in nearby_agents:
                     other_id = agent_info.get("id")
                     if other_id and self.agent_status.get(other_id) == "INJURED":
-                        injured_nearby = other_id
-                        break
+                        # Check if this injured agent is already being helped
+                        if other_id not in self.agents_being_helped:
+                            injured_nearby = other_id
+                            break
 
                 if injured_nearby:
                     # Record help event
@@ -905,7 +1071,21 @@ class HybridSimulationRunner:
                         f"(distance: {((position[0]-injured_position[0])**2 + (position[1]-injured_position[1])**2)**0.5:.1f}m)"
                     )
                 else:
-                    logger.warning(f"{agent_id} wanted to help but no injured agents nearby")
+                    # Check if there were injured agents but all already being helped
+                    injured_already_helped = [
+                        agent_info.get("id")
+                        for agent_info in nearby_agents
+                        if agent_info.get("id")
+                        and self.agent_status.get(agent_info.get("id")) == "INJURED"
+                        and agent_info.get("id") in self.agents_being_helped
+                    ]
+                    if injured_already_helped:
+                        logger.info(
+                            f"ℹ️ {agent_id} wanted to help but all nearby injured agents "
+                            f"already being helped: {injured_already_helped}"
+                        )
+                    else:
+                        logger.warning(f"{agent_id} wanted to help but no injured agents nearby")
 
             elif action_type == "move" and target:
                 # Extract the NEW exit name from this action (if moving to an exit)
@@ -934,8 +1114,43 @@ class HybridSimulationRunner:
                     # Not moving to an exit, just a waypoint
                     self.jps_sim.set_agent_target(agent_id, target)
             elif action_type == "wait":
+                # Phase 4.3: Track wait events with reasons
                 current_position = self._get_agent_position(agent_id)
-                self.jps_sim.set_agent_target(agent_id, current_position)
+                wait_reason = translated_action.get("wait_reason", "unspecified")
+
+                # Different behavior based on wait reason
+                if wait_reason == "seeking_information":
+                    # Seeking information: move slowly in a small random direction (looking around)
+                    import math
+                    import random
+
+                    # Generate a random nearby point within 3-5 meters
+                    distance = random.uniform(3.0, 5.0)
+                    angle = random.uniform(0, 2 * math.pi)
+                    target_x = current_position[0] + distance * math.cos(angle)
+                    target_y = current_position[1] + distance * math.sin(angle)
+
+                    self.jps_sim.set_agent_target(agent_id, (target_x, target_y))
+                    logger.debug(
+                        f"{agent_id} seeking information - moving slowly to nearby point "
+                        f"({distance:.1f}m away)"
+                    )
+                else:
+                    # All other wait types: stand still at current position
+                    self.jps_sim.set_agent_target(agent_id, current_position)
+
+                # Record wait event
+                agent_config = next((c for c in self.agent_configs if c["id"] == agent_id), {})
+                self.wait_events.append(
+                    {
+                        "time": self.current_sim_time,
+                        "agent": agent_id,
+                        "personality": agent_config.get("personality_type", "UNKNOWN"),
+                        "wait_reason": wait_reason if wait_reason else "unspecified",
+                        "location": current_position,
+                    }
+                )
+
         except Exception as e:
             logger.error(f"Failed to apply action for {agent_id}: {e}")
 
@@ -992,6 +1207,9 @@ class HybridSimulationRunner:
             logger.warning(f"Failed to add physical obstacle at {exit_name}: {e}")
 
         # NO announcement - agents discover naturally through observation
+        # NOTE: We do NOT immediately reroute agents heading to this exit.
+        # Agents should be allowed to travel to the blocked exit and discover it naturally,
+        # then they will observe the blockage and choose alternative routes in their next decision.
         logger.info(f"Exit {exit_name} blocked - agents will discover naturally")
 
     def broadcast_event(self, event_message: str):
@@ -1163,6 +1381,49 @@ class HybridSimulationRunner:
                         f"helped {event['helped']}\n"
                     )
             logger.info(f"Help behavior analytics saved to {help_analytics_path}")
+
+        # Phase 4.3: Save waiting behavior analytics
+        if self.wait_events:
+            wait_analytics_path = output_path.parent / "wait_behavior.txt"
+            with open(wait_analytics_path, "w") as f:
+                f.write("=== WAITING BEHAVIOR ANALYTICS ===\n\n")
+                f.write(f"Total wait events: {len(self.wait_events)}\n")
+                f.write(f"Agents who waited: {len({w['agent'] for w in self.wait_events})}\n\n")
+
+                # Breakdown by wait reason
+                reason_counts = {}
+                for event in self.wait_events:
+                    reason = event.get("wait_reason", "unspecified")
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+                f.write("Wait events by reason:\n")
+                for reason, count in sorted(
+                    reason_counts.items(), key=lambda x: x[1], reverse=True
+                ):
+                    percentage = (count / len(self.wait_events)) * 100 if self.wait_events else 0
+                    f.write(f"  {reason}: {count} waits ({percentage:.1f}%)\n")
+
+                # Breakdown by personality type
+                personality_counts = {}
+                for event in self.wait_events:
+                    personality = event.get("personality", "UNKNOWN")
+                    personality_counts[personality] = personality_counts.get(personality, 0) + 1
+
+                f.write("\nWait events by personality:\n")
+                for personality, count in sorted(
+                    personality_counts.items(), key=lambda x: x[1], reverse=True
+                ):
+                    percentage = (count / len(self.wait_events)) * 100 if self.wait_events else 0
+                    f.write(f"  {personality}: {count} waits ({percentage:.1f}%)\n")
+
+                f.write("\nRecent Wait Events (last 20):\n")
+                for event in self.wait_events[-20:]:
+                    reason = event.get("wait_reason", "unspecified")
+                    f.write(
+                        f"  - t={event['time']:.1f}s: {event['agent']} ({event['personality']}) "
+                        f"waited ({reason})\n"
+                    )
+            logger.info(f"Wait behavior analytics saved to {wait_analytics_path}")
 
     def _generate_financial_report(self) -> str:
         """Generate a financial report from LLM usage statistics."""

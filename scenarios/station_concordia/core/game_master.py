@@ -131,6 +131,8 @@ class ActionTranslator:
             target_type = data.get("target_type")
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
+            wait_reason = data.get("wait_reason")  # Phase 4.3: Information seeking
+            speed = data.get("speed")  # Phase 4.3: Dynamic speed selection
 
             # BUG FIX: Check for help/follow BEFORE checking target_type == "current_position"
             # Otherwise "help" with target_type="current_position" gets converted to "wait"
@@ -143,11 +145,17 @@ class ActionTranslator:
                 }
 
             if action_type == "wait" or target_type == "current_position":
+                # Phase 4.3: Include wait reason if provided
+                wait_reason_str = f" ({wait_reason})" if wait_reason else ""
+                # Default speed for wait actions: slow_walk for seeking_information, otherwise null (keep current)
+                default_speed = "slow_walk" if wait_reason == "seeking_information" else None
                 return {
                     "action_type": "wait",
                     "target": current_position,
                     "confidence": 0.9,
-                    "reasoning": "Agent chose to wait at current position",
+                    "reasoning": f"Agent chose to wait at current position{wait_reason_str}",
+                    "wait_reason": wait_reason,  # Pass through for tracking
+                    "speed": speed or default_speed,  # Use LLM speed if provided, else default
                 }
 
             if action_type == "move" and target_type == "exit":
@@ -158,6 +166,7 @@ class ActionTranslator:
                         "target": nearest_exit["coords"],
                         "confidence": 0.9,
                         "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
+                        "speed": speed,  # Phase 4.3: Dynamic speed
                     }
 
                 if exit_name in self.exits:
@@ -166,6 +175,7 @@ class ActionTranslator:
                         "target": self.exits[exit_name],
                         "confidence": 0.95,
                         "reasoning": f"Moving to exit {exit_name}",
+                        "speed": speed,  # Phase 4.3: Dynamic speed
                     }
 
             if action_type == "move" and target_type == "zone" and zone_name:
@@ -177,6 +187,7 @@ class ActionTranslator:
                         "target": zone_coords,
                         "confidence": 0.9,
                         "reasoning": f"Moving to zone {zone_name}",
+                        "speed": speed,  # Phase 4.3: Dynamic speed
                     }
 
         except json.JSONDecodeError:
@@ -269,6 +280,8 @@ class ActionTranslator:
             target_type = data.get("target_type")
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
+            wait_reason = data.get("wait_reason")  # Phase 4.3
+            speed = data.get("speed")  # Phase 4.3: Dynamic speed
 
             # BUG FIX: Check for help/follow BEFORE checking target_type == "current_position"
             # Otherwise "help" with target_type="current_position" gets converted to "wait"
@@ -281,11 +294,14 @@ class ActionTranslator:
                 }
 
             if action_type == "wait" or target_type == "current_position":
+                wait_reason_str = f" ({wait_reason})" if wait_reason else ""
                 return {
                     "action_type": "wait",
                     "target": current_position,
                     "confidence": 0.55,
-                    "reasoning": "LLM classified intent as wait",
+                    "reasoning": f"LLM classified intent as wait{wait_reason_str}",
+                    "wait_reason": wait_reason,
+                    "speed": speed,
                 }
 
             if action_type == "move" and target_type == "exit":
@@ -296,6 +312,7 @@ class ActionTranslator:
                         "target": nearest_exit["coords"],
                         "confidence": 0.55,
                         "reasoning": f"LLM selected nearest exit ({nearest_exit['name']})",
+                        "speed": speed,
                     }
 
                 if exit_name in self.exits:
@@ -304,6 +321,7 @@ class ActionTranslator:
                         "target": self.exits[exit_name],
                         "confidence": 0.6,
                         "reasoning": f"LLM selected exit {exit_name}",
+                        "speed": speed,
                     }
 
             if action_type == "move" and target_type == "zone" and zone_name:
@@ -315,6 +333,7 @@ class ActionTranslator:
                         "target": zone_coords,
                         "confidence": 0.55,
                         "reasoning": f"LLM selected zone {zone_name}",
+                        "speed": speed,
                     }
 
             return None
@@ -423,6 +442,23 @@ class ObservationGenerator:
                 observations.append("People heading toward exits:")
                 for exit_name, count in sorted(exit_crowds.items()):
                     observations.append(f"  - {exit_name}: {self._categorize_count(count)}")
+
+            # Phase 4.3: Overall movement pattern information for information seeking
+            moving_count = sum(1 for a in nearby_agents if a.get("is_moving", True))
+            if len(nearby_agents) > 0:
+                moving_pct = (moving_count / len(nearby_agents)) * 100
+                if moving_pct > 70:
+                    observations.append(
+                        "Most people around you are moving purposefully toward exits."
+                    )
+                elif moving_pct > 40:
+                    observations.append(
+                        "The crowd is mixed - some evacuating, others waiting or uncertain."
+                    )
+                else:
+                    observations.append(
+                        "Many people around you are waiting or looking for information."
+                    )
 
         # Recent events
         if events:
