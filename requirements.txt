@@ -33,6 +33,9 @@ requests>=2.31.0
 # Concordia (agent-based modeling framework)
 gdm-concordia
 
+# Sentence embeddings for Concordia
+sentence-transformers>=2.2.0
+
 # Rich terminal output (for concordia progress bars)
 rich>=13.0.0
 

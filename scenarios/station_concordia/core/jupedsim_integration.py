@@ -149,46 +149,62 @@ class ConcordiaJuPedSimulation:
         return simulation
 
     def _setup_evacuation_exits(self) -> tuple[dict[str, int], dict[str, int]]:
-        """Create evacuation exit stages at entrance locations."""
+        """
+        Create evacuation exit stages at entrance locations.
+
+        Raises:
+            RuntimeError: If no valid exits can be created from entrance areas
+        """
         evacuation_exits = {}
         evacuation_journeys = {}
+
+        if not self.entrance_areas:
+            raise RuntimeError(
+                "No entrance areas found in geometry. "
+                "Check that walking_areas.add.xml contains entrance area definitions."
+            )
 
         walkable_geometry = GeometryProcessor.combine_geometry(
             list(self.walkable_areas_with_obstacles.values())
         )
 
+        failed_exits = []
         for entrance_name, entrance_polygon in self.entrance_areas.items():
-            try:
-                exit_id = self._create_convex_exit_from_polygon(
-                    entrance_name, entrance_polygon, walkable_geometry
-                )
-                if exit_id is None:
-                    raise RuntimeError("Unable to place convex exit within walkable area")
+            exit_id = self._create_convex_exit_from_polygon(
+                entrance_name, entrance_polygon, walkable_geometry
+            )
 
-                evacuation_exits[entrance_name] = exit_id
-
-                # Create journey to this exit
-                journey_id = self.stage_manager.create_simple_exit_journey(
-                    journey_name=f"journey_to_{entrance_name}", exit_id=exit_id
-                )
-                evacuation_journeys[entrance_name] = journey_id
-
-                logger.info(
-                    f"  Created evacuation exit '{entrance_name}' "
-                    f"(exit={exit_id}, journey={journey_id})"
-                )
-            except Exception as e:
-                logger.warning(f"  Failed to create exit at '{entrance_name}': {e}")
+            if exit_id is None:
+                failed_exits.append(entrance_name)
+                logger.warning(f"Failed to create exit at '{entrance_name}'")
                 continue
 
+            evacuation_exits[entrance_name] = exit_id
+
+            # Create journey to this exit
+            journey_id = self.stage_manager.create_simple_exit_journey(
+                journey_name=f"journey_to_{entrance_name}", exit_id=exit_id
+            )
+            evacuation_journeys[entrance_name] = journey_id
+
+            logger.info(
+                f"Created evacuation exit '{entrance_name}' "
+                f"(exit={exit_id}, journey={journey_id})"
+            )
+
         if not evacuation_exits:
-            # If entrance-based exits fail, try creating exits within walkable areas
-            logger.warning("Failed to create entrance-based exits, using walkable area exits")
-            try:
-                return self._setup_fallback_exits()
-            except Exception as e:
-                logger.error(f"Fallback exit creation also failed: {e}", exc_info=True)
-                raise
+            raise RuntimeError(
+                f"Failed to create any evacuation exits. "
+                f"Attempted exits: {list(self.entrance_areas.keys())}. "
+                f"All exits failed. Check geometry configuration and ensure "
+                f"entrance areas overlap with walkable areas."
+            )
+
+        if failed_exits:
+            logger.warning(
+                f"Successfully created {len(evacuation_exits)} exits, "
+                f"but {len(failed_exits)} failed: {failed_exits}"
+            )
 
         return evacuation_exits, evacuation_journeys
 
@@ -198,114 +214,50 @@ class ConcordiaJuPedSimulation:
         polygon,
         walkable_geometry,
     ) -> int | None:
-        """Create a convex rectangular exit centered on polygon centroid.
-
-        Uses the entrance centroid (or a nearby point inside the walkable
-        geometry) and creates a small convex rectangle around it.
         """
-        centroid = polygon.centroid
+        Create a convex rectangular exit centered on polygon centroid.
 
+        Args:
+            exit_name: Name for the exit
+            polygon: Entrance polygon to create exit from
+            walkable_geometry: Combined walkable geometry for validation
+
+        Returns:
+            Exit ID if successful, None if exit couldn't be placed
+        """
+        # Find a valid centroid within walkable geometry
+        centroid = polygon.centroid
         if not walkable_geometry.contains(centroid):
             intersection = polygon.intersection(walkable_geometry)
             if not intersection.is_empty:
                 centroid = intersection.representative_point()
             else:
-                centroid = polygon.representative_point()
+                logger.error(
+                    f"Exit '{exit_name}': polygon doesn't intersect walkable geometry. "
+                    f"Polygon bounds: {polygon.bounds}"
+                )
+                return None
 
-        # Try progressively smaller exits without strict containment checks
-        for width, height in [(6.0, 6.0), (4.0, 4.0), (2.0, 2.0)]:
-            exit_coords = [
-                (centroid.x - width / 2, centroid.y - height / 2),
-                (centroid.x + width / 2, centroid.y - height / 2),
-                (centroid.x + width / 2, centroid.y + height / 2),
-                (centroid.x - width / 2, centroid.y + height / 2),
-            ]
-
-            try:
-                return self.stage_manager.create_exit_at_coordinates(exit_name, exit_coords)
-            except Exception:
-                continue
-
-        return None
-
-    def _setup_fallback_exits(self) -> tuple[dict[str, int], dict[str, int]]:
-        """Create fallback exits within the walkable areas."""
-        logger.info("Creating fallback exits...")
-        evacuation_exits = {}
-        evacuation_journeys = {}
-
-        # Use multiple points within the main walkable area as exits
-        main_area = list(self.walkable_areas.values())[0]
-        logger.info(f"Main walkable area bounds: {main_area.bounds}, area: {main_area.area:.1f} m²")
-
-        # Get interior points by buffering inward
-        interior_area = main_area.buffer(-5.0)  # 5m inward from edges
-
-        if interior_area.is_empty:
-            logger.warning("Walkable area too small to create interior buffer, using main area")
-            interior_area = main_area
-
-        # Try to create exit at the centroid
-        centroid = interior_area.centroid
-        exit_positions = [("exit_center", (centroid.x, centroid.y))]
-        logger.info(f"Testing centroid exit position: {(centroid.x, centroid.y)}")
-
-        # Add boundary points if we can find them
-        bounds = main_area.bounds
-        test_points = [
-            ("exit_north", ((bounds[0] + bounds[2]) / 2, bounds[3] - 10)),
-            ("exit_south", ((bounds[0] + bounds[2]) / 2, bounds[1] + 10)),
-            ("exit_east", (bounds[2] - 10, (bounds[1] + bounds[3]) / 2)),
-            ("exit_west", (bounds[0] + 10, (bounds[1] + bounds[3]) / 2)),
+        # Create exit with standard size
+        exit_size = 4.0  # 4x4 meter exit (standard)
+        exit_coords = [
+            (centroid.x - exit_size / 2, centroid.y - exit_size / 2),
+            (centroid.x + exit_size / 2, centroid.y - exit_size / 2),
+            (centroid.x + exit_size / 2, centroid.y + exit_size / 2),
+            (centroid.x - exit_size / 2, centroid.y + exit_size / 2),
         ]
 
-        for name, pos in test_points:
-            point = Point(pos)
-            if main_area.contains(point):
-                exit_positions.append((name, pos))
-
-        # Try to create exits
-        logger.info(f"Trying to create {len(exit_positions)} exit positions...")
-        for exit_name, position in exit_positions:
-            logger.debug(f"Testing exit '{exit_name}' at {position}")
-            try:
-                # Create small circular exit  (2m radius)
-                exit_polygon = Point(position).buffer(2.0)
-
-                # Ensure exit is fully within walkable area
-                if not main_area.contains(exit_polygon):
-                    logger.debug("  2m exit doesn't fit, trying 1m...")
-                    # Try smaller radius
-                    exit_polygon = Point(position).buffer(1.0)
-                    if not main_area.contains(exit_polygon):
-                        logger.debug(f"  Skipping {exit_name} - outside walkable area")
-                        continue
-
-                logger.debug(f"  Adding exit stage for '{exit_name}'...")
-                exit_id = self.simulation.add_exit_stage(polygon=exit_polygon)
-                evacuation_exits[exit_name] = exit_id
-                logger.debug(f"  Exit stage created with ID: {exit_id}")
-
-                # Create journey to this exit
-                journey = jps.JourneyDescription([exit_id])
-                journey_id = self.simulation.add_journey(journey)
-                evacuation_journeys[exit_name] = journey_id
-
-                logger.info(
-                    f"  Created fallback exit '{exit_name}' (exit={exit_id}, journey={journey_id})"
-                )
-
-            except Exception as e:
-                logger.warning(f"  Failed to create fallback exit '{exit_name}': {e}")
-                import traceback
-
-                traceback.print_exc()
-                continue
-
-        if not evacuation_exits:
-            raise RuntimeError("Failed to create any evacuation exits (including fallbacks)")
-
-        return evacuation_exits, evacuation_journeys
+        try:
+            exit_id = self.stage_manager.create_exit_at_coordinates(exit_name, exit_coords)
+            logger.debug(
+                f"Created {exit_size}m x {exit_size}m exit '{exit_name}' at {centroid.coords[0]}"
+            )
+            return exit_id
+        except Exception as e:
+            logger.error(
+                f"Failed to create exit '{exit_name}' at centroid {centroid.coords[0]}: {e}"
+            )
+            return None
 
     def add_agent(
         self, agent_id: str, position: tuple[float, float], walking_speed: float = 1.34

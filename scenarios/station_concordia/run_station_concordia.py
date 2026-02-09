@@ -10,16 +10,24 @@ Or:
 
 import argparse
 import sys
-from datetime import datetime
 from pathlib import Path
-
-import yaml
 
 # Setup path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from scenarios.common.logger import get_logger  # noqa: E402
-from scenarios.common.walking_speed import sample_walking_speed  # noqa: E402
+from scenarios.station_concordia.config.config_loader import ConfigLoader  # noqa: E402
+from scenarios.station_concordia.setup.agent_manager import AgentManager  # noqa: E402
+from scenarios.station_concordia.setup.jupedsim_setup import JuPedSimSetup  # noqa: E402
+from scenarios.station_concordia.setup.llm_setup import LLMSetup  # noqa: E402
+from scenarios.station_concordia.setup.output_manager import OutputManager  # noqa: E402
+from scenarios.station_concordia.setup.simulation_runner_factory import (  # noqa: E402
+    SimulationRunnerFactory,
+)
+from scenarios.station_concordia.setup.station_layout_builder import (  # noqa: E402
+    StationLayoutBuilder,
+)
+from scenarios.station_concordia.visualization.viewer_launcher import ViewerLauncher  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -70,79 +78,21 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
-    config_file = Path(config_path)
-    if not config_file.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with open(config_file) as f:
-        config = yaml.safe_load(f)
-
-    logger.info(f"Loaded configuration from {config_path}")
-    return config
-
-
-def setup_language_model(config: dict):
-    """Setup the language model and embedder."""
-    import os
-
-    from dotenv import load_dotenv
-
-    # Load .env file
-    load_dotenv()
-
-    azure_endpoint = os.getenv("AZURE_LLM_ENDPOINT")
-    azure_key = os.getenv("AZURE_LLM_API_KEY")
-    azure_model = os.getenv("AZURE_LLM_MODEL")
-
-    if azure_endpoint and azure_key:
-        logger.info(f"Using Azure LLM: {azure_model or 'serverless'}")
-
-        try:
-            import sentence_transformers
-
-            from scenarios.station_concordia.core.azure_llm_concordia import AzureLLMConcordia
-
-            # Create Azure LLM client designed for Concordia
-            # Uses synchronous REST API calls to avoid async/sync conflicts
-            llm_config = config.get("llm", {})
-            model = AzureLLMConcordia(
-                endpoint=azure_endpoint,
-                api_key=azure_key,
-                model=azure_model,
-                temperature=llm_config.get("temperature", 0.7),
-                max_retries=llm_config.get("max_retries", 3),
-                max_completion_tokens=llm_config.get("max_completion_tokens", 8000),
-            )
-
-            # Setup embedder (force CPU to avoid GPU compatibility issues)
-            embedder_name = llm_config.get("embedder", "sentence-transformers/all-mpnet-base-v2")
-            logger.info(f"Loading embedder: {embedder_name}...")
-            st_model = sentence_transformers.SentenceTransformer(embedder_name, device="cpu")
-
-            def embedder(x):
-                return st_model.encode(x, show_progress_bar=False, device="cpu")
-
-            logger.info("Embedder loaded successfully")
-            logger.info("Azure LLM for Concordia initialized successfully")
-            return model, embedder
-
-        except ImportError as e:
-            logger.error(f"Failed to import Azure provider: {e}")
-            raise
-
-    # No Azure configured - show error
-    raise ValueError(
-        "No LLM configured. Set Azure credentials in .env (AZURE_LLM_ENDPOINT, AZURE_LLM_API_KEY)"
-    )
-
-
 def run_simulation(
     config: dict, model, embedder, launch_viewer: bool = True, launch_spatial: bool = True
 ):
     """
     Run the hybrid Concordia + JuPedSim simulation.
+
+    This function orchestrates the entire simulation workflow:
+    1. Setup JuPedSim with geometry
+    2. Build station layout
+    3. Create and populate agents
+    4. Setup output directory
+    5. Launch viewers
+    6. Create and configure simulation runner
+    7. Run simulation
+    8. Save results
 
     Args:
         config: Configuration dictionary
@@ -154,308 +104,51 @@ def run_simulation(
     Returns:
         Tuple of (results dict, run_id string, decisions_file Path)
     """
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    from scenarios.station_concordia.core.hybrid_simulation import HybridSimulationRunner
-    from scenarios.station_concordia.core.jupedsim_integration import ConcordiaJuPedSimulation
-
     logger.info("Initializing simulation...")
 
     # Step 1: Setup JuPedSim simulation
-    sim_config = config.get("simulation", {})
-    dt = sim_config.get("dt", 0.05)
-    # Load station geometry from network files
-    network_path = Path(sim_config.get("network_path", "scenarios/station_sim/network"))
-    logger.info(f"Loading real station geometry from {network_path}...")
-    jps_sim = ConcordiaJuPedSimulation(
+    jps_sim = JuPedSimSetup.create_simulation(config)
+
+    # Step 2: Build station layout from geometry
+    station_layout = StationLayoutBuilder.build_layout(jps_sim, config)
+
+    # Step 3: Create and populate agents (handles spawn positions, configs, and adding to JuPedSim)
+    agents_config = AgentManager.create_and_populate_agents(jps_sim, config)
+
+    # Step 4: Setup output directory and files
+    run_id, output_dir, decisions_file = OutputManager.setup_output_directory(config)
+
+    # Step 5: Launch viewers BEFORE simulation starts (if enabled)
+    network_path = (
+        jps_sim.network_path
+        if hasattr(jps_sim, "network_path")
+        else config.get("simulation", {}).get("network_path", "scenarios/station_sim/network")
+    )
+    _viewer_process, _spatial_viewer_process = ViewerLauncher.launch_viewers(
+        decisions_file=decisions_file,
+        run_id=run_id,
         network_path=network_path,
-        dt=dt,
-        exit_radius=10.0,
+        launch_gui=launch_viewer,
+        launch_spatial=launch_spatial,
     )
 
-    # Step 2: Create agent configurations
-    agent_config = config.get("agents", {})
-    num_agents = agent_config.get("count", 1)
-
-    agents_config = []
-    station_layout = config.get("station", {})
-
-    def _polygon_bounds(polygon):
-        min_x, min_y, max_x, max_y = polygon.bounds
-        return {"x_min": min_x, "x_max": max_x, "y_min": min_y, "y_max": max_y}
-
-    def _sample_point_in_polygon(polygon, rng, max_attempts: int = 200):
-        from shapely.geometry import Point
-
-        min_x, min_y, max_x, max_y = polygon.bounds
-        for _ in range(max_attempts):
-            x = rng.uniform(min_x, max_x)
-            y = rng.uniform(min_y, max_y)
-            if polygon.contains(Point(x, y)):
-                return (x, y)
-        rep = polygon.representative_point()
-        return (rep.x, rep.y)
-
-    def _point_in_any_polygon(point, polygons) -> bool:
-        from shapely.geometry import Point
-
-        pt = Point(point)
-        return any(poly.contains(pt) for poly in polygons)
-
-    entrance_areas = jps_sim.entrance_areas
-    platform_areas = jps_sim.platform_areas
-
-    station_layout = {
-        **station_layout,
-        "exits": {
-            name: (poly.centroid.x, poly.centroid.y) for name, poly in entrance_areas.items()
-        },
-        "exits_polygons": entrance_areas,
-        "walkable_areas": getattr(jps_sim, "walkable_areas_with_obstacles", None)
-        or jps_sim.walkable_areas,
-        "zones": (
-            {name: _polygon_bounds(poly) for name, poly in platform_areas.items()}
-            if platform_areas
-            else {"main_area": _polygon_bounds(list(jps_sim.walkable_areas.values())[0])}
-        ),
-        "zones_polygons": (
-            platform_areas
-            if platform_areas
-            else {"main_area": list(jps_sim.walkable_areas.values())[0]}
-        ),
-        "obstacles": jps_sim.obstacles,
-    }
-
-    # Get spawn positions from geometry (platform areas preferred, then walkable)
-    walkable_areas = jps_sim.walkable_areas
-    platform_areas = jps_sim.platform_areas
-
-    import random
-
-    random.seed(42)
-
-    # TEMPORARY: Only spawn in 'entrance' area (near exits) for shorter evacuation distances
-    spawn_polygons = []
-    if "entrance" in walkable_areas:
-        spawn_polygons = [walkable_areas["entrance"]]
-        logger.info("🎯 Using 'entrance' area only for spawning (near exits)")
-    else:
-        logger.warning(f"⚠️ 'entrance' area not found! Available: {list(walkable_areas.keys())}")
-        # Fallback to original behavior if entrance not found
-        spawn_polygons = list(platform_areas.values()) if platform_areas else []
-        if not spawn_polygons and walkable_areas:
-            spawn_polygons = list(walkable_areas.values())
-
-    if not spawn_polygons:
-        logger.error("No valid spawn polygons found in geometry")
-        raise RuntimeError("Cannot spawn agents without geometry")
-
-    walkable_polygons = list(getattr(jps_sim, "walkable_areas_with_obstacles", {}).values())
-    if not walkable_polygons:
-        walkable_polygons = list(walkable_areas.values())
-
-    # Weighted choice by polygon area for better distribution
-    areas = [poly.area for poly in spawn_polygons]
-    spawn_positions = []
-    for _ in range(num_agents):
-        chosen = random.choices(spawn_polygons, weights=areas, k=1)[0]
-        candidate = _sample_point_in_polygon(chosen, random)
-
-        # Ensure the spawn point is inside walkable geometry (with obstacles removed)
-        # Try up to 50 times to find a valid point within the chosen spawn polygon
-        if walkable_polygons and not _point_in_any_polygon(candidate, walkable_polygons):
-            for _ in range(50):
-                candidate = _sample_point_in_polygon(chosen, random)
-                if _point_in_any_polygon(candidate, walkable_polygons):
-                    break
-
-        # If still no valid point after retries, just use the last candidate
-        # (removed fallback that would sample from ANY walkable area)
-
-        spawn_positions.append(candidate)
-
-    logger.info(
-        f"Generated {len(spawn_positions)} spawn positions from "
-        f"{'platform' if platform_areas else 'walkable'} areas"
+    # Step 6: Create and configure simulation runner
+    runner = SimulationRunnerFactory.create_runner(
+        jps_sim=jps_sim,
+        agents_config=agents_config,
+        station_layout=station_layout,
+        model=model,
+        embedder=embedder,
+        decisions_file=decisions_file,
+        config=config,
     )
 
-    # Phase 4.1: Determine which agents are injured (if help scenario enabled)
-    help_config = config.get("test_scenarios", {}).get("help_behavior", {})
-    injured_agents = set()
-    if help_config.get("enabled", False):
-        injured_percentage = help_config.get("injured_agent_percentage", 0.2)
-        num_injured = max(1, int(num_agents * injured_percentage))
-        injured_agents = set(random.sample(range(num_agents), num_injured))
-        logger.info(f"Phase 4.1: {num_injured} agents will be injured/slow-moving")
-
-    # Import personality types from StationAgent
-    from scenarios.common.station_agent import PERSONALITY_TYPES
-
-    for i in range(num_agents):
-        agent_id = f"agent_{i}"
-        is_injured = i in injured_agents
-
-        # Randomize agent attributes
-        personality_type = random.choice(list(PERSONALITY_TYPES.keys()))
-        age = random.randint(16, 90)
-        gender = random.choice(["male", "female"])
-        risk_tolerance = random.choice(["low", "moderate", "high"])
-
-        # Create agent config
-        agent_cfg = {
-            "id": agent_id,
-            "name": f"Agent {i}",
-            "personality_type": personality_type,
-            "age": age,
-            "gender": gender,
-            "risk_tolerance": risk_tolerance,
-            "initial_zone": "platform",
-            "destination": "exit",
-            "is_injured": is_injured,  # Phase 4.1: Mark injured agents
-        }
-        agents_config.append(agent_cfg)
-
-        # Add agent to JuPedSim at spawn position
-        # Use reduced walking speed for injured agents, sample from distribution for normal agents
-        start_pos = spawn_positions[i]
-        if is_injured:
-            walking_speed = help_config.get("injured_walking_speed", 0.5)
-            jps_sim.add_agent(agent_id, start_pos, walking_speed=walking_speed)
-        else:
-            # Sample walking speed from realistic distribution
-            walking_speed = sample_walking_speed()
-            jps_sim.add_agent(agent_id, start_pos, walking_speed=walking_speed)
-
-    logger.info(f"Created {num_agents} agent configuration(s)")
-
-    # Step 3: Initialize HybridSimulationRunner
-    max_steps = sim_config.get("max_iterations", 200)  # Shorter for MVP
-    decision_interval = sim_config.get("decision_interval", 5.0)
-
-    # Setup output file path with unique run ID
-    run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S")
-    output_config = config.get("output", {})
-    base_output_dir = Path(output_config.get("directory", "scenarios/station_concordia/output"))
-    output_dir = base_output_dir / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-    decisions_file = output_dir / "agent_decisions.json"
-
-    logger.info(f"Run ID: {run_id}")
-    logger.info(f"Output directory: {output_dir}")
-
-    # Point LLM prompt log to this run's output directory
-    import os
-
-    os.environ["CONCORDIA_LLM_LOG_PATH"] = str(output_dir / "llm_prompt_log.jsonl")
-
-    # Launch GUI viewer BEFORE simulation starts (if enabled)
-    _viewer_process = None
-    if launch_viewer:
-        logger.info("Launching GUI viewer for live monitoring...")
-        try:
-            viewer_path = Path(__file__).parent.parent.parent / "tools" / "view_concordia_gui.py"
-            _viewer_process = subprocess.Popen(
-                [
-                    sys.executable,
-                    str(viewer_path),
-                    "--output-file",
-                    str(decisions_file.absolute()),
-                    "--run-id",
-                    run_id,
-                ]
-            )
-            logger.info("GUI viewer launched - it will update as simulation runs")
-        except Exception as e:
-            logger.warning(f"Failed to launch GUI viewer: {e}")
-
-    # Launch spatial viewer if requested
-    _spatial_viewer_process = None
-    if launch_spatial:
-        logger.info("Launching spatial matplotlib viewer...")
-        try:
-            spatial_viewer_path = (
-                Path(__file__).parent.parent.parent / "tools" / "view_concordia_spatial.py"
-            )
-            _spatial_viewer_process = subprocess.Popen(
-                [
-                    sys.executable,
-                    str(spatial_viewer_path),
-                    "--output-file",
-                    str(decisions_file.absolute()),
-                    "--network-path",
-                    str(network_path),
-                ]
-            )
-            logger.info("Spatial viewer launched - shows agent positions on map")
-        except Exception as e:
-            logger.warning(f"Failed to launch spatial viewer: {e}")
-
-    logger.info("Creating HybridSimulationRunner...")
-
-    # Get test scenarios config to pass to runner
-    test_scenarios_config = config.get("test_scenarios", {})
-
-    try:
-        runner = HybridSimulationRunner(
-            jupedsim_simulation=jps_sim,
-            agents_config=agents_config,
-            station_layout=station_layout,
-            language_model=model,
-            embedder=embedder,
-            decision_interval=decision_interval,
-            max_steps=max_steps,
-            output_file=decisions_file,
-            test_scenarios=test_scenarios_config,
-        )
-        logger.info("HybridSimulationRunner initialized")
-    except Exception as e:
-        logger.error(f"FATAL ERROR during HybridSimulationRunner initialization: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise
-
-    # Load events from configuration
-    events_config = config.get("events", [])
-    for event in events_config:
-        runner.event_history.append(
-            {
-                "time": event.get("time", 0.0),
-                "message": event.get("message", ""),
-            }
-        )
-
-    if events_config:
-        logger.info(f"Loaded {len(events_config)} events from configuration")
-    else:
-        logger.warning("No events defined in configuration")
-
-    # Phase 4.2: Check for blocked exit test scenario
-    test_scenarios = config.get("test_scenarios", {})
-    blocked_exit_config = test_scenarios.get("blocked_exit", {})
-
-    if blocked_exit_config.get("enabled", False):
-        block_time = blocked_exit_config.get("block_time", 30.0)
-        blocked_exit = blocked_exit_config.get("blocked_exit", "north_exit")
-        logger.info(f"⚠️  Test scenario: {blocked_exit} will be blocked at t={block_time}s")
-
-        # Schedule the blocking to happen during simulation
-        # We'll check this in the simulation loop
-        runner.test_block_exit_time = block_time
-        runner.test_block_exit_name = blocked_exit
-    else:
-        runner.test_block_exit_time = None
-        runner.test_block_exit_name = None
-
-    # Step 4: Run simulation
+    # Step 7: Run simulation
     logger.info("Starting simulation run...")
     results = runner.run()
 
-    # Step 5: Save final results
+    # Step 8: Save final results
     runner.save_results(decisions_file)
-
     logger.info(f"Simulation complete. Results saved to {output_dir}")
 
     return results, run_id, decisions_file
@@ -474,21 +167,17 @@ def main():
     logger.info("=" * 60)
 
     try:
-        # Load configuration
-        config = load_config(args.config)
-
-        # Apply command-line overrides
-        if args.agents:
-            config["agents"]["count"] = args.agents
-        if args.max_steps:
-            config["simulation"]["max_iterations"] = args.max_steps
-        if args.output_dir:
-            config["output"]["directory"] = args.output_dir
+        # Load and validate configuration (with CLI overrides)
+        config = ConfigLoader.load_and_validate(
+            config_path=args.config,
+            agents=args.agents,
+            max_steps=args.max_steps,
+            output_dir=args.output_dir,
+        )
 
         # Setup language model
-        model, embedder = setup_language_model(config)
+        model, embedder = LLMSetup.setup_language_model(config)
 
-        # Run simulation (with viewers if enabled)
         # Run simulation (with viewers if enabled)
         results, run_id, decisions_file = run_simulation(
             config,

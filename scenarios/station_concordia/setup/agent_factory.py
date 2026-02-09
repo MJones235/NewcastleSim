@@ -1,0 +1,111 @@
+"""
+Agent factory for creating agent configurations in Station Concordia simulations.
+
+This module is responsible for:
+- Creating agent configurations with randomized attributes
+- Determining injured agents based on test scenarios
+- Assigning personality types, ages, and other attributes
+"""
+
+import random
+from typing import Dict, List, Set
+
+from scenarios.common.logger import get_logger
+from scenarios.common.station_agent import PERSONALITY_TYPES
+
+logger = get_logger(__name__)
+
+
+class AgentFactory:
+    """Handles creation of agent configurations."""
+
+    @staticmethod
+    def create_agents(
+        num_agents: int,
+        config: dict,
+        seed: int = 42,
+    ) -> tuple[List[Dict], Set[int]]:
+        """
+        Create agent configurations with randomized attributes.
+
+        Args:
+            num_agents: Number of agents to create
+            config: Configuration dictionary containing test scenarios
+            seed: Random seed for reproducibility
+
+        Returns:
+            Tuple of (agents_config, injured_agents)
+            - agents_config: List of agent configuration dictionaries
+            - injured_agents: Set of agent indices that are injured
+        """
+        random.seed(seed)
+
+        # Determine which agents are injured (if help scenario enabled)
+        injured_agents = AgentFactory._determine_injured_agents(num_agents, config)
+
+        # Create agent configurations
+        agents_config = []
+        for i in range(num_agents):
+            agent_cfg = AgentFactory._create_single_agent(i, i in injured_agents)
+            agents_config.append(agent_cfg)
+
+        logger.info(f"Created {num_agents} agent configuration(s)")
+        if injured_agents:
+            logger.info(f"  - {len(injured_agents)} agents marked as injured/slow-moving")
+
+        return agents_config, injured_agents
+
+    @staticmethod
+    def _determine_injured_agents(num_agents: int, config: dict) -> Set[int]:
+        """
+        Determine which agents should be injured based on test scenario config.
+
+        Args:
+            num_agents: Total number of agents
+            config: Configuration dictionary
+
+        Returns:
+            Set of agent indices that should be injured
+        """
+        help_config = config.get("test_scenarios", {}).get("help_behavior", {})
+        injured_agents = set()
+
+        if help_config.get("enabled", False):
+            injured_percentage = help_config.get("injured_agent_percentage", 0.2)
+            num_injured = max(1, int(num_agents * injured_percentage))
+            injured_agents = set(random.sample(range(num_agents), num_injured))
+            logger.info(f"Phase 4.1: {num_injured} agents will be injured/slow-moving")
+
+        return injured_agents
+
+    @staticmethod
+    def _create_single_agent(agent_index: int, is_injured: bool) -> Dict:
+        """
+        Create a single agent configuration with randomized attributes.
+
+        Args:
+            agent_index: Index of the agent (used for ID)
+            is_injured: Whether this agent is injured
+
+        Returns:
+            Agent configuration dictionary
+        """
+        agent_id = f"agent_{agent_index}"
+
+        # Randomize agent attributes
+        personality_type = random.choice(list(PERSONALITY_TYPES.keys()))
+        age = random.randint(16, 90)
+        gender = random.choice(["male", "female"])
+        risk_tolerance = random.choice(["low", "moderate", "high"])
+
+        return {
+            "id": agent_id,
+            "name": f"Agent {agent_index}",
+            "personality_type": personality_type,
+            "age": age,
+            "gender": gender,
+            "risk_tolerance": risk_tolerance,
+            "initial_zone": "platform",
+            "destination": "exit",
+            "is_injured": is_injured,
+        }
