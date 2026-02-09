@@ -290,18 +290,27 @@ def run_simulation(
         injured_agents = set(random.sample(range(num_agents), num_injured))
         logger.info(f"Phase 4.1: {num_injured} agents will be injured/slow-moving")
 
+    # Import personality types from StationAgent
+    from scenarios.common.station_agent import PERSONALITY_TYPES
+
     for i in range(num_agents):
         agent_id = f"agent_{i}"
         is_injured = i in injured_agents
+
+        # Randomize agent attributes
+        personality_type = random.choice(list(PERSONALITY_TYPES.keys()))
+        age = random.randint(16, 90)
+        gender = random.choice(["male", "female"])
+        risk_tolerance = random.choice(["low", "moderate", "high"])
 
         # Create agent config
         agent_cfg = {
             "id": agent_id,
             "name": f"Agent {i}",
-            "personality_type": "ISTJ",  # Start with one personality
-            "age": 35,
-            "gender": "neutral",
-            "risk_tolerance": "moderate",
+            "personality_type": personality_type,
+            "age": age,
+            "gender": gender,
+            "risk_tolerance": risk_tolerance,
             "initial_zone": "platform",
             "destination": "exit",
             "is_injured": is_injured,  # Phase 4.1: Mark injured agents
