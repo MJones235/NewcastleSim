@@ -38,6 +38,7 @@ except ImportError:
     print("Warning: jupedsim not available")
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.behaviors import MessageSystem
 from scenarios.station_concordia.core.action_utils import extract_exit_name
 from scenarios.station_concordia.core.agent_builder import AgentBuilder
 from scenarios.station_concordia.core.evacuation_agent import EvacuationAgent
@@ -149,23 +150,10 @@ class HybridSimulationRunner:
         self.wait_events: list[dict[str, Any]] = []  # Track all wait decisions with reasons
 
         # Phase 5: Agent-to-agent messaging
-        self.agent_messages: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # agent_id -> list of received messages
-        self.message_history: list[dict[str, Any]] = []  # All messages sent
-        self.message_radius = 10.0  # Messages heard within 10m
-
-        # Phase 5.1: Message memory for repetition prevention
-        self.agent_sent_messages: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # agent_id -> recent messages they sent
-        self.agent_heard_messages: dict[str, set[str]] = (
-            {}
-        )  # agent_id -> set of message content they've heard
-        self.agent_conversations: dict[str, dict[str, list[dict]]] = (
-            {}
-        )  # agent_id -> {other_agent_id -> conversation history}
-        self.message_memory_window = 60.0  # Remember messages for 60 seconds
+        self.message_system = MessageSystem(
+            default_radius=10.0,
+            memory_window=60.0,
+        )
 
         # Track exited agents (those who have evacuated)
         self.exited_agents: set[str] = set()  # agent_ids who have reached exits
@@ -653,7 +641,15 @@ class HybridSimulationRunner:
                 translated = self.action_translator.translate(agent_id, action, position)
 
             # Phase 5: Extract and deliver any message
-            self._extract_and_deliver_message(agent_id, action, position)
+            self.message_system.extract_and_deliver_message(
+                sender_id=agent_id,
+                action=action,
+                sender_position=position,
+                current_sim_time=self.current_sim_time,
+                state_queries=self.state_queries,
+                agent_status=self.agent_status,
+                exited_agents=self.exited_agents,
+            )
 
             # Phase 4.2: Detect route changes
             new_exit = extract_exit_name(translated, self.station_layout)
@@ -783,10 +779,10 @@ class HybridSimulationRunner:
                 )
 
                 # Phase 5: Get messages received by this agent
-                received_messages = self.agent_messages.get(agent_id, [])
+                received_messages = self.message_system.get_received_messages(agent_id)
 
                 # Get conversation history for this agent
-                conversation_history = self.agent_conversations.get(agent_id, {})
+                conversation_history = self.message_system.get_conversation_history(agent_id)
 
                 # Generate observation (Phase 4.1: Include agent status)
                 obs = self.observation_generator.generate_observation(
@@ -803,11 +799,6 @@ class HybridSimulationRunner:
 
                 observations[agent_id] = obs
 
-                # Clear messages after they've been included in observation
-                # This ensures new messages cause observation changes
-                if agent_id in self.agent_messages:
-                    self.agent_messages[agent_id] = []
-
             except Exception as e:
                 logger.error(f"Error generating observation for {agent_id}: {e}")
                 observations[agent_id] = (
@@ -815,187 +806,6 @@ class HybridSimulationRunner:
                 )
 
         return observations
-
-    def _extract_and_deliver_message(
-        self, sender_id: str, action: str, sender_position: tuple[float, float]
-    ) -> dict[str, Any] | None:
-        """
-        Extract message from action JSON and deliver to nearby agents with targeting and memory.
-
-        Args:
-            sender_id: ID of the agent sending the message
-            action: JSON action string from agent
-            sender_position: Current position of sender
-
-        Returns:
-            Message info dict if message was sent, None otherwise
-        """
-        try:
-            # Parse action JSON to extract message
-            json_start = action.find("{")
-            if json_start > 0:
-                action = action[json_start:]
-
-            data = json.loads(action)
-            message_text = data.get("message")
-            message_type = data.get("message_type")  # directed, shout, quiet
-            target_agent = data.get("target_agent")  # agent_id, nearest_injured, or null
-
-            if not message_text or message_text == "null":
-                return None
-
-            # Phase 5.1: Check message memory - prevent repetition
-            if sender_id in self.agent_sent_messages:
-                # Clean old messages outside memory window
-                recent_cutoff = self.current_sim_time - self.message_memory_window
-                self.agent_sent_messages[sender_id] = [
-                    msg
-                    for msg in self.agent_sent_messages[sender_id]
-                    if msg["time"] >= recent_cutoff
-                ]
-
-                # Check if similar message was recently sent
-                for recent_msg in self.agent_sent_messages[sender_id]:
-                    if recent_msg["text"].lower() == message_text.lower():
-                        logger.debug(
-                            f"{sender_id} suppressed repeat message: '{message_text}' "
-                            f"(last sent {self.current_sim_time - recent_msg['time']:.0f}s ago)"
-                        )
-                        return None
-
-            # Determine message radius based on type
-            if message_type == "quiet":
-                radius = 3.0  # Only very close people
-            elif message_type == "shout":
-                radius = 15.0  # Wider range for warnings
-            else:
-                radius = self.message_radius  # Default 10m
-
-            # Find nearby agents
-            nearby_agents = self.state_queries.get_nearby_agents(sender_id, radius)
-
-            # Filter recipients based on target_agent
-            recipient_ids = []
-            if target_agent and target_agent != "null":
-                if target_agent == "nearest_injured":
-                    # Find nearest injured agent
-                    injured = [
-                        a
-                        for a in nearby_agents
-                        if self.agent_status.get(a["id"], "").startswith("INJURED")
-                    ]
-                    if injured:
-                        recipient_ids = [injured[0]["id"]]
-                elif target_agent.startswith("agent_"):
-                    # Specific agent targeted
-                    if any(a["id"] == target_agent for a in nearby_agents):
-                        recipient_ids = [target_agent]
-            else:
-                # Broadcast to all nearby (but filter out exited)
-                recipient_ids = [
-                    agent["id"]
-                    for agent in nearby_agents
-                    if agent["id"] != sender_id and agent["id"] not in self.exited_agents
-                ]
-
-            if not recipient_ids:
-                logger.debug(f"📢 {sender_id} sent message but no valid recipients nearby")
-                return None
-
-            # Create message record
-            message_record = {
-                "time": self.current_sim_time,
-                "sender": sender_id,
-                "position": sender_position,
-                "text": message_text,
-                "message_type": message_type or "broadcast",
-                "target_agent": target_agent,
-                "recipients": recipient_ids,
-                "num_recipients": len(recipient_ids),
-            }
-
-            # Deliver message to each recipient
-            for recipient_id in recipient_ids:
-                # Skip if recipient has heard this exact message recently
-                if recipient_id not in self.agent_heard_messages:
-                    self.agent_heard_messages[recipient_id] = set()
-
-                # Clean old heard messages
-                # (for simplicity, we keep a set and periodically clear it)
-                if len(self.agent_heard_messages[recipient_id]) > 50:
-                    self.agent_heard_messages[recipient_id].clear()
-
-                # Check if already heard
-                msg_key = f"{message_text.lower()[:30]}"  # First 30 chars normalized
-                if msg_key in self.agent_heard_messages[recipient_id]:
-                    continue  # Skip delivering duplicate
-
-                self.agent_heard_messages[recipient_id].add(msg_key)
-
-                # Deliver to recipient
-                if recipient_id not in self.agent_messages:
-                    self.agent_messages[recipient_id] = []
-
-                self.agent_messages[recipient_id].append(
-                    {
-                        "time": self.current_sim_time,
-                        "from": sender_id,
-                        "text": message_text,
-                        "message_type": message_type or "broadcast",
-                    }
-                )
-
-                # Track conversation history between sender and recipient
-                if sender_id not in self.agent_conversations:
-                    self.agent_conversations[sender_id] = {}
-                if recipient_id not in self.agent_conversations[sender_id]:
-                    self.agent_conversations[sender_id][recipient_id] = []
-
-                self.agent_conversations[sender_id][recipient_id].append(
-                    {
-                        "time": self.current_sim_time,
-                        "from": sender_id,
-                        "to": recipient_id,
-                        "text": message_text,
-                    }
-                )
-
-                # Also track on recipient's side
-                if recipient_id not in self.agent_conversations:
-                    self.agent_conversations[recipient_id] = {}
-                if sender_id not in self.agent_conversations[recipient_id]:
-                    self.agent_conversations[recipient_id][sender_id] = []
-
-                self.agent_conversations[recipient_id][sender_id].append(
-                    {
-                        "time": self.current_sim_time,
-                        "from": sender_id,
-                        "to": recipient_id,
-                        "text": message_text,
-                    }
-                )
-
-            # Store in message history
-            self.message_history.append(message_record)
-
-            # Track this message in sender's sent history
-            if sender_id not in self.agent_sent_messages:
-                self.agent_sent_messages[sender_id] = []
-            self.agent_sent_messages[sender_id].append(
-                {"time": self.current_sim_time, "text": message_text}
-            )
-
-            # Log message with type indicator
-            type_emoji = {"directed": "💬", "shout": "📢", "quiet": "🤫"}.get(message_type, "📣")
-            logger.info(f"{type_emoji} {sender_id} → {len(recipient_ids)} people: '{message_text}'")
-            return message_record
-
-        except json.JSONDecodeError:
-            return None
-        except Exception as e:
-            logger.warning(f"Error extracting message from {sender_id}: {e}")
-            return None
-
     def _apply_action_to_jupedsim(self, agent_id: str, translated_action: dict[str, Any]):
         """Apply a translated action to the JuPedSim simulation."""
         action_type = translated_action["action_type"]
@@ -1290,7 +1100,7 @@ class HybridSimulationRunner:
                 helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
                 for helper, info in self.active_helping_pairs.items()
             },  # Phase 4.1: For visualization
-            "messages": self.message_history,  # Phase 5: Agent messages
+            "messages": self.message_system.message_history,  # Phase 5: Agent messages
             "config": {
                 "decision_interval": self.decision_interval,
                 "max_steps": self.max_steps,
@@ -1339,7 +1149,7 @@ class HybridSimulationRunner:
             "events": self.event_history,
             "blocked_exits": list(self.blocked_exits),  # Phase 4.2: For visualization
             "route_changes": route_changes,  # Phase 4.2: Route change analytics
-            "messages": self.message_history,  # Phase 5: Agent messages
+            "messages": self.message_system.message_history,  # Phase 5: Agent messages
             "active_helping_pairs": {
                 helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
                 for helper, info in self.active_helping_pairs.items()
@@ -1461,23 +1271,23 @@ class HybridSimulationRunner:
             logger.info(f"Wait behavior analytics saved to {wait_analytics_path}")
 
         # Phase 5: Save messaging analytics
-        if self.message_history:
+        if self.message_system.message_history:
             message_analytics_path = output_path.parent / "message_analytics.txt"
             with open(message_analytics_path, "w") as f:
                 f.write("=== MESSAGING ANALYTICS ===\n\n")
-                f.write(f"Total messages sent: {len(self.message_history)}\n")
+                f.write(f"Total messages sent: {len(self.message_system.message_history)}\n")
                 f.write(
-                    f"Agents who sent messages: {len({m['sender'] for m in self.message_history})}\n"
+                    f"Agents who sent messages: {len({m['sender'] for m in self.message_system.message_history})}\n"
                 )
-                total_recipients = sum(m["num_recipients"] for m in self.message_history)
+                total_recipients = sum(m["num_recipients"] for m in self.message_system.message_history)
                 f.write(f"Total message deliveries: {total_recipients}\n")
-                if self.message_history:
-                    avg_recipients = total_recipients / len(self.message_history)
+                if self.message_system.message_history:
+                    avg_recipients = total_recipients / len(self.message_system.message_history)
                     f.write(f"Average recipients per message: {avg_recipients:.1f}\n\n")
 
                 # Breakdown by sender
                 sender_counts = {}
-                for msg in self.message_history:
+                for msg in self.message_system.message_history:
                     sender = msg["sender"]
                     sender_counts[sender] = sender_counts.get(sender, 0) + 1
 
@@ -1489,7 +1299,7 @@ class HybridSimulationRunner:
 
                 # Breakdown by message type
                 type_counts = {}
-                for msg in self.message_history:
+                for msg in self.message_system.message_history:
                     msg_type = msg.get("message_type", "broadcast")
                     type_counts[msg_type] = type_counts.get(msg_type, 0) + 1
 
@@ -1497,21 +1307,21 @@ class HybridSimulationRunner:
                 for msg_type, count in sorted(
                     type_counts.items(), key=lambda x: x[1], reverse=True
                 ):
-                    percentage = (count / len(self.message_history)) * 100
+                    percentage = (count / len(self.message_system.message_history)) * 100
                     f.write(f"  {msg_type}: {count} messages ({percentage:.1f}%)\n")
 
                 # Count targeted vs broadcast
-                targeted = sum(1 for m in self.message_history if m.get("target_agent"))
-                broadcast = len(self.message_history) - targeted
+                targeted = sum(1 for m in self.message_system.message_history if m.get("target_agent"))
+                broadcast = len(self.message_system.message_history) - targeted
                 f.write(
-                    f"\nTargeted messages: {targeted} ({targeted/len(self.message_history)*100:.1f}%)\n"
+                    f"\nTargeted messages: {targeted} ({targeted/len(self.message_system.message_history)*100:.1f}%)\n"
                 )
                 f.write(
-                    f"Broadcast messages: {broadcast} ({broadcast/len(self.message_history)*100:.1f}%)\n"
+                    f"Broadcast messages: {broadcast} ({broadcast/len(self.message_system.message_history)*100:.1f}%)\n"
                 )
 
                 f.write("\nAll Messages:\n")
-                for msg in self.message_history:
+                for msg in self.message_system.message_history:
                     msg_type = msg.get("message_type", "broadcast")
                     target = msg.get("target_agent")
                     type_indicator = f"[{msg_type}]" if msg_type != "broadcast" else ""

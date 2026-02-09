@@ -194,7 +194,7 @@ def main():
         for key, value in results.items():
             logger.info(f"  {key}: {value}")
 
-        logger.info("=" * 60)
+        logger.info("=" * 60) 
         logger.info("Simulation complete!")
         logger.info("=" * 60)
 

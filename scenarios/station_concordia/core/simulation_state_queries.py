@@ -36,9 +36,7 @@ class SimulationStateQueries:
         """
         return self.jps_sim.get_agent_position(agent_id)
 
-    def get_nearby_agents(
-        self, agent_id: str, radius: float
-    ) -> list[dict[str, Any]]:
+    def get_nearby_agents(self, agent_id: str, radius: float) -> list[dict[str, Any]]:
         """
         Get information about nearby agents.
 
@@ -66,8 +64,6 @@ class SimulationStateQueries:
             List of event messages (only events that have already occurred)
         """
         # Return only events that have occurred (time <= current_sim_time)
-        occurred_events = [
-            e["message"] for e in event_history if e["time"] <= current_sim_time
-        ]
+        occurred_events = [e["message"] for e in event_history if e["time"] <= current_sim_time]
         # Return last N events
         return occurred_events[-count:]
