@@ -1,0 +1,53 @@
+# Core simulation dependencies
+jupedsim>=1.0.0
+numpy>=1.24.0
+shapely>=2.0.0
+
+# SUMO (traffic simulation)
+# Note: SUMO itself must be installed separately from https://sumo.dlr.de/
+# These are Python bindings that come with SUMO installation
+# sumolib
+# traci
+
+# Geometry and spatial processing
+networkx>=3.0
+
+# Data processing and analysis
+pandas>=2.0.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Configuration and environment
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Azure AI/LLM integration
+azure-ai-inference>=1.0.0b9
+azure-core>=1.29.0
+aiohttp>=3.9.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Concordia (agent-based modeling framework)
+gdm-concordia
+
+# Rich terminal output (for concordia progress bars)
+rich>=13.0.0
+
+# SQLite support (typically included with Python)
+# sqlite3 (standard library)
+
+# Standard library packages (included with Python, listed for documentation):
+# - tkinter (GUI toolkit, may need separate installation on some systems)
+# - xml.etree.ElementTree
+# - json
+# - csv
+# - dataclasses
+# - asyncio
+# - pathlib
+# - logging
+# - argparse
+# - threading
+# - collections
