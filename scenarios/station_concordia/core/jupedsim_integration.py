@@ -247,21 +247,15 @@ class ConcordiaJuPedSimulation:
             (centroid.x - exit_size / 2, centroid.y + exit_size / 2),
         ]
 
-        try:
-            exit_id = self.stage_manager.create_exit_at_coordinates(exit_name, exit_coords)
-            logger.debug(
-                f"Created {exit_size}m x {exit_size}m exit '{exit_name}' at {centroid.coords[0]}"
-            )
-            return exit_id
-        except Exception as e:
-            logger.error(
-                f"Failed to create exit '{exit_name}' at centroid {centroid.coords[0]}: {e}"
-            )
-            return None
+        exit_id = self.stage_manager.create_exit_at_coordinates(exit_name, exit_coords)
+        logger.info(
+            f"Created {exit_size}m x {exit_size}m exit '{exit_name}' " f"at {centroid.coords[0]}"
+        )
+        return exit_id
 
     def add_agent(
         self, agent_id: str, position: tuple[float, float], walking_speed: float = 1.34
-    ) -> bool:
+    ) -> None:
         """
         Add an agent to the simulation.
 
@@ -270,46 +264,37 @@ class ConcordiaJuPedSimulation:
             position: Initial (x, y) position
             walking_speed: Desired walking speed in m/s (default: 1.34 m/s)
 
-        Returns:
-            True if agent added successfully
+        Raises:
+            RuntimeError: If no evacuation exits are available
+            Exception: If JuPedSim fails to add the agent
         """
-        try:
-            # Use first available exit and its stage
-            if not self.evacuation_exits:
-                logger.error("No evacuation exits available")
-                return False
-
-            exit_name = list(self.evacuation_exits.keys())[0]
-            stage_id = self.evacuation_exits[exit_name]
-            journey_id = self.evacuation_journeys[exit_name]
-
-            logger.debug(
-                f"Using exit '{exit_name}' (stage={stage_id}, journey={journey_id}) for agent {agent_id}"
+        if not self.evacuation_exits:
+            raise RuntimeError(
+                "Cannot add agent: no evacuation exits available. " "Check geometry configuration."
             )
 
-            # Add agent to JuPedSim with specified walking speed
-            # Set both journey_id AND stage_id (the first stage in the journey)
-            jps_id = self.simulation.add_agent(
-                jps.CollisionFreeSpeedModelAgentParameters(
-                    position=position,
-                    journey_id=journey_id,
-                    stage_id=stage_id,  # Start at the first stage of the journey
-                    v0=walking_speed,  # Set desired walking speed (v0 parameter)
-                )
+        exit_name = list(self.evacuation_exits.keys())[0]
+        stage_id = self.evacuation_exits[exit_name]
+        journey_id = self.evacuation_journeys[exit_name]
+
+        # Add agent to JuPedSim with specified walking speed
+        jps_id = self.simulation.add_agent(
+            jps.CollisionFreeSpeedModelAgentParameters(
+                position=position,
+                journey_id=journey_id,
+                stage_id=stage_id,
+                v0=walking_speed,
             )
+        )
 
-            # Track agent mapping
-            self.agent_ids[agent_id] = jps_id
-            self.jps_to_concordia[jps_id] = agent_id
+        # Track agent mapping
+        self.agent_ids[agent_id] = jps_id
+        self.jps_to_concordia[jps_id] = agent_id
 
-            logger.debug(
-                f"Added agent {agent_id} at position {position} with speed {walking_speed} m/s (JuPedSim ID: {jps_id})"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to add agent {agent_id}: {e}")
-            return False
+        logger.info(
+            f"Added agent {agent_id} at {position} "
+            f"with speed {walking_speed:.2f} m/s (JPS ID: {jps_id})"
+        )
 
     def step(self) -> bool:
         """
@@ -334,117 +319,123 @@ class ConcordiaJuPedSimulation:
         return True
 
     def get_agent_position(self, agent_id: str) -> tuple[float, float]:
-        """Get agent's current position."""
+        """
+        Get agent's current position.
+
+        Args:
+            agent_id: Concordia agent ID
+
+        Returns:
+            Agent's (x, y) position, or (0.0, 0.0) if agent has exited
+        """
         if agent_id not in self.agent_ids:
-            logger.warning(f"Agent {agent_id} not found in simulation")
+            # Agent may have exited - this is expected
             return (0.0, 0.0)
 
         jps_id = self.agent_ids[agent_id]
 
-        try:
-            # Use simulation.agents() to get agent data
-            for agent in self.simulation.agents():
-                if agent.id == jps_id:
-                    return (float(agent.position[0]), float(agent.position[1]))
-            # Agent not found (may have exited)
-            logger.debug(f"Agent {agent_id} (JPS {jps_id}) has likely exited")
-            return (0.0, 0.0)
-        except Exception as e:
-            logger.warning(f"Error getting position for agent {agent_id}: {e}")
-            return (0.0, 0.0)
+        # Find agent in current simulation state
+        for agent in self.simulation.agents():
+            if agent.id == jps_id:
+                return (float(agent.position[0]), float(agent.position[1]))
 
-    def set_agent_target(self, agent_id: str, target: tuple[float, float]):
+        # Agent not found - likely exited (expected condition)
+        return (0.0, 0.0)
+
+    def set_agent_target(self, agent_id: str, target: tuple[float, float]) -> None:
         """
         Set an agent's movement target by creating a waypoint.
 
         Args:
             agent_id: Concordia agent ID
             target: Target (x, y) position
+
+        Raises:
+            KeyError: If agent is not in the simulation (may have exited)
+            Exception: If JuPedSim fails to create waypoint or switch journey
         """
         if agent_id not in self.agent_ids:
-            logger.warning(f"Cannot set target for unknown agent {agent_id}")
+            # Agent may have exited - this is expected
+            logger.debug(f"Cannot set target for agent {agent_id} - already exited")
             return
 
         jps_id = self.agent_ids[agent_id]
         self.agent_targets[agent_id] = target
 
-        try:
-            # Create a waypoint stage at the target location
-            stage_id = self.simulation.add_waypoint_stage(target, distance=2.0)
+        # Create a waypoint stage at the target location
+        stage_id = self.simulation.add_waypoint_stage(target, distance=2.0)
 
-            # Create a journey to this waypoint
-            journey = jps.JourneyDescription([stage_id])
-            journey_id = self.simulation.add_journey(journey)
+        # Create a journey to this waypoint
+        journey = jps.JourneyDescription([stage_id])
+        journey_id = self.simulation.add_journey(journey)
 
-            # Update agent's journey and stage
-            self.simulation.switch_agent_journey(
-                agent_id=jps_id,
-                journey_id=journey_id,
-                stage_id=stage_id,  # Start at the waypoint stage
-            )
+        # Update agent's journey and stage
+        self.simulation.switch_agent_journey(
+            agent_id=jps_id,
+            journey_id=journey_id,
+            stage_id=stage_id,
+        )
 
-            logger.debug(f"Set target for agent {agent_id} to {target}")
+        logger.info(f"Set target for agent {agent_id} to {target}")
 
-        except Exception as e:
-            logger.warning(f"Failed to set target for agent {agent_id}: {e}")
-
-    def set_agent_evacuation_exit(self, agent_id: str, exit_name: str):
+    def set_agent_evacuation_exit(self, agent_id: str, exit_name: str) -> None:
         """
         Direct an agent to a specific evacuation exit.
 
         Args:
             agent_id: Concordia agent ID
             exit_name: Name of the evacuation exit
+
+        Raises:
+            KeyError: If agent or exit is not found
+            Exception: If JuPedSim fails to switch journey
         """
         if agent_id not in self.agent_ids:
-            logger.warning(f"Cannot set exit for unknown agent {agent_id}")
+            # Agent may have exited - this is expected
+            logger.debug(f"Cannot set exit for agent {agent_id} - already exited")
             return
 
         if exit_name not in self.evacuation_journeys:
-            logger.warning(f"Unknown exit: {exit_name}")
-            return
+            raise KeyError(
+                f"Unknown exit: {exit_name}. "
+                f"Available exits: {list(self.evacuation_journeys.keys())}"
+            )
 
         jps_id = self.agent_ids[agent_id]
         journey_id = self.evacuation_journeys[exit_name]
-        stage_id = self.evacuation_exits[exit_name]  # Get the exit stage ID
+        stage_id = self.evacuation_exits[exit_name]
 
-        try:
-            self.simulation.switch_agent_journey(
-                agent_id=jps_id,
-                journey_id=journey_id,
-                stage_id=stage_id,  # Start at the exit stage
-            )
-            logger.debug(f"Directed agent {agent_id} to exit '{exit_name}'")
+        self.simulation.switch_agent_journey(
+            agent_id=jps_id,
+            journey_id=journey_id,
+            stage_id=stage_id,
+        )
 
-        except Exception as e:
-            logger.warning(f"Failed to set evacuation exit for agent {agent_id}: {e}")
+        logger.info(f"Directed agent {agent_id} to exit '{exit_name}'")
 
-    def set_agent_speed(self, agent_id: str, speed: float):
+    def set_agent_speed(self, agent_id: str, speed: float) -> None:
         """
         Set an agent's walking speed mid-simulation.
 
         Args:
             agent_id: Concordia agent ID
             speed: Walking speed in m/s
+
+        Raises:
+            Exception: If JuPedSim fails to update agent's speed
         """
         if agent_id not in self.agent_ids:
-            logger.warning(f"Cannot set speed for unknown agent {agent_id}")
+            # Agent may have exited - this is expected
+            logger.debug(f"Cannot set speed for agent {agent_id} - already exited")
             return
 
         jps_id = self.agent_ids[agent_id]
 
-        try:
-            # Get the agent object from JuPedSim simulation
-            agent = self.simulation.agent(jps_id)
+        # Get the agent object and update its desired speed
+        agent = self.simulation.agent(jps_id)
+        agent.model.v0 = speed
 
-            # Change the agent's desired speed (v0 parameter)
-            # This works with velocity-based models and applies from next timestep
-            agent.model.v0 = speed
-
-            logger.debug(f"Set {agent_id} speed to {speed} m/s")
-
-        except Exception as e:
-            logger.warning(f"Failed to set speed for agent {agent_id}: {e}")
+        logger.info(f"Set agent {agent_id} speed to {speed:.2f} m/s")
 
     def get_nearby_agents(self, agent_id: str, radius: float) -> list[dict[str, Any]]:
         """
@@ -466,11 +457,8 @@ class ConcordiaJuPedSimulation:
 
         nearby = []
 
-        # Get all agents
-        try:
-            all_agents = list(self.simulation.agents())
-        except Exception:
-            return []
+        # Get all agents currently in simulation
+        all_agents = list(self.simulation.agents())
 
         for agent in all_agents:
             # Skip self
@@ -512,13 +500,13 @@ class ConcordiaJuPedSimulation:
         """
         positions = {}
 
-        try:
-            for agent in self.simulation.agents():
-                concordia_id = self.jps_to_concordia.get(agent.id)
-                if concordia_id:
-                    positions[concordia_id] = (float(agent.position[0]), float(agent.position[1]))
-        except Exception as e:
-            logger.warning(f"Failed to get all agent positions: {e}")
+        for agent in self.simulation.agents():
+            concordia_id = self.jps_to_concordia.get(agent.id)
+            if concordia_id:
+                positions[concordia_id] = (
+                    float(agent.position[0]),
+                    float(agent.position[1]),
+                )
 
         return positions
 

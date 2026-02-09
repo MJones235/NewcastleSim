@@ -15,10 +15,10 @@ Key features:
 import asyncio
 import json
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from concordia.associative_memory import basic_associative_memory
 from concordia.language_model import language_model
 from concordia.typing import entity as entity_lib
@@ -38,79 +38,15 @@ except ImportError:
     print("Warning: jupedsim not available")
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.core.action_utils import extract_exit_name
+from scenarios.station_concordia.core.agent_builder import AgentBuilder
 from scenarios.station_concordia.core.evacuation_agent import EvacuationAgent
-from scenarios.station_concordia.core.game_master import ActionTranslator, ObservationGenerator
+from scenarios.station_concordia.core.performance_monitor import PerformanceTimer
+from scenarios.station_concordia.core.simulation_state_queries import SimulationStateQueries
+from scenarios.station_concordia.core.speed_utils import convert_speed_to_ms
+from scenarios.station_concordia.translation import ActionTranslator, ObservationGenerator
 
 logger = get_logger(__name__)
-
-
-# Performance timing utility
-class PerformanceTimer:
-    """Simple performance timer for profiling simulation bottlenecks."""
-
-    def __init__(self):
-        self.timings = {}
-        self.counts = {}
-        self.parallel_operations = set()  # Track which operations run in parallel
-
-    def record(self, name: str, duration: float, is_parallel: bool = False):
-        """Record a timing measurement."""
-        if name not in self.timings:
-            self.timings[name] = 0.0
-            self.counts[name] = 0
-
-        if is_parallel:
-            # For parallel operations, store max duration instead of sum
-            self.parallel_operations.add(name)
-            self.timings[name] = max(self.timings[name], duration)
-            self.counts[name] += 1
-        else:
-            # For sequential operations, sum as normal
-            self.timings[name] += duration
-            self.counts[name] += 1
-
-    @contextmanager
-    def measure(self, name: str, is_parallel: bool = False):
-        """Context manager for timing a block of code.
-
-        Args:
-            name: Name of the operation
-            is_parallel: If True, uses max instead of sum (for parallel operations)
-        """
-        start = time.perf_counter()
-        try:
-            yield
-        finally:
-            duration = time.perf_counter() - start
-            self.record(name, duration, is_parallel=is_parallel)
-
-    def report(self):
-        """Generate performance report."""
-        if not self.timings:
-            return "No timings recorded"
-
-        lines = ["\n=== PERFORMANCE PROFILE (Wall-Clock Time) ==="]
-        total_time = sum(self.timings.values())
-
-        # Sort by total time descending
-        sorted_items = sorted(self.timings.items(), key=lambda x: x[1], reverse=True)
-
-        for name, total in sorted_items:
-            count = self.counts[name]
-            avg = total / count if count > 0 else 0
-            percent = (total / total_time * 100) if total_time > 0 else 0
-
-            # Add indicator for parallel operations
-            parallel_mark = " [parallel]" if name in self.parallel_operations else ""
-
-            lines.append(
-                f"{name:30s}: {total:8.3f}s total | {avg:8.3f}s avg | {count:5d} calls | {percent:5.1f}%{parallel_mark}"
-            )
-
-        lines.append(f"{'TOTAL':30s}: {total_time:8.3f}s")
-        lines.append("=" * 80)
-
-        return "\n".join(lines)
 
 
 class HybridSimulationRunner:
@@ -158,6 +94,9 @@ class HybridSimulationRunner:
         self.output_file = output_file
         self.test_scenarios = test_scenarios or {}
 
+        # Simulation state queries
+        self.state_queries = SimulationStateQueries(jupedsim_simulation)
+
         # Store LLM provider reference (for usage stats)
         # The language_model is an AzureLLMConcordia instance directly
         self.llm_provider = language_model if hasattr(language_model, "get_usage_stats") else None
@@ -183,7 +122,13 @@ class HybridSimulationRunner:
             {}
         )  # Store original walking speeds for restoration
 
-        self._build_agents()
+        # Build agents using AgentBuilder
+        agent_builder = AgentBuilder(
+            language_model=language_model,
+            embedder=embedder,
+            station_layout_description=self.observation_generator._describe_geometry(),
+        )
+        self.concordia_agents, self.agent_status = agent_builder.build_agents(agents_config)
 
         # Tracking
         self.last_decision_time = (
@@ -227,70 +172,6 @@ class HybridSimulationRunner:
 
         # Performance profiling
         self.perf_timer = PerformanceTimer()
-
-    def _build_agents(self):
-        """Build Concordia agents from configurations."""
-        logger.info(f"Building {len(self.agent_configs)} Concordia agents...")
-
-        for agent_config in self.agent_configs:
-            agent_id = agent_config["id"]
-            logger.info(f"Building {agent_id}...")
-
-            # Create separate memory bank for each agent
-            memory_bank = basic_associative_memory.AssociativeMemoryBank(
-                sentence_embedder=self.embedder
-            )
-
-            # Create agent prefab
-            prefab = EvacuationAgent(params=agent_config)
-
-            # Build agent
-            agent = prefab.build(
-                model=self.model,
-                memory_bank=memory_bank,
-            )
-
-            self.concordia_agents[agent_id] = agent
-
-            # Phase 4.1: Initialize agent status
-            if agent_config.get("is_injured", False):
-                self.agent_status[agent_id] = "INJURED"
-            else:
-                self.agent_status[agent_id] = "EVACUATING"
-
-            # Add initial memories
-            self._initialize_agent_memory(agent, agent_config)
-
-        logger.info(f"Built {len(self.concordia_agents)} Concordia agents")
-
-    def _initialize_agent_memory(self, agent: entity_lib.Entity, config: dict[str, Any]):
-        """Initialize an agent's memory with background knowledge."""
-        # Add station layout as formative memory
-        layout_description = self.observation_generator._describe_geometry()
-
-        initial_memories = [
-            "I am at a train station.",
-            f"I am in the {config.get('initial_zone', 'platform')} area.",
-            "I am waiting for my train.",
-            "I am on my way to my destination.",
-            layout_description,  # Station layout info
-            "The station has clear signage for platforms and exits.",
-            "I notice other passengers waiting and walking around.",
-            "The atmosphere is calm and routine.",
-        ]
-
-        # Phase 4.1: Add injury-specific memories
-        if config.get("is_injured", False):
-            initial_memories.extend(
-                [
-                    "I am injured and moving slowly.",
-                    "I may need assistance during the evacuation.",
-                    "I am moving at a reduced pace due to my injury.",
-                ]
-            )
-
-        for memory in initial_memories:
-            agent.observe(memory)
 
     def run(self) -> dict[str, Any]:
         """
@@ -463,8 +344,8 @@ class HybridSimulationRunner:
 
             # Phase 1: Approaching - check if helper has reached injured agent
             if phase == "approaching":
-                helper_pos = self._get_agent_position(helper_id)
-                injured_pos = self._get_agent_position(helped_id)
+                helper_pos = self.state_queries.get_agent_position(helper_id)
+                injured_pos = self.state_queries.get_agent_position(helped_id)
 
                 # Calculate distance between helper and injured agent
                 distance = (
@@ -538,7 +419,7 @@ class HybridSimulationRunner:
                 self.jps_sim.set_agent_speed(helped_id, assisted_speed)
 
                 # Keep helped agent following helper by setting their target to helper's current position
-                helper_pos = self._get_agent_position(helper_id)
+                helper_pos = self.state_queries.get_agent_position(helper_id)
 
                 # Sanity check: if position is (0, 0), helper may have been removed
                 if helper_pos == (0.0, 0.0) or helper_pos == (0, 0):
@@ -552,7 +433,7 @@ class HybridSimulationRunner:
 
                 # Log occasionally to verify they're staying together
                 if int(self.current_sim_time) % 5 == 0:  # Every 5 seconds
-                    helped_pos = self._get_agent_position(helped_id)
+                    helped_pos = self.state_queries.get_agent_position(helped_id)
                     distance = (
                         (helper_pos[0] - helped_pos[0]) ** 2 + (helper_pos[1] - helped_pos[1]) ** 2
                     ) ** 0.5
@@ -767,7 +648,7 @@ class HybridSimulationRunner:
                 reasoning = self._parse_json_response(action)
 
             # Translate action to JuPedSim command
-            position = self._get_agent_position(agent_id)
+            position = self.state_queries.get_agent_position(agent_id)
             with self.perf_timer.measure("translate_action", is_parallel=True):
                 translated = self.action_translator.translate(agent_id, action, position)
 
@@ -775,7 +656,7 @@ class HybridSimulationRunner:
             self._extract_and_deliver_message(agent_id, action, position)
 
             # Phase 4.2: Detect route changes
-            new_exit = self._extract_exit_name(translated)
+            new_exit = extract_exit_name(translated, self.station_layout)
             old_exit = self.agent_destinations.get(agent_id)
             route_changed = False
 
@@ -883,11 +764,13 @@ class HybridSimulationRunner:
 
             try:
                 # Get agent state from JuPedSim
-                position = self._get_agent_position(agent_id)
+                position = self.state_queries.get_agent_position(agent_id)
                 # Get observation radius from config
                 help_config = self.test_scenarios.get("help_behavior", {})
                 observation_radius = help_config.get("observation_radius", 20.0)
-                nearby_agents = self._get_nearby_agents(agent_id, radius=observation_radius)
+                nearby_agents = self.state_queries.get_nearby_agents(
+                    agent_id, radius=observation_radius
+                )
 
                 # Enrich nearby_agents with target exit info (Phase 4.2)
                 for agent_info in nearby_agents:
@@ -895,7 +778,9 @@ class HybridSimulationRunner:
                     if other_id:
                         agent_info["target_exit"] = self.agent_destinations.get(other_id)
 
-                recent_events = self._get_recent_events()
+                recent_events = self.state_queries.get_recent_events(
+                    self.event_history, self.current_sim_time
+                )
 
                 # Phase 5: Get messages received by this agent
                 received_messages = self.agent_messages.get(agent_id, [])
@@ -930,58 +815,6 @@ class HybridSimulationRunner:
                 )
 
         return observations
-
-    def _get_agent_position(self, agent_id: str) -> tuple[float, float]:
-        """Get agent's current position from JuPedSim."""
-        # TODO: Verify this works with real JuPedSim simulation
-        try:
-            return self.jps_sim.get_agent_position(agent_id)
-        except Exception as e:
-            logger.warning(f"Failed to get position for {agent_id}: {e}")
-            return (0.0, 0.0)
-
-    def _get_nearby_agents(self, agent_id: str, radius: float) -> list[dict[str, Any]]:
-        """Get information about nearby agents."""
-        # TODO: Verify this works with real JuPedSim simulation
-        try:
-            return self.jps_sim.get_nearby_agents(agent_id, radius)
-        except Exception as e:
-            logger.warning(f"Failed to get nearby agents for {agent_id}: {e}")
-            return []
-
-    def _get_recent_events(self) -> list[str]:
-        """Get recent events relevant to agents (only events that have already occurred)."""
-        # Return only events that have occurred (time <= current_sim_time)
-        occurred_events = [
-            e["message"] for e in self.event_history if e["time"] <= self.current_sim_time
-        ]
-        # Return last 3
-        return occurred_events[-3:]
-
-    def _extract_exit_name(self, translated_action: dict[str, Any]) -> str | None:
-        """
-        Extract the target exit name from a translated action.
-
-        Returns:
-            Exit name if action is moving to an exit, None otherwise
-        """
-        if translated_action["action_type"] != "move":
-            return None
-
-        target_coords = translated_action.get("target")
-        if not target_coords:
-            return None
-
-        # Match coordinates to exit name
-        for exit_name, exit_coords in self.station_layout["exits"].items():
-            # Check if coordinates match (within 1m tolerance)
-            if (
-                abs(target_coords[0] - exit_coords[0]) < 1.0
-                and abs(target_coords[1] - exit_coords[1]) < 1.0
-            ):
-                return exit_name
-
-        return None
 
     def _extract_and_deliver_message(
         self, sender_id: str, action: str, sender_position: tuple[float, float]
@@ -1039,7 +872,7 @@ class HybridSimulationRunner:
                 radius = self.message_radius  # Default 10m
 
             # Find nearby agents
-            nearby_agents = self._get_nearby_agents(sender_id, radius)
+            nearby_agents = self.state_queries.get_nearby_agents(sender_id, radius)
 
             # Filter recipients based on target_agent
             recipient_ids = []
@@ -1163,38 +996,6 @@ class HybridSimulationRunner:
             logger.warning(f"Error extracting message from {sender_id}: {e}")
             return None
 
-    def _convert_speed_to_ms(self, speed_str: str | None) -> float | None:
-        """Convert speed string to m/s value sampled from normal distribution.
-
-        Args:
-            speed_str: Speed descriptor (slow_walk, normal_walk, brisk_walk, jog, run)
-
-        Returns:
-            Speed in m/s sampled from appropriate distribution, or None if not specified
-        """
-        if not speed_str:
-            return None
-
-        import numpy as np
-
-        # Define mean and std for each speed category
-        # Based on pedestrian dynamics research, with variation for different urgency levels
-        speed_distributions = {
-            "slow_walk": {"mean": 0.5, "std": 0.10, "min": 0.3, "max": 0.8},
-            "normal_walk": {"mean": 1.0, "std": 0.20, "min": 0.6, "max": 1.4},
-            "brisk_walk": {"mean": 1.5, "std": 0.25, "min": 1.0, "max": 2.0},
-            "jog": {"mean": 2.0, "std": 0.30, "min": 1.5, "max": 2.5},
-            "run": {"mean": 2.5, "std": 0.35, "min": 2.0, "max": 3.0},
-        }
-
-        dist = speed_distributions.get(speed_str.lower())
-        if not dist:
-            return None
-
-        # Sample from normal distribution and clip to min/max
-        speed = np.random.normal(dist["mean"], dist["std"])
-        return max(dist["min"], min(dist["max"], speed))
-
     def _apply_action_to_jupedsim(self, agent_id: str, translated_action: dict[str, Any]):
         """Apply a translated action to the JuPedSim simulation."""
         action_type = translated_action["action_type"]
@@ -1211,7 +1012,7 @@ class HybridSimulationRunner:
             # Phase 4.3: Apply dynamic speed if specified
             speed_str = translated_action.get("speed")
             if speed_str:
-                speed_ms = self._convert_speed_to_ms(speed_str)
+                speed_ms = convert_speed_to_ms(speed_str)
                 if speed_ms:
                     self.jps_sim.set_agent_speed(agent_id, speed_ms)
                     logger.debug(f"Set {agent_id} speed to {speed_ms:.2f} m/s ({speed_str})")
@@ -1230,8 +1031,10 @@ class HybridSimulationRunner:
                 observation_radius = help_config.get("observation_radius", 20.0)
 
                 # Find nearest injured agent within observation radius
-                position = self._get_agent_position(agent_id)
-                nearby_agents = self._get_nearby_agents(agent_id, radius=observation_radius)
+                position = self.state_queries.get_agent_position(agent_id)
+                nearby_agents = self.state_queries.get_nearby_agents(
+                    agent_id, radius=observation_radius
+                )
 
                 injured_nearby = None
                 for agent_info in nearby_agents:
@@ -1253,7 +1056,7 @@ class HybridSimulationRunner:
                     )  # Default 15s if not in config
 
                     # Get injured agent's position
-                    injured_position = self._get_agent_position(injured_nearby)
+                    injured_position = self.state_queries.get_agent_position(injured_nearby)
 
                     self.help_events.append(
                         {
@@ -1319,7 +1122,7 @@ class HybridSimulationRunner:
 
             elif action_type == "move" and target:
                 # Extract the NEW exit name from this action (if moving to an exit)
-                new_exit_name = self._extract_exit_name(translated_action)
+                new_exit_name = extract_exit_name(translated_action, self.station_layout)
 
                 if new_exit_name:
                     # Agent is moving to an exit - update destination tracking
@@ -1345,7 +1148,7 @@ class HybridSimulationRunner:
                     self.jps_sim.set_agent_target(agent_id, target)
             elif action_type == "wait":
                 # Phase 4.3: Track wait events with reasons
-                current_position = self._get_agent_position(agent_id)
+                current_position = self.state_queries.get_agent_position(agent_id)
                 wait_reason = translated_action.get("wait_reason", "unspecified")
 
                 # Different behavior based on wait reason
