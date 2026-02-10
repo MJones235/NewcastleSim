@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from scenarios.common.logger import get_logger  # noqa: E402
 from scenarios.station_concordia.config.config_loader import ConfigLoader  # noqa: E402
+from scenarios.station_concordia.reporting.results_writer import ResultsWriter  # noqa: E402
 from scenarios.station_concordia.setup.agent_manager import AgentManager  # noqa: E402
 from scenarios.station_concordia.setup.jupedsim_setup import JuPedSimSetup  # noqa: E402
 from scenarios.station_concordia.setup.llm_setup import LLMSetup  # noqa: E402
@@ -148,7 +149,23 @@ def run_simulation(
     results = runner.run()
 
     # Step 8: Save final results
-    runner.save_results(decisions_file)
+    ResultsWriter.save_final_results(
+        decisions_file,
+        runner.agent_decisions,
+        runner.jps_sim.get_all_agent_positions(),
+        runner.current_sim_time,
+        runner.event_manager.event_history,
+        runner.event_manager.blocked_exits,
+        runner.active_helping_pairs,
+        runner.message_system.message_history,
+        runner.help_events,
+        runner.wait_events,
+        runner.decision_interval,
+        runner.max_steps,
+        len(runner.concordia_agents),
+        runner.perf_timer.report(),
+        runner.llm_provider,
+    )
     logger.info(f"Simulation complete. Results saved to {output_dir}")
 
     return results, run_id, decisions_file
@@ -194,7 +211,7 @@ def main():
         for key, value in results.items():
             logger.info(f"  {key}: {value}")
 
-        logger.info("=" * 60) 
+        logger.info("=" * 60)
         logger.info("Simulation complete!")
         logger.info("=" * 60)
 

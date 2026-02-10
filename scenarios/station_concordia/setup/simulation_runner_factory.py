@@ -9,7 +9,6 @@ This module is responsible for:
 """
 
 from pathlib import Path
-from typing import Any, Dict
 
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.core.hybrid_simulation import HybridSimulationRunner
@@ -94,7 +93,7 @@ class SimulationRunnerFactory:
         """
         events_config = config.get("events", [])
         for event in events_config:
-            runner.event_history.append(
+            runner.event_manager.event_history.append(
                 {
                     "time": event.get("time", 0.0),
                     "message": event.get("message", ""),
