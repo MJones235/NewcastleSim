@@ -1,0 +1,203 @@
+"""
+Spatial analysis for observation generation.
+
+Handles zone identification, exit queries, and geometry-based calculations.
+"""
+
+from typing import Any
+
+from scenarios.common.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class SpatialAnalyzer:
+    """
+    Analyzes spatial relationships in the station environment.
+
+    Handles:
+    - Zone identification from agent position
+    - Nearest exit calculations
+    - Distance categorization
+    - Visual range checks for blocked exits
+    """
+
+    def __init__(self, station_layout: dict[str, Any]):
+        """
+        Initialize spatial analyzer.
+
+        Args:
+            station_layout: Station geometry and zone information
+        """
+        self.zones = station_layout.get("zones", {})
+        self.zones_polygons = station_layout.get("zones_polygons", {})
+        self.exits = station_layout.get("exits", {})
+        self.exits_polygons = station_layout.get("exits_polygons", {})
+        self.walkable_areas = station_layout.get("walkable_areas", {})
+
+    def identify_zone(self, position: tuple[float, float]) -> str:
+        """
+        Identify which zone a position is in.
+
+        Priority order (highest to lowest):
+        1. Main footbridge (foot_bridge)
+        2. Platform zones (jps.platform_N)
+        3. Connector zones (platform_N_to_M)
+        4. General zones (everything else)
+
+        Args:
+            position: (x, y) coordinates
+
+        Returns:
+            Zone name or "unknown area"
+        """
+
+        def _covers_or_contains(polygon, point):
+            try:
+                if polygon.covers(point):
+                    return True
+            except Exception:
+                pass
+            try:
+                return polygon.contains(point)
+            except Exception:
+                return False
+
+        def _is_main_footbridge(zone_name: str) -> bool:
+            """Check if this is the main footbridge zone."""
+            name_lower = zone_name.lower()
+            return "foot" in name_lower and "bridge" in name_lower and "_to_" not in name_lower
+
+        def _is_platform_zone(zone_name: str) -> bool:
+            """Check if this is a platform zone."""
+            name_lower = zone_name.lower()
+            return "platform" in name_lower and "_to_" not in name_lower
+
+        def _is_connector_zone(zone_name: str) -> bool:
+            """Check if this is a connector zone between platforms."""
+            name_lower = zone_name.lower()
+            return "platform_" in name_lower and "_to_" in name_lower
+
+        if self.zones_polygons:
+            try:
+                from shapely.geometry import Point
+
+                point = Point(position)
+
+                # Priority 1: Check main footbridge first
+                for zone_name, polygon in self.zones_polygons.items():
+                    if _is_main_footbridge(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 2: Check platform zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if _is_platform_zone(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 3: Check connector zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if _is_connector_zone(zone_name):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+
+                # Priority 4: Check all other zones
+                for zone_name, polygon in self.zones_polygons.items():
+                    if (
+                        not _is_main_footbridge(zone_name)
+                        and not _is_platform_zone(zone_name)
+                        and not _is_connector_zone(zone_name)
+                    ):
+                        if _covers_or_contains(polygon, point):
+                            return zone_name
+            except Exception:
+                pass
+
+        if self.walkable_areas:
+            try:
+                from shapely.geometry import Point
+
+                point = Point(position)
+                for area_name, polygon in self.walkable_areas.items():
+                    if _covers_or_contains(polygon, point):
+                        return area_name
+            except Exception:
+                pass
+
+        # Fallback to rectangular bounds
+        for zone_name, zone_bounds in self.zones.items():
+            if self._point_in_bounds(position, zone_bounds):
+                return zone_name
+        return "unknown area"
+
+    def get_nearest_exit_info(self, position: tuple[float, float]) -> str:
+        """
+        Get information about the nearest exit.
+
+        Args:
+            position: (x, y) coordinates
+
+        Returns:
+            String like "exit_name (distance_category)"
+        """
+        if not self.exits:
+            return "unknown"
+
+        min_dist = float("inf")
+        nearest_name = "unknown"
+
+        for name, coords in self.exits.items():
+            dist = ((position[0] - coords[0]) ** 2 + (position[1] - coords[1]) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                nearest_name = name
+
+        # Categorize distance to prevent small changes from triggering LLM calls
+        if min_dist >= 100:
+            dist_category = "100m+"
+        elif min_dist >= 50:
+            dist_category = "50-100m"
+        else:
+            dist_category = "<50m"
+        return f"{nearest_name} ({dist_category})"
+
+    def get_visible_blocked_exits(
+        self, position: tuple[float, float], blocked_exits: set[str], visual_range: float = 20.0
+    ) -> list[dict[str, Any]]:
+        """
+        Get blocked exits within visual range.
+
+        Args:
+            position: Agent's (x, y) position
+            blocked_exits: Set of blocked exit names
+            visual_range: Maximum distance for visual observation (meters)
+
+        Returns:
+            List of visible blocked exits with name and distance category
+        """
+        visible_blocked = []
+
+        for exit_name in blocked_exits:
+            if exit_name in self.exits:
+                exit_pos = self.exits[exit_name]
+                distance = (
+                    (position[0] - exit_pos[0]) ** 2 + (position[1] - exit_pos[1]) ** 2
+                ) ** 0.5
+
+                if distance < visual_range:
+                    if distance >= 50:
+                        dist_cat = "50-100m"
+                    elif distance >= 10:
+                        dist_cat = "<50m"
+                    else:
+                        dist_cat = "very close"
+
+                    visible_blocked.append({"name": exit_name, "distance": dist_cat})
+
+        return visible_blocked
+
+    def _point_in_bounds(self, point: tuple[float, float], bounds: dict) -> bool:
+        """Check if a point is within rectangular bounds."""
+        x, y = point
+        return bounds["x_min"] <= x <= bounds["x_max"] and bounds["y_min"] <= y <= bounds["y_max"]

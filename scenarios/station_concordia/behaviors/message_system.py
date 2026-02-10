@@ -8,10 +8,12 @@ Handles:
 - Conversation tracking between agents
 """
 
-import json
 from typing import Any
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.behaviors.conversation_tracker import ConversationTracker
+from scenarios.station_concordia.behaviors.message_memory import MessageMemory
+from scenarios.station_concordia.behaviors.message_parser import MessageParser
 
 logger = get_logger(__name__)
 
@@ -41,20 +43,14 @@ class MessageSystem:
             memory_window: How long to remember sent messages (seconds)
         """
         self.default_radius = default_radius
-        self.memory_window = memory_window
 
         # Message state
         self.agent_messages: dict[str, list[dict[str, Any]]] = {}  # agent_id -> received messages
         self.message_history: list[dict[str, Any]] = []  # All messages sent
-        self.agent_sent_messages: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # agent_id -> recent sent messages
-        self.agent_heard_messages: dict[str, set[str]] = (
-            {}
-        )  # agent_id -> heard message content
-        self.agent_conversations: dict[str, dict[str, list[dict]]] = (
-            {}
-        )  # agent_id -> {other_agent_id -> conversation}
+
+        # Initialize subsystems
+        self.memory = MessageMemory(memory_window)
+        self.conversation_tracker = ConversationTracker()
 
     def extract_and_deliver_message(
         self,
@@ -82,25 +78,21 @@ class MessageSystem:
             Message info dict if message was sent, None otherwise
         """
         try:
-            # Parse action JSON to extract message
-            json_start = action.find("{")
-            if json_start > 0:
-                action = action[json_start:]
-
-            data = json.loads(action)
-            message_text = data.get("message")
-            message_type = data.get("message_type")  # directed, shout, quiet
-            target_agent = data.get("target_agent")  # agent_id, nearest_injured, or null
-
-            if not message_text or message_text == "null":
+            # Parse message data
+            message_data = MessageParser.extract_message_data(action)
+            if message_data is None:
                 return None
 
+            message_text = message_data["message_text"]
+            message_type = message_data["message_type"]
+            target_agent = message_data["target_agent"]
+
             # Check message memory - prevent repetition
-            if self._is_repeat_message(sender_id, message_text, current_sim_time):
+            if self.memory.is_repeat_message(sender_id, message_text, current_sim_time):
                 return None
 
             # Determine message radius based on type
-            radius = self._get_message_radius(message_type)
+            radius = MessageParser.get_message_radius(message_type, self.default_radius)
 
             # Find nearby agents
             nearby_agents = state_queries.get_nearby_agents(sender_id, radius)
@@ -135,15 +127,13 @@ class MessageSystem:
             self.message_history.append(message_record)
 
             # Track this message in sender's sent history
-            self._record_sent_message(sender_id, message_text, current_sim_time)
+            self.memory.record_sent_message(sender_id, message_text, current_sim_time)
 
             # Log message with type indicator
-            type_emoji = {"directed": "💬", "shout": "📢", "quiet": "🤫"}.get(message_type, "📣")
+            type_emoji = MessageParser.get_type_emoji(message_type)
             logger.info(f"{type_emoji} {sender_id} → {len(recipient_ids)} people: '{message_text}'")
             return message_record
 
-        except json.JSONDecodeError:
-            return None
         except Exception as e:
             logger.warning(f"Error extracting message from {sender_id}: {e}")
             return None
@@ -156,38 +146,7 @@ class MessageSystem:
 
     def get_conversation_history(self, agent_id: str) -> dict[str, list[dict]]:
         """Get conversation history for an agent."""
-        return self.agent_conversations.get(agent_id, {})
-
-    def _is_repeat_message(self, sender_id: str, message_text: str, current_time: float) -> bool:
-        """Check if this message was recently sent by the same agent."""
-        if sender_id not in self.agent_sent_messages:
-            return False
-
-        # Clean old messages outside memory window
-        recent_cutoff = current_time - self.memory_window
-        self.agent_sent_messages[sender_id] = [
-            msg for msg in self.agent_sent_messages[sender_id] if msg["time"] >= recent_cutoff
-        ]
-
-        # Check if similar message was recently sent
-        for recent_msg in self.agent_sent_messages[sender_id]:
-            if recent_msg["text"].lower() == message_text.lower():
-                logger.debug(
-                    f"{sender_id} suppressed repeat message: '{message_text}' "
-                    f"(last sent {current_time - recent_msg['time']:.0f}s ago)"
-                )
-                return True
-
-        return False
-
-    def _get_message_radius(self, message_type: str | None) -> float:
-        """Determine message radius based on type."""
-        if message_type == "quiet":
-            return 3.0  # Only very close people
-        elif message_type == "shout":
-            return 15.0  # Wider range for warnings
-        else:
-            return self.default_radius  # Default 10m
+        return self.conversation_tracker.get_conversation_history(agent_id)
 
     def _find_recipients(
         self,
@@ -204,9 +163,7 @@ class MessageSystem:
             if target_agent == "nearest_injured":
                 # Find nearest injured agent
                 injured = [
-                    a
-                    for a in nearby_agents
-                    if agent_status.get(a["id"], "").startswith("INJURED")
+                    a for a in nearby_agents if agent_status.get(a["id"], "").startswith("INJURED")
                 ]
                 if injured:
                     recipient_ids = [injured[0]["id"]]
@@ -235,19 +192,11 @@ class MessageSystem:
         """Deliver message to all recipients with deduplication."""
         for recipient_id in recipient_ids:
             # Skip if recipient has heard this exact message recently
-            if recipient_id not in self.agent_heard_messages:
-                self.agent_heard_messages[recipient_id] = set()
+            if self.memory.has_heard_message(recipient_id, message_text):
+                continue
 
-            # Clean old heard messages
-            if len(self.agent_heard_messages[recipient_id]) > 50:
-                self.agent_heard_messages[recipient_id].clear()
-
-            # Check if already heard
-            msg_key = f"{message_text.lower()[:30]}"  # First 30 chars normalized
-            if msg_key in self.agent_heard_messages[recipient_id]:
-                continue  # Skip delivering duplicate
-
-            self.agent_heard_messages[recipient_id].add(msg_key)
+            # Mark as heard
+            self.memory.mark_as_heard(recipient_id, message_text)
 
             # Deliver to recipient
             if recipient_id not in self.agent_messages:
@@ -263,44 +212,6 @@ class MessageSystem:
             )
 
             # Track conversation history between sender and recipient
-            self._track_conversation(sender_id, recipient_id, message_text, current_time)
-
-    def _track_conversation(
-        self, sender_id: str, recipient_id: str, message_text: str, current_time: float
-    ):
-        """Track conversation history between two agents."""
-        # Track on sender's side
-        if sender_id not in self.agent_conversations:
-            self.agent_conversations[sender_id] = {}
-        if recipient_id not in self.agent_conversations[sender_id]:
-            self.agent_conversations[sender_id][recipient_id] = []
-
-        self.agent_conversations[sender_id][recipient_id].append(
-            {
-                "time": current_time,
-                "from": sender_id,
-                "to": recipient_id,
-                "text": message_text,
-            }
-        )
-
-        # Also track on recipient's side
-        if recipient_id not in self.agent_conversations:
-            self.agent_conversations[recipient_id] = {}
-        if sender_id not in self.agent_conversations[recipient_id]:
-            self.agent_conversations[recipient_id][sender_id] = []
-
-        self.agent_conversations[recipient_id][sender_id].append(
-            {
-                "time": current_time,
-                "from": sender_id,
-                "to": recipient_id,
-                "text": message_text,
-            }
-        )
-
-    def _record_sent_message(self, sender_id: str, message_text: str, current_time: float):
-        """Record a message in sender's sent history."""
-        if sender_id not in self.agent_sent_messages:
-            self.agent_sent_messages[sender_id] = []
-        self.agent_sent_messages[sender_id].append({"time": current_time, "text": message_text})
+            self.conversation_tracker.track_message(
+                sender_id, recipient_id, message_text, current_time
+            )
