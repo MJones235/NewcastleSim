@@ -43,7 +43,7 @@ class MessageParser:
             data = json.loads(action)
             message_text = data.get("message")
             message_type = data.get("message_type")  # directed, shout, quiet
-            target_agent = data.get("target_agent")  # agent_id, nearest_injured, or null
+            target_agent = data.get("target_agent")  # agent_id or null
 
             if not message_text or message_text == "null":
                 return None

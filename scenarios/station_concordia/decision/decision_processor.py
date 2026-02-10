@@ -120,14 +120,6 @@ class DecisionProcessor:
             if agent_id in self.exited_agents:
                 continue
 
-            # Agents being helped still make decisions (can receive/send messages)
-            # but their movement is controlled by the helper via speed synchronization
-            # NOTE: We don't skip them here anymore so they can respond to messages
-
-            # Note: Helper agents are NOT skipped - they make free decisions
-            # Their observations will indicate they're helping someone
-            # We enforce speed synchronization separately in helping_system_manager
-
             agents_to_process.append(agent_id)
             task = self._process_single_agent(
                 agent_id, agent, observations, exits, zones, current_sim_time
@@ -185,7 +177,7 @@ class DecisionProcessor:
                         '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)",\n'
                         '  "message": "Short casual message or null",\n'
                         '  "message_type": "directed|shout|quiet or null",\n'
-                        '  "target_agent": "agent_id, nearest_injured, or null"\n'
+                        '  "target_agent": "agent_id, or null"\n'
                         "}}\n\n"
                         f"Available exits: {[e['name'] for e in exits]}\n"
                         f"Available zones: {zones}\n\n"

@@ -160,17 +160,8 @@ class MessageSystem:
         recipient_ids = []
 
         if target_agent and target_agent != "null":
-            if target_agent == "nearest_injured":
-                # Find nearest injured agent
-                injured = [
-                    a for a in nearby_agents if agent_status.get(a["id"], "").startswith("INJURED")
-                ]
-                if injured:
-                    recipient_ids = [injured[0]["id"]]
-            elif target_agent.startswith("agent_"):
-                # Specific agent targeted
-                if any(a["id"] == target_agent for a in nearby_agents):
-                    recipient_ids = [target_agent]
+            if any(a["id"] == target_agent for a in nearby_agents):
+                recipient_ids = [target_agent]
         else:
             # Broadcast to all nearby (but filter out exited and self)
             recipient_ids = [
