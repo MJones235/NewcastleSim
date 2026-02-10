@@ -12,7 +12,7 @@ from concordia.language_model import language_model
 from concordia.typing import entity as entity_lib
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.evacuation_agent import EvacuationAgent
+from scenarios.station_concordia.concordia_integration.evacuation_agent import EvacuationAgent
 
 logger = get_logger(__name__)
 

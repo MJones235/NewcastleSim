@@ -18,7 +18,7 @@ from typing import Any
 from concordia.typing import entity as entity_lib
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.action_utils import extract_exit_name
+from scenarios.station_concordia.decision.action_utils import extract_exit_name
 
 logger = get_logger(__name__)
 

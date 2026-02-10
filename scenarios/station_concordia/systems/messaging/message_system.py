@@ -11,9 +11,9 @@ Handles:
 from typing import Any
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.behaviors.conversation_tracker import ConversationTracker
-from scenarios.station_concordia.behaviors.message_memory import MessageMemory
-from scenarios.station_concordia.behaviors.message_parser import MessageParser
+from scenarios.station_concordia.systems.messaging.conversation_tracker import ConversationTracker
+from scenarios.station_concordia.systems.messaging.message_memory import MessageMemory
+from scenarios.station_concordia.systems.messaging.message_parser import MessageParser
 
 logger = get_logger(__name__)
 

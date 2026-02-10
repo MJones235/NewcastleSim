@@ -34,19 +34,19 @@ except ImportError:
     print("Warning: jupedsim not available")
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.behaviors import MessageSystem
-from scenarios.station_concordia.core.action_executor import ActionExecutor
-from scenarios.station_concordia.core.agent_builder import AgentBuilder
-from scenarios.station_concordia.core.decision_processor import DecisionProcessor
-from scenarios.station_concordia.core.event_manager import EventManager
-from scenarios.station_concordia.core.exit_tracker import ExitTracker
-from scenarios.station_concordia.core.helping_system import HelpingSystemManager
-from scenarios.station_concordia.core.observation_coordinator import ObservationCoordinator
-from scenarios.station_concordia.core.performance_monitor import PerformanceTimer
-from scenarios.station_concordia.core.simulation_state_queries import SimulationStateQueries
+from scenarios.station_concordia.concordia_integration.agent_builder import AgentBuilder
+from scenarios.station_concordia.coordination.observation_coordinator import ObservationCoordinator
+from scenarios.station_concordia.coordination.simulation_state_queries import SimulationStateQueries
+from scenarios.station_concordia.decision.action_executor import ActionExecutor
+from scenarios.station_concordia.decision.decision_processor import DecisionProcessor
+from scenarios.station_concordia.jps_integration.exit_tracker import ExitTracker
 from scenarios.station_concordia.reporting.financial_reporter import FinancialReporter
 from scenarios.station_concordia.reporting.results_writer import ResultsWriter
+from scenarios.station_concordia.systems.event_manager import EventManager
+from scenarios.station_concordia.systems.helping_system import HelpingSystemManager
+from scenarios.station_concordia.systems.messaging import MessageSystem
 from scenarios.station_concordia.translation import ActionTranslator, ObservationGenerator
+from scenarios.station_concordia.utils.performance_monitor import PerformanceTimer
 
 logger = get_logger(__name__)
 

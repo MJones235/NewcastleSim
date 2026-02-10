@@ -131,7 +131,7 @@ class ActionTranslator:
                     }
 
         except json.JSONDecodeError:
-            logger.warning(f"Failed to parse action as JSON, trying LLM fallback: {action[:100]}")
+            logger.warning(f"Failed to parse action as JSON: {action[:100]}")
 
         return {
             "action_type": "wait",

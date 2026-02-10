@@ -10,7 +10,9 @@ This module is responsible for:
 from pathlib import Path
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.jupedsim_integration import ConcordiaJuPedSimulation
+from scenarios.station_concordia.jps_integration.jupedsim_integration import (
+    ConcordiaJuPedSimulation,
+)
 
 logger = get_logger(__name__)
 

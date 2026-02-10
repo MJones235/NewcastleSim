@@ -16,8 +16,8 @@ import random
 from typing import Any
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.action_utils import extract_exit_name
-from scenarios.station_concordia.core.speed_utils import convert_speed_to_ms
+from scenarios.station_concordia.decision.action_utils import extract_exit_name
+from scenarios.station_concordia.utils.speed_utils import convert_speed_to_ms
 
 logger = get_logger(__name__)
 

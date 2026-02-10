@@ -9,11 +9,18 @@ Architecture:
 - JuPedSim: Pedestrian movement simulation
 - Translation Layer: Bridges the two systems
 
-Components:
-- core/: Core simulation logic
+Directory Structure:
+- coordination/: Main simulation orchestration
+- jps_integration/: JuPedSim integration layer
+- concordia_integration/: Concordia/LLM integration
+- decision/: Decision-making and action execution
+- systems/: Specialized systems (helping, events, messaging)
+- translation/: Concordia ↔ JuPedSim translation
 - config/: Configuration files
-- agents/: Custom Concordia agent prefabs
-- game_master/: Custom Game Master for evacuation scenarios
+- setup/: Initialization and factories
+- reporting/: Results and analytics
+- visualization/: Viewer launching
+- utils/: Utilities
 """
 
 __version__ = "0.1.0"

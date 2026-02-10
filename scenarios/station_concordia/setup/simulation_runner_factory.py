@@ -11,7 +11,7 @@ This module is responsible for:
 from pathlib import Path
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.hybrid_simulation import HybridSimulationRunner
+from scenarios.station_concordia.coordination.hybrid_simulation import HybridSimulationRunner
 
 logger = get_logger(__name__)
 

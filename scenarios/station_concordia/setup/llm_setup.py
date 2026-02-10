@@ -8,7 +8,7 @@ This module is responsible for:
 """
 
 import os
-from typing import Callable, Tuple
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 
@@ -21,7 +21,7 @@ class LLMSetup:
     """Handles language model and embedder initialization."""
 
     @staticmethod
-    def setup_language_model(config: dict) -> Tuple[object, Callable]:
+    def setup_language_model(config: dict) -> tuple[object, Callable]:
         """
         Setup the language model and embedder.
 
@@ -53,7 +53,9 @@ class LLMSetup:
         try:
             import sentence_transformers
 
-            from scenarios.station_concordia.core.azure_llm_concordia import AzureLLMConcordia
+            from scenarios.station_concordia.concordia_integration.azure_llm_concordia import (
+                AzureLLMConcordia,
+            )
 
             # Create Azure LLM client designed for Concordia
             # Uses synchronous REST API calls to avoid async/sync conflicts

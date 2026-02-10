@@ -6,6 +6,6 @@ This package contains domain-specific behavior coordinators:
 - Helping coordinator: Helper-injured agent coordination and synchronization
 """
 
-from scenarios.station_concordia.behaviors.message_system import MessageSystem
+from scenarios.station_concordia.systems.messaging.message_system import MessageSystem
 
 __all__ = ["MessageSystem"]

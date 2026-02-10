@@ -18,9 +18,9 @@ from typing import Any
 import jupedsim as jps
 
 from scenarios.common.logger import get_logger
-from scenarios.station_concordia.core.agent_tracker import AgentTracker
-from scenarios.station_concordia.core.exit_manager import ExitManager
-from scenarios.station_concordia.core.geometry_manager import GeometryManager
+from scenarios.station_concordia.jps_integration.agent_tracker import AgentTracker
+from scenarios.station_concordia.jps_integration.exit_manager import ExitManager
+from scenarios.station_concordia.jps_integration.geometry_manager import GeometryManager
 from scenarios.station_jupedsim.core.stage_manager import StageManager
 
 logger = get_logger(__name__)
