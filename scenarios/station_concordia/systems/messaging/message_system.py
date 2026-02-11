@@ -59,7 +59,6 @@ class MessageSystem:
         sender_position: tuple[float, float],
         current_sim_time: float,
         state_queries: Any,  # SimulationStateQueries instance
-        agent_status: dict[str, str],
         exited_agents: set[str],
     ) -> dict[str, Any] | None:
         """
@@ -71,7 +70,6 @@ class MessageSystem:
             sender_position: Current position of sender
             current_sim_time: Current simulation time
             state_queries: SimulationStateQueries instance for finding nearby agents
-            agent_status: Dict mapping agent_id to status (for finding injured agents)
             exited_agents: Set of agent IDs who have exited
 
         Returns:
@@ -99,7 +97,7 @@ class MessageSystem:
 
             # Filter recipients based on target_agent
             recipient_ids = self._find_recipients(
-                target_agent, nearby_agents, agent_status, exited_agents, sender_id
+                target_agent, nearby_agents, exited_agents, sender_id
             )
 
             if not recipient_ids:
@@ -152,7 +150,6 @@ class MessageSystem:
         self,
         target_agent: str | None,
         nearby_agents: list[dict[str, Any]],
-        agent_status: dict[str, str],
         exited_agents: set[str],
         sender_id: str,
     ) -> list[str]:

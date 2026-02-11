@@ -46,7 +46,10 @@ class ObservationGenerator:
         events: list[str],
         sim_time: float,
         blocked_exits: set[str] | None = None,
-        agent_status: dict[str, str] | None = None,
+        agent_injured: set[str] | None = None,
+        agent_action: dict[str, str] | None = None,
+        helping_relationships=None,
+        state_queries=None,
         received_messages: list[dict[str, Any]] | None = None,
         conversation_history: dict[str, list[dict]] | None = None,
     ) -> str:
@@ -60,7 +63,10 @@ class ObservationGenerator:
             events: Recent events (announcements, alarms, etc.)
             sim_time: Current simulation time
             blocked_exits: Set of blocked exit names (for visual observation)
-            agent_status: Dict mapping agent_id to status (EVACUATING, HELPING, WAITING, INJURED)
+            agent_injured: Set of injured agent IDs (physical capability dimension)
+            agent_action: Dict of agent_id -> action ("moving"|"waiting")
+            helping_relationships: HelpingRelationships tracker (social dimension)
+            state_queries: SimulationStateQueries for position lookups (optional)
             received_messages: List of messages received from nearby agents
             conversation_history: Dict mapping other_agent_id to conversation history
 
@@ -70,8 +76,10 @@ class ObservationGenerator:
         observations = []
         if blocked_exits is None:
             blocked_exits = set()
-        if agent_status is None:
-            agent_status = {}
+        if agent_injured is None:
+            agent_injured = set()
+        if agent_action is None:
+            agent_action = {}
         if received_messages is None:
             received_messages = []
         if conversation_history is None:
@@ -91,12 +99,16 @@ class ObservationGenerator:
         observations.append(f"The area is {density}.")
 
         # Phase 4.1: Agent's own status
-        status_lines = ObservationFormatter.format_own_status(agent_id, agent_status)
+        status_lines = ObservationFormatter.format_own_status(
+            agent_id, agent_injured, agent_action, helping_relationships, state_queries
+        )
         observations.extend(status_lines)
 
         # Nearby agent behaviors
         if nearby_agents:
-            behaviors = self.crowd_analyzer.summarize_behaviors(nearby_agents, agent_status)
+            behaviors = self.crowd_analyzer.summarize_behaviors(
+                nearby_agents, agent_injured, helping_relationships
+            )
             observations.append(behaviors)
 
             # Phase 5.1: List nearby agent IDs for targeting messages

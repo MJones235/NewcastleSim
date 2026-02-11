@@ -32,14 +32,18 @@ class CrowdAnalyzer:
         self.exits = exits
 
     def summarize_behaviors(
-        self, nearby_agents: list[dict[str, Any]], agent_status: dict[str, str]
+        self,
+        nearby_agents: list[dict[str, Any]],
+        agent_injured: set[str],
+        helping_relationships,
     ) -> str:
         """
-        Summarize what nearby agents are doing.
+        Summarize what nearby agents are doing using three-dimensional model.
 
         Args:
             nearby_agents: List of nearby agent info dictionaries
-            agent_status: Dict mapping agent_id to status string
+            agent_injured: Set of injured agent IDs
+            helping_relationships: HelpingRelationships tracker
 
         Returns:
             Natural language summary of behaviors
@@ -51,12 +55,18 @@ class CrowdAnalyzer:
         for agent in nearby_agents:
             agent_id = agent.get("id")
             if agent_id:
-                status = agent_status.get(agent_id, "EVACUATING")
                 distance = agent.get("distance", 999)
 
-                if status == "INJURED" and distance < 20.0:
+                # Check if injured (physical capability dimension)
+                if agent_id in agent_injured and distance < 20.0:
                     injured_nearby.append(agent_id)
-                elif status == "HELPING" and distance < 20.0:
+
+                # Check if helping (social relationship dimension)
+                if (
+                    helping_relationships
+                    and helping_relationships.is_helping(agent_id)
+                    and distance < 20.0
+                ):
                     helping_nearby.append(agent_id)
 
         # Build behavior summary

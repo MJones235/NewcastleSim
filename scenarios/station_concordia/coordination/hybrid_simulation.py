@@ -43,10 +43,11 @@ from scenarios.station_concordia.jps_integration.exit_tracker import ExitTracker
 from scenarios.station_concordia.reporting.financial_reporter import FinancialReporter
 from scenarios.station_concordia.reporting.results_writer import ResultsWriter
 from scenarios.station_concordia.systems.event_manager import EventManager
-from scenarios.station_concordia.systems.helping_system import HelpingSystemManager
+from scenarios.station_concordia.systems.helping_relationships import HelpingRelationships
 from scenarios.station_concordia.systems.messaging import MessageSystem
 from scenarios.station_concordia.translation import ActionTranslator, ObservationGenerator
 from scenarios.station_concordia.utils.performance_monitor import PerformanceTimer
+from scenarios.station_concordia.visualization.position_history import PositionHistoryTracker
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,7 @@ class HybridSimulationRunner:
         max_steps: int = 3600,
         output_file: Path | None = None,
         test_scenarios: dict[str, Any] | None = None,
+        enable_video: bool = False,
     ):
         """
         Initialize the hybrid simulation runner.
@@ -86,6 +88,9 @@ class HybridSimulationRunner:
             embedder: Sentence embedding function
             decision_interval: Time between Concordia decisions (seconds)
             max_steps: Maximum simulation steps
+            output_file: Path to output file for saving results
+            test_scenarios: Test scenario configuration
+            enable_video: Whether to track position history for video generation
         """
         self.jps_sim = jupedsim_simulation
         self.station_layout = station_layout
@@ -95,6 +100,7 @@ class HybridSimulationRunner:
         self.max_steps = max_steps
         self.output_file = output_file
         self.test_scenarios = test_scenarios or {}
+        self.enable_video = enable_video
 
         # Simulation state queries
         self.state_queries = SimulationStateQueries(jupedsim_simulation)
@@ -111,18 +117,16 @@ class HybridSimulationRunner:
         self.concordia_agents: dict[str, entity_lib.Entity] = {}
         self.agent_configs = agents_config
 
-        # Help behavior tracking (must be initialized before _build_agents)
-        self.agent_status: dict[str, str] = (
-            {}
-        )  # agent_id -> "EVACUATING"|"HELPING"|"WAITING"|"INJURED"
-        self.agents_being_helped: dict[str, str] = {}  # helped_agent_id -> helper_agent_id
+        # Agent state tracking (three independent dimensions)
+        # 1. Physical capability: Is agent injured/slow?
+        self.agent_injured: set[str] = set()
+
+        # 2. Current action: What are they doing right now?
+        self.agent_action: dict[str, str] = {}  # agent_id -> "moving"|"waiting"
+
+        # 3. Social relationships: Who is helping whom?
         self.help_events: list[dict[str, Any]] = []  # Track all help interactions
-        self.active_helping_pairs: dict[str, dict[str, Any]] = (
-            {}
-        )  # helper_id -> {helped, start_time, duration}
-        self.agent_original_speeds: dict[str, float] = (
-            {}
-        )  # Store original walking speeds for restoration
+        self.helping_relationships = HelpingRelationships()
 
         # Build agents using AgentBuilder
         agent_builder = AgentBuilder(
@@ -130,7 +134,8 @@ class HybridSimulationRunner:
             embedder=embedder,
             station_layout_description=self.observation_generator._describe_geometry(),
         )
-        self.concordia_agents, self.agent_status = agent_builder.build_agents(agents_config)
+        self.concordia_agents, injured_agents = agent_builder.build_agents(agents_config)
+        self.agent_injured = injured_agents
 
         # Tracking
         self.last_decision_time = (
@@ -151,19 +156,6 @@ class HybridSimulationRunner:
         # Event management
         self.event_manager = EventManager(station_layout, jupedsim_simulation)
         self.event_manager.setup_test_scenario(test_scenarios)
-
-        # Helping system management
-        self.helping_system_manager = HelpingSystemManager(
-            active_helping_pairs=self.active_helping_pairs,
-            agents_being_helped=self.agents_being_helped,
-            agent_original_speeds=self.agent_original_speeds,
-            agent_status=self.agent_status,
-            agent_destinations=self.agent_destinations,
-            exited_agents=self.exited_agents,
-            test_scenarios=test_scenarios or {},
-            jps_sim=jupedsim_simulation,
-            state_queries=self.state_queries,
-        )
 
         # Exit tracking
         self.exit_tracker = ExitTracker(
@@ -189,11 +181,10 @@ class HybridSimulationRunner:
             state_queries=self.state_queries,
             event_manager=self.event_manager,
             station_layout=station_layout,
-            agent_status=self.agent_status,
-            agents_being_helped=self.agents_being_helped,
+            agent_injured=self.agent_injured,
+            agent_action=self.agent_action,
             agent_destinations=self.agent_destinations,
-            active_helping_pairs=self.active_helping_pairs,
-            agent_original_speeds=self.agent_original_speeds,
+            helping_relationships=self.helping_relationships,
             help_events=self.help_events,
             wait_events=self.wait_events,
             agent_configs=agents_config,
@@ -214,7 +205,7 @@ class HybridSimulationRunner:
             last_observations=self.last_observations,
             last_actions=self.last_actions,
             perf_timer=self.perf_timer,
-            helping_system_manager=self.helping_system_manager,
+            helping_relationships=self.helping_relationships,
         )
 
         # Observation coordination
@@ -226,9 +217,17 @@ class HybridSimulationRunner:
             event_manager=self.event_manager,
             message_system=self.message_system,
             agent_destinations=self.agent_destinations,
-            agent_status=self.agent_status,
+            agent_injured=self.agent_injured,
+            agent_action=self.agent_action,
+            helping_relationships=self.helping_relationships,
             test_scenarios=test_scenarios or {},
         )
+
+        # Position history tracker for video generation
+        self.position_tracker = None
+        if self.enable_video:
+            self.position_tracker = PositionHistoryTracker(save_interval=0.5)
+            logger.info("Position history tracking enabled for video generation")
 
     def run(self) -> dict[str, Any]:
         """
@@ -279,8 +278,8 @@ class HybridSimulationRunner:
                     # Check for agents who have exited and remove them
                     self.exit_tracker.check_exited_agents(self.current_sim_time, self.current_step)
 
-                    # Update helping relationships (check for expired help durations)
-                    self.helping_system_manager.update_helping_relationships(self.current_sim_time)
+                    # Clean up helping relationships for exited agents
+                    self.helping_relationships.cleanup_exited_agents(self.exited_agents)
 
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
@@ -298,6 +297,16 @@ class HybridSimulationRunner:
                     with self.perf_timer.measure("event_checking"):
                         self.event_manager.check_and_trigger_events(self.current_sim_time)
 
+                    # Track position history for video generation (every 0.5s)
+                    if self.position_tracker and step % 10 == 0:
+                        self.position_tracker.save_frame(
+                            self.current_sim_time,
+                            self.jps_sim.get_all_agent_positions(),
+                            self.agent_decisions,
+                            self.event_manager.blocked_exits,
+                            self.helping_relationships.get_all_relationships(),
+                        )
+
                     # Save positions every 10 steps (0.5s) for smooth visualization
                     # Writing every single step (0.05s) is too slow for file I/O
                     if self.output_file and step % 10 == 0:
@@ -309,7 +318,7 @@ class HybridSimulationRunner:
                                 self.current_sim_time,
                                 self.event_manager.event_history,
                                 self.event_manager.blocked_exits,
-                                self.active_helping_pairs,
+                                self.helping_relationships.get_all_relationships(),
                                 self.message_system.message_history,
                                 self.decision_interval,
                                 self.max_steps,
@@ -354,7 +363,44 @@ class HybridSimulationRunner:
         # Print financial report
         print(FinancialReporter.generate_report(self.llm_provider, len(self.concordia_agents)))
 
+        # Save position history if video generation is enabled
+        if self.position_tracker and self.output_file:
+            history_file = self.output_file.parent / f"{self.output_file.stem}_history.json"
+            self.position_tracker.save_to_file(history_file)
+            results["position_history_file"] = str(history_file)
+
         return results
+
+    def cleanup(self):
+        """Save partial results when simulation is interrupted."""
+        logger.warning("Cleaning up simulation state...")
+
+        # Save position history if available
+        if self.position_tracker and self.output_file:
+            history_file = self.output_file.parent / f"{self.output_file.stem}_history.json"
+            self.position_tracker.save_to_file(history_file)
+            logger.info(f"Position history saved to {history_file}")
+
+        # Save partial decision results
+        if self.output_file:
+            ResultsWriter.save_final_results(
+                self.output_file,
+                self.agent_decisions,
+                self.jps_sim.get_all_agent_positions(),
+                self.current_sim_time,
+                self.event_manager.event_history,
+                self.event_manager.blocked_exits,
+                self.helping_relationships.get_all_relationships(),
+                self.message_system.message_history,
+                self.help_events,
+                self.wait_events,
+                self.decision_interval,
+                self.max_steps,
+                len(self.concordia_agents),
+                self.perf_timer.report(),
+                self.llm_provider,
+            )
+            logger.info(f"Partial results saved to {self.output_file}")
 
     def _step_jupedsim(self) -> bool:
         """

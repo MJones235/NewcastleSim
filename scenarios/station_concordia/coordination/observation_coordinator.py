@@ -30,7 +30,9 @@ class ObservationCoordinator:
         event_manager,
         message_system,
         agent_destinations: dict[str, str],
-        agent_status: dict[str, str],
+        agent_injured: set[str],
+        agent_action: dict[str, str],
+        helping_relationships,
         test_scenarios: dict[str, Any],
     ):
         """
@@ -44,7 +46,9 @@ class ObservationCoordinator:
             event_manager: EventManager for accessing event history and blocked exits
             message_system: MessageSystem for agent messages and conversations
             agent_destinations: Dict of agent_id -> current exit name
-            agent_status: Dict of agent_id -> status (EVACUATING|HELPING|WAITING|INJURED)
+            agent_injured: Set of injured agent IDs (physical capability dimension)
+            agent_action: Dict of agent_id -> action ("moving"|"waiting")
+            helping_relationships: HelpingRelationships tracker (social dimension)
             test_scenarios: Test scenario configuration for observation radius
         """
         self.concordia_agents = concordia_agents
@@ -54,7 +58,9 @@ class ObservationCoordinator:
         self.event_manager = event_manager
         self.message_system = message_system
         self.agent_destinations = agent_destinations
-        self.agent_status = agent_status
+        self.agent_injured = agent_injured
+        self.agent_action = agent_action
+        self.helping_relationships = helping_relationships
         self.test_scenarios = test_scenarios
 
     def generate_all_observations(self, current_sim_time: float) -> dict[str, str]:
@@ -110,7 +116,10 @@ class ObservationCoordinator:
                     events=recent_events,
                     sim_time=current_sim_time,
                     blocked_exits=self.event_manager.blocked_exits,
-                    agent_status=self.agent_status,
+                    agent_injured=self.agent_injured,
+                    agent_action=self.agent_action,
+                    helping_relationships=self.helping_relationships,
+                    state_queries=self.state_queries,
                     received_messages=received_messages,
                     conversation_history=conversation_history,
                 )

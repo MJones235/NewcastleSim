@@ -193,29 +193,97 @@ class ObservationFormatter:
         return lines
 
     @staticmethod
-    def format_own_status(agent_id: str, agent_status: dict[str, str]) -> list[str]:
+    def format_own_status(
+        agent_id: str,
+        agent_injured: set[str],
+        agent_action: dict[str, str],
+        helping_relationships,
+        state_queries=None,
+    ) -> list[str]:
         """
-        Format agent's own status.
+        Format agent's own status from three-dimensional model.
 
         Args:
             agent_id: ID of the agent
-            agent_status: Dict mapping agent_id to status
+            agent_injured: Set of injured agent IDs
+            agent_action: Dict of agent_id -> action ("moving"|"waiting")
+            helping_relationships: HelpingRelationships tracker
+            state_queries: SimulationStateQueries for position lookups (optional)
 
         Returns:
             List of formatted status strings (may be empty)
         """
         lines = []
-        own_status = agent_status.get(agent_id, "EVACUATING")
 
-        if own_status == "HELPING":
-            # Find who they're helping
-            for helped_id, helper_id in agent_status.items():
-                if helped_id.startswith("helped_by_") and helper_id == agent_id:
-                    lines.append("You are currently helping another person.")
-                    break
-        elif own_status == "INJURED":
+        # Physical capability dimension
+        if agent_id in agent_injured:
             lines.append("You are injured and moving slowly.")
-        elif own_status == "WAITING":
-            lines.append("You are waiting for assistance.")
+
+            # Check if someone is helping them
+            if helping_relationships:
+                helper_id = helping_relationships.get_helper(agent_id)
+                if helper_id and state_queries:
+                    try:
+                        helper_pos = state_queries.get_agent_position(helper_id)
+                        helped_pos = state_queries.get_agent_position(agent_id)
+                        if helper_pos and helped_pos:
+                            distance = (
+                                (helper_pos[0] - helped_pos[0]) ** 2
+                                + (helped_pos[1] - helper_pos[1]) ** 2
+                            ) ** 0.5
+
+                            if distance < 3.0:
+                                lines.append(f"{helper_id} has reached you and is with you now.")
+                            elif distance < 10.0:
+                                lines.append(
+                                    f"{helper_id} is approaching to help ({distance:.1f}m away)."
+                                )
+                    except Exception:
+                        pass
+
+        # Social relationship dimension - with distance context
+        if helping_relationships and helping_relationships.is_helping(agent_id):
+            helped_id = helping_relationships.get_helped(agent_id)
+            if helped_id:
+                # Calculate distance if state_queries available
+                if state_queries:
+                    try:
+                        helper_pos = state_queries.get_agent_position(agent_id)
+                        helped_pos = state_queries.get_agent_position(helped_id)
+                        if helper_pos and helped_pos:
+                            distance = (
+                                (helper_pos[0] - helped_pos[0]) ** 2
+                                + (helped_pos[1] - helper_pos[1]) ** 2
+                            ) ** 0.5
+
+                            if distance < 3.0:
+                                # Close enough to have reached them
+                                lines.append(
+                                    f"You have reached {helped_id} and are now with them. "
+                                    f"You could wait with them, guide them to an exit, or continue alone."
+                                )
+                            elif distance < 10.0:
+                                lines.append(
+                                    f"You are approaching {helped_id} ({distance:.1f}m away)."
+                                )
+                            else:
+                                lines.append(f"You are moving toward {helped_id}.")
+                        else:
+                            lines.append(f"You are currently helping {helped_id}.")
+                    except Exception:
+                        lines.append(f"You are currently helping {helped_id}.")
+                else:
+                    lines.append(f"You are currently helping {helped_id}.")
+            else:
+                lines.append("You are currently helping another person.")
+
+        # Action dimension (waiting for assistance is special case)
+        action = agent_action.get(agent_id, "moving")
+        if action == "waiting":
+            # Only mention waiting if they're not already mentioned as injured/helping
+            if agent_id not in agent_injured and not (
+                helping_relationships and helping_relationships.is_helping(agent_id)
+            ):
+                lines.append("You are waiting.")
 
         return lines

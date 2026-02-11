@@ -129,14 +129,38 @@ class HelpingSystemManager:
                     if helped_id in self.agent_original_speeds:
                         original_speed = self.agent_original_speeds[helped_id]
                         self.jps_sim.set_agent_speed(helped_id, original_speed)
+                        logger.debug(f"Restored {helped_id} speed to {original_speed} m/s")
 
                     self.agent_status[helped_id] = "INJURED"
 
-                    # Remove from being helped tracking
+                    # CRITICAL: Remove from being helped tracking immediately
+                    # This must happen before we continue to ensure visual indicators update
+                    if helped_id in self.agents_being_helped:
+                        del self.agents_being_helped[helped_id]
+                        logger.debug(f"Removed {helped_id} from agents_being_helped")
+
+                    # Skip to next pair (don't try to update positions)
+                    continue
+
+                # Check if helper has changed status (e.g., stopped helping, waiting)
+                # If helper is no longer in HELPING status, abandon the helped agent
+                helper_status = self.agent_status.get(helper_id)
+                if helper_status and helper_status != "HELPING":
+                    logger.warning(
+                        f"⚠️ {helper_id} changed status to {helper_status}, abandoning {helped_id}"
+                    )
+                    expired_pairs.append(helper_id)
+
+                    # Restore helped agent
+                    if helped_id in self.agent_original_speeds:
+                        original_speed = self.agent_original_speeds[helped_id]
+                        self.jps_sim.set_agent_speed(helped_id, original_speed)
+
+                    self.agent_status[helped_id] = "INJURED"
+
                     if helped_id in self.agents_being_helped:
                         del self.agents_being_helped[helped_id]
 
-                    # Skip to next pair (don't try to update positions)
                     continue
 
                 # Ensure helper maintains their evacuation journey and assisted speed

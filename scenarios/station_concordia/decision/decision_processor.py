@@ -40,7 +40,7 @@ class DecisionProcessor:
         last_observations: dict[str, str],
         last_actions: dict[str, str],
         perf_timer,
-        helping_system_manager,
+        helping_relationships,  # New simple tracker
     ):
         """
         Initialize decision processor.
@@ -58,7 +58,7 @@ class DecisionProcessor:
             last_observations: Cache of last observations for change detection
             last_actions: Cache of last actions to reuse
             perf_timer: Performance monitoring timer
-            helping_system_manager: HelpingSystemManager for checking abandoned helps
+            helping_relationships: HelpingRelationships for tracking help
         """
         self.concordia_agents = concordia_agents
         self.exited_agents = exited_agents
@@ -72,7 +72,7 @@ class DecisionProcessor:
         self.last_observations = last_observations
         self.last_actions = last_actions
         self.perf_timer = perf_timer
-        self.helping_system_manager = helping_system_manager
+        self.helping_relationships = helping_relationships
 
     def process_all_agents(self, observations: dict[str, str], current_sim_time: float) -> float:
         """
@@ -130,9 +130,8 @@ class DecisionProcessor:
         with self.perf_timer.measure("parallel_agent_processing"):
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Check if any helpers abandoned their helping commitment
-        # Helpers can make free decisions, but if they change away from HELPING status, they abandoned
-        self.helping_system_manager.check_abandoned_helps()
+        # No need to check for abandonment - it's handled naturally in action execution
+        # Agents who choose move/wait over help automatically end relationships
 
     async def _process_single_agent(
         self,
@@ -173,11 +172,11 @@ class DecisionProcessor:
                         '  "target_type": "current_position|exit|zone",\n'
                         '  "exit_name": "exit name or null",\n'
                         '  "zone_name": "zone name or null",\n'
-                        '  "wait_reason": "seeking_information|waiting_for_help|observing_others|assessing_situation or null",\n'
+                        '  "wait_reason": "seeking_information|waiting_for_help|observing_others|assessing_situation|waiting_with_injured or null",\n'
                         '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)",\n'
                         '  "message": "Short casual message or null",\n'
                         '  "message_type": "directed|shout|quiet or null",\n'
-                        '  "target_agent": "agent_id, or null"\n'
+                        '  "target_agent": "agent_id or null"\n'
                         "}}\n\n"
                         f"Available exits: {[e['name'] for e in exits]}\n"
                         f"Available zones: {zones}\n\n"
@@ -187,11 +186,15 @@ class DecisionProcessor:
                         "  * Set wait_reason='waiting_for_help' if injured and need assistance\n"
                         "  * Set wait_reason='observing_others' if watching to see what others do\n"
                         "  * Set wait_reason='assessing_situation' if evaluating risk/options\n"
+                        "  * Set wait_reason='waiting_with_injured' if staying near an injured person to help\n"
                         "  * Set speed='slow_walk' (0.5 m/s) for seeking_information\n"
                         "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
                         "  * Set speed based on risk: 'normal_walk' (1.0 m/s) for low risk, 'brisk_walk' (1.5 m/s) for moderate, 'jog' (2.0 m/s) or 'run' (2.5 m/s) for high risk\n"
                         "- Use action_type='move' and target_type='zone' to move to a platform/area\n"
-                        "- Use action_type='help' and target_type='current_position' to stop and assist an injured person nearby\n\n"
+                        "- To help someone: Use action_type='move' with target_agent='agent_5' to move toward them\n"
+                        "  * Then use wait (with message) to stay near them, or move (with message) to guide them\n"
+                        "  * They can follow by setting target_agent to your ID\n"
+                        "  * Natural helping emerges from movement + communication, not special actions\n\n"
                         "Communication (SPOKEN, not text - keep it brief and natural):\n"
                         "- These are SPOKEN words, not written messages - be conversational\n"
                         "- If someone speaks to you (marked 'to you'), respond naturally\n"
@@ -241,7 +244,6 @@ class DecisionProcessor:
                 sender_position=position,
                 current_sim_time=current_sim_time,
                 state_queries=self.state_queries,
-                agent_status=self.action_executor.agent_status,
                 exited_agents=self.exited_agents,
             )
 

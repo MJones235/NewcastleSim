@@ -52,6 +52,10 @@ class SimulationRunnerFactory:
         decision_interval = sim_config.get("decision_interval", 5.0)
         test_scenarios_config = config.get("test_scenarios", {})
 
+        # Video generation settings
+        video_config = config.get("video", {})
+        enable_video = video_config.get("enabled", False)
+
         logger.info("Creating HybridSimulationRunner...")
 
         try:
@@ -65,6 +69,7 @@ class SimulationRunnerFactory:
                 max_steps=max_steps,
                 output_file=decisions_file,
                 test_scenarios=test_scenarios_config,
+                enable_video=enable_video,
             )
             logger.info("HybridSimulationRunner initialized")
         except Exception as e:

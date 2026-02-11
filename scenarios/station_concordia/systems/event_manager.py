@@ -58,10 +58,14 @@ class EventManager:
             return
 
         # Phase 4.2: Exit blocking test
-        if "block_exit" in test_scenarios:
-            block_config = test_scenarios["block_exit"]
-            self.test_block_exit_name = block_config.get("exit_name")
-            self.test_block_exit_time = block_config.get("time")
+        if "blocked_exit" in test_scenarios:
+            block_config = test_scenarios["blocked_exit"]
+            # Check if scenario is enabled
+            if not block_config.get("enabled", False):
+                return
+
+            self.test_block_exit_name = block_config.get("blocked_exit")
+            self.test_block_exit_time = block_config.get("block_time")
             if self.test_block_exit_name and self.test_block_exit_time:
                 logger.info(
                     f"Test scenario configured: Block '{self.test_block_exit_name}' "

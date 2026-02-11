@@ -9,6 +9,7 @@ Or:
 """
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 
@@ -27,6 +28,9 @@ from scenarios.station_concordia.setup.simulation_runner_factory import (  # noq
 )
 from scenarios.station_concordia.setup.station_layout_builder import (  # noqa: E402
     StationLayoutBuilder,
+)
+from scenarios.station_concordia.visualization.video_generation_helper import (  # noqa: E402
+    VideoGenerationHelper,
 )
 from scenarios.station_concordia.visualization.viewer_launcher import ViewerLauncher  # noqa: E402
 
@@ -76,6 +80,23 @@ def parse_args():
         action="store_true",
         help="Don't launch spatial matplotlib viewer",
     )
+    parser.add_argument(
+        "--generate-video",
+        action="store_true",
+        help="Generate MP4 video after simulation (requires ffmpeg)",
+    )
+    parser.add_argument(
+        "--video-fps",
+        type=int,
+        default=20,
+        help="Video frames per second (default: 20)",
+    )
+    parser.add_argument(
+        "--video-speedup",
+        type=float,
+        default=1.0,
+        help="Video speed multiplier (default: 1.0 = real-time)",
+    )
     return parser.parse_args()
 
 
@@ -106,6 +127,9 @@ def run_simulation(
         Tuple of (results dict, run_id string, decisions_file Path)
     """
     logger.info("Initializing simulation...")
+
+    # Store runner for signal handler access
+    runner = None
 
     # Step 1: Setup JuPedSim simulation
     jps_sim = JuPedSimSetup.create_simulation(config)
@@ -144,9 +168,26 @@ def run_simulation(
         config=config,
     )
 
+    # Setup signal handler for graceful shutdown on Ctrl+C
+    def signal_handler(signum, frame):
+        logger.warning("\n⚠️  Simulation interrupted! Saving partial results...")
+        if runner:
+            runner.cleanup()
+        logger.info("Partial results saved. Exiting.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Step 7: Run simulation
     logger.info("Starting simulation run...")
-    results = runner.run()
+    try:
+        results = runner.run()
+    except KeyboardInterrupt:
+        # Redundant catch in case signal handler doesn't work
+        logger.warning("\n⚠️  Simulation interrupted! Saving partial results...")
+        runner.cleanup()
+        logger.info("Partial results saved. Exiting.")
+        sys.exit(0)
 
     # Step 8: Save final results
     ResultsWriter.save_final_results(
@@ -156,7 +197,7 @@ def run_simulation(
         runner.current_sim_time,
         runner.event_manager.event_history,
         runner.event_manager.blocked_exits,
-        runner.active_helping_pairs,
+        runner.helping_relationships.get_all_relationships(),
         runner.message_system.message_history,
         runner.help_events,
         runner.wait_events,
@@ -203,6 +244,19 @@ def main():
             launch_viewer=not args.no_viewer,
             launch_spatial=args.spatial_viewer and not args.no_spatial_viewer,
         )
+
+        # Generate video if requested
+        if args.generate_video:
+            network_path = Path(
+                config.get("simulation", {}).get("network_path", "scenarios/station_sim/network")
+            )
+            VideoGenerationHelper.generate_simulation_video(
+                decisions_file=decisions_file,
+                run_id=run_id,
+                network_path=network_path,
+                fps=args.video_fps,
+                speedup=args.video_speedup,
+            )
 
         # Log results
         logger.info("=" * 60)

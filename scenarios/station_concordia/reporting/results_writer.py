@@ -64,7 +64,7 @@ class ResultsWriter:
             "events": event_history,
             "blocked_exits": list(blocked_exits),
             "active_helping_pairs": {
-                helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
+                helper: {"helping": info["helping"], "help_type": info.get("help_type", "unknown")}
                 for helper, info in active_helping_pairs.items()
             },
             "messages": message_history,
@@ -147,7 +147,11 @@ class ResultsWriter:
             "route_changes": route_changes,
             "messages": message_history,
             "active_helping_pairs": {
-                helper: {"helped": info["helped"], "phase": info.get("phase", "traveling")}
+                helper: {
+                    "helping": info["helping"],
+                    "help_type": info.get("help_type", "unknown"),
+                    "started": info.get("started", 0.0),
+                }
                 for helper, info in active_helping_pairs.items()
             },
             "config": {

@@ -40,7 +40,7 @@ class AgentBuilder:
 
     def build_agents(
         self, agents_config: list[dict[str, Any]]
-    ) -> tuple[dict[str, entity_lib.Entity], dict[str, str]]:
+    ) -> tuple[dict[str, entity_lib.Entity], set[str]]:
         """
         Build Concordia agents from configurations.
 
@@ -48,12 +48,12 @@ class AgentBuilder:
             agents_config: List of agent configuration dictionaries
 
         Returns:
-            Tuple of (concordia_agents dict, agent_status dict)
+            Tuple of (concordia_agents dict, injured_agents set)
         """
         logger.info(f"Building {len(agents_config)} Concordia agents...")
 
         concordia_agents: dict[str, entity_lib.Entity] = {}
-        agent_status: dict[str, str] = {}
+        injured_agents: set[str] = set()
 
         for agent_config in agents_config:
             agent_id = agent_config["id"]
@@ -75,17 +75,17 @@ class AgentBuilder:
 
             concordia_agents[agent_id] = agent
 
-            # Initialize agent status
+            # Track if agent is injured
             if agent_config.get("is_injured", False):
-                agent_status[agent_id] = "INJURED"
-            else:
-                agent_status[agent_id] = "EVACUATING"
+                injured_agents.add(agent_id)
 
             # Add initial memories
             self._initialize_agent_memory(agent, agent_config)
 
-        logger.info(f"Built {len(concordia_agents)} Concordia agents")
-        return concordia_agents, agent_status
+        logger.info(
+            f"Built {len(concordia_agents)} Concordia agents ({len(injured_agents)} injured)"
+        )
+        return concordia_agents, injured_agents
 
     def _initialize_agent_memory(self, agent: entity_lib.Entity, config: dict[str, Any]) -> None:
         """

@@ -71,17 +71,19 @@ class ActionTranslator:
             target_type = data.get("target_type")
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
+            target_agent = data.get("target_agent")  # Agent ID to move toward or follow
             wait_reason = data.get("wait_reason")  # Phase 4.3: Information seeking
             speed = data.get("speed")  # Phase 4.3: Dynamic speed selection
 
-            # BUG FIX: Check for help/follow BEFORE checking target_type == "current_position"
-            # Otherwise "help" with target_type="current_position" gets converted to "wait"
-            if action_type in {"help", "follow"}:
+            # Move toward another agent (helping, following, or approaching)
+            if action_type == "move" and target_agent:
                 return {
-                    "action_type": action_type,
-                    "target": current_position,  # Use current position as placeholder
-                    "confidence": 0.4,
-                    "reasoning": f"LLM selected {action_type} intent",
+                    "action_type": "move",
+                    "target": None,  # Will be resolved to agent position later
+                    "target_agent": target_agent,
+                    "confidence": 0.9,
+                    "reasoning": f"Moving toward {target_agent}",
+                    "speed": speed,
                 }
 
             if action_type == "wait" or target_type == "current_position":
