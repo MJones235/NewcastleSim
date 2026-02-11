@@ -148,18 +148,18 @@ Example without communication (most common - announcement was clear):
         Returns:
             List of prompts (one per agent)
         """
-        prompts = []
-        for agent in agents:
-            message = messages.get(agent.id, {})
-            # Get message history from agent's decision maker
-            message_history: Any = None
-            if hasattr(agent, "decision_maker") and hasattr(
-                agent.decision_maker, "message_history"
-            ):
-                message_history = agent.decision_maker.message_history
-
-            prompt = EvacuationPromptBuilder.build_evacuation_prompt(
-                agent, message, message_history=message_history
+        # Build prompts using list comprehension for efficiency
+        prompts = [
+            EvacuationPromptBuilder.build_evacuation_prompt(
+                agent,
+                messages.get(agent.id, {}),
+                message_history=(
+                    agent.decision_maker.message_history
+                    if hasattr(agent, "decision_maker")
+                    and hasattr(agent.decision_maker, "message_history")
+                    else None
+                ),
             )
-            prompts.append(prompt)
+            for agent in agents
+        ]
         return prompts

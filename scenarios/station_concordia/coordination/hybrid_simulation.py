@@ -128,13 +128,25 @@ class HybridSimulationRunner:
         self.help_events: list[dict[str, Any]] = []  # Track all help interactions
         self.helping_relationships = HelpingRelationships()
 
-        # Build agents using AgentBuilder
+        # Build agents using AgentBuilder (parallel initialization for faster startup)
         agent_builder = AgentBuilder(
             language_model=language_model,
             embedder=embedder,
             station_layout_description=self.observation_generator._describe_geometry(),
         )
-        self.concordia_agents, injured_agents = agent_builder.build_agents(agents_config)
+
+        # Run async agent building with proper thread pool
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        self.concordia_agents, injured_agents = loop.run_until_complete(
+            agent_builder.build_agents(agents_config)
+        )
         self.agent_injured = injured_agents
 
         # Tracking
@@ -285,13 +297,19 @@ class HybridSimulationRunner:
                     if self._should_make_decisions():
                         with self.perf_timer.measure("agent_decisions_total"):
                             # Generate observations for all agents
-                            observations = self.observation_coordinator.generate_all_observations(
-                                self.current_sim_time
-                            )
+                            with self.perf_timer.measure("generate_observations"):
+                                observations = (
+                                    self.observation_coordinator.generate_all_observations(
+                                        self.current_sim_time
+                                    )
+                                )
                             # Process all agent decisions in parallel
-                            self.last_decision_time = self.decision_processor.process_all_agents(
-                                observations, self.current_sim_time
-                            )
+                            with self.perf_timer.measure("decision_processing"):
+                                self.last_decision_time = (
+                                    self.decision_processor.process_all_agents(
+                                        observations, self.current_sim_time
+                                    )
+                                )
 
                     # Check for events
                     with self.perf_timer.measure("event_checking"):

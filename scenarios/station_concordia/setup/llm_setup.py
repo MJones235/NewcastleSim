@@ -67,6 +67,7 @@ class LLMSetup:
                 temperature=llm_config.get("temperature", 0.7),
                 max_retries=llm_config.get("max_retries", 3),
                 max_completion_tokens=llm_config.get("max_completion_tokens", 8000),
+                timeout=llm_config.get("timeout", 90.0),
             )
 
             # Setup embedder (force CPU to avoid GPU compatibility issues)

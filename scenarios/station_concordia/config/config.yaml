@@ -10,7 +10,7 @@ simulation:
 
 # Agent configuration
 agents:
-  count: 50  # Start with 10 agents for testing
+  count: 50
 
   # Personality distribution (percentage)
   personalities:

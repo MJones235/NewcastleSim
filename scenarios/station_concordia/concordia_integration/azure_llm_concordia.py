@@ -42,6 +42,7 @@ class AzureLLMConcordia:
         temperature: float = 0.7,
         max_retries: int = 3,
         max_completion_tokens: int = 8000,
+        timeout: float = 90.0,
     ):
         """
         Initialize Azure OpenAI client for Concordia.
@@ -53,6 +54,8 @@ class AzureLLMConcordia:
             api_version: Azure API version
             temperature: Sampling temperature (0.0 to 2.0)
             max_retries: Maximum number of retry attempts on failure
+            max_completion_tokens: Maximum tokens in completion
+            timeout: Request timeout in seconds (default: 90s)
         """
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
@@ -60,6 +63,7 @@ class AzureLLMConcordia:
         self.temperature = temperature
         self.max_retries = max_retries
         self.max_completion_tokens = max_completion_tokens
+        self.timeout = timeout
 
         # Token usage tracking
         self.total_prompt_tokens = 0
@@ -78,7 +82,9 @@ class AzureLLMConcordia:
             else:
                 self.model = "gpt-4"  # Default fallback
 
-        logger.info(f"Initialized AzureLLMConcordia with model: {self.model}")
+        logger.info(
+            f"Initialized AzureLLMConcordia with model: {self.model}, timeout: {self.timeout}s"
+        )
 
     def sample_text(
         self, prompt: str, max_tokens: int | None = None, temperature: float | None = None, **kwargs
@@ -144,7 +150,7 @@ class AzureLLMConcordia:
                     "temperature": temp,
                 }
 
-                response = requests.post(url, headers=headers, json=payload, timeout=30)
+                response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
 
                 if response.status_code == 200:
                     result = response.json()

@@ -8,9 +8,8 @@ This module is responsible for:
 """
 
 import random
-from typing import List, Tuple
 
-from shapely.geometry import Point
+import jupedsim as jps
 
 from scenarios.common.logger import get_logger
 
@@ -25,12 +24,12 @@ class SpawnManager:
         jps_sim,
         num_agents: int,
         seed: int = 42,
-    ) -> List[Tuple[float, float]]:
+    ) -> list[tuple[float, float]]:
         """
         Generate spawn positions for agents within the geometry.
 
-        Prefers spawning in 'entrance' area (near exits) for shorter evacuation.
-        Falls back to platform areas or walkable areas if entrance not available.
+        Uses JuPedSim's distribute_by_number on the actual simulation geometry
+        to ensure positions respect boundary constraints and obstacles.
 
         Args:
             jps_sim: JuPedSim simulation instance with geometry
@@ -41,155 +40,93 @@ class SpawnManager:
             List of (x, y) coordinate tuples for spawn positions
 
         Raises:
-            RuntimeError: If no valid spawn polygons are found
+            RuntimeError: If unable to generate spawn positions
         """
         random.seed(seed)
 
         # Get geometry from JuPedSim simulation
-        walkable_areas = jps_sim.walkable_areas
-        platform_areas = jps_sim.platform_areas
+        walkable_areas_with_obstacles = jps_sim.walkable_areas_with_obstacles
 
-        # Determine spawn polygons (prefer entrance area)
-        spawn_polygons = SpawnManager._select_spawn_polygons(walkable_areas, platform_areas)
-
-        if not spawn_polygons:
-            logger.error("No valid spawn polygons found in geometry")
+        if not walkable_areas_with_obstacles:
+            logger.error("No walkable areas with obstacles found in geometry")
             raise RuntimeError("Cannot spawn agents without geometry")
 
-        # Get walkable polygons (with obstacles removed)
-        walkable_polygons = SpawnManager._get_walkable_polygons(jps_sim, walkable_areas)
-
-        # Generate spawn positions
-        spawn_positions = SpawnManager._sample_positions(
-            spawn_polygons, walkable_polygons, num_agents
+        # Generate spawn positions using JuPedSim's distribution on actual geometry polygons
+        spawn_positions = SpawnManager._distribute_agents_across_areas(
+            walkable_areas_with_obstacles, num_agents, seed
         )
 
         logger.info(
-            f"Generated {len(spawn_positions)} spawn positions from "
-            f"{'platform' if platform_areas else 'walkable'} areas"
+            f"Generated {len(spawn_positions)} spawn positions across "
+            f"{len(walkable_areas_with_obstacles)} walkable areas"
         )
 
         return spawn_positions
 
     @staticmethod
-    def _select_spawn_polygons(walkable_areas: dict, platform_areas: dict) -> list:
+    def _distribute_agents_across_areas(
+        walkable_areas: dict, num_agents: int, seed: int
+    ) -> list[tuple[float, float]]:
         """
-        Select which polygons to use for spawning agents.
+        Distribute agents across all walkable areas using JuPedSim's distribution.
 
         Args:
-            walkable_areas: Dictionary of walkable area polygons
-            platform_areas: Dictionary of platform area polygons
+            walkable_areas: Dictionary of area name -> polygon (with obstacles removed)
+            num_agents: Total number of agents to spawn
+            seed: Random seed
 
         Returns:
-            List of polygons to spawn agents in
+            List of (x, y) spawn positions
         """
-        # TEMPORARY: Only spawn in 'entrance' area (near exits) for shorter evacuation
-        spawn_polygons = []
-        if "entrance" in walkable_areas:
-            spawn_polygons = [walkable_areas["entrance"]]
-            logger.info("🎯 Using 'entrance' area only for spawning (near exits)")
-        else:
-            logger.warning(f"⚠️ 'entrance' area not found! Available: {list(walkable_areas.keys())}")
-            # Fallback to platform areas or all walkable areas
-            spawn_polygons = list(platform_areas.values()) if platform_areas else []
-            if not spawn_polygons and walkable_areas:
-                spawn_polygons = list(walkable_areas.values())
-
-        return spawn_polygons
-
-    @staticmethod
-    def _get_walkable_polygons(jps_sim, walkable_areas: dict) -> list:
-        """
-        Get walkable polygons (with obstacles removed if available).
-
-        Args:
-            jps_sim: JuPedSim simulation instance
-            walkable_areas: Dictionary of walkable area polygons
-
-        Returns:
-            List of walkable polygons
-        """
-        walkable_polygons = list(getattr(jps_sim, "walkable_areas_with_obstacles", {}).values())
-        if not walkable_polygons:
-            walkable_polygons = list(walkable_areas.values())
-        return walkable_polygons
-
-    @staticmethod
-    def _sample_positions(
-        spawn_polygons: list,
-        walkable_polygons: list,
-        num_agents: int,
-    ) -> List[Tuple[float, float]]:
-        """
-        Sample spawn positions from polygons.
-
-        Uses weighted random selection based on polygon area for better distribution.
-
-        Args:
-            spawn_polygons: Polygons to spawn agents in
-            walkable_polygons: Polygons that are walkable (for validation)
-            num_agents: Number of positions to generate
-
-        Returns:
-            List of (x, y) coordinate tuples
-        """
-        # Weighted choice by polygon area for better distribution
-        areas = [poly.area for poly in spawn_polygons]
         spawn_positions = []
 
-        for _ in range(num_agents):
-            chosen = random.choices(spawn_polygons, weights=areas, k=1)[0]
-            candidate = SpawnManager._sample_point_in_polygon(chosen, random)
+        # Calculate total area
+        area_list = list(walkable_areas.items())
+        total_area = sum(poly.area for _, poly in area_list)
 
-            # Ensure the spawn point is inside walkable geometry
-            # Try up to 50 times to find a valid point within the chosen spawn polygon
-            if walkable_polygons and not SpawnManager._point_in_any_polygon(
-                candidate, walkable_polygons
-            ):
-                for _ in range(50):
-                    candidate = SpawnManager._sample_point_in_polygon(chosen, random)
-                    if SpawnManager._point_in_any_polygon(candidate, walkable_polygons):
-                        break
+        logger.info(f"Distributing {num_agents} agents across {len(area_list)} walkable areas")
 
-            spawn_positions.append(candidate)
+        for idx, (area_name, poly) in enumerate(area_list):
+            # Proportional allocation based on polygon area
+            poly_agents = int(num_agents * (poly.area / total_area))
+
+            # Last polygon gets remainder to ensure exact count
+            if idx == len(area_list) - 1:
+                poly_agents = num_agents - len(spawn_positions)
+
+            if poly_agents > 0:
+                try:
+                    # Use JuPedSim's distribution with safe boundary distances
+                    positions = jps.distribute_by_number(
+                        polygon=poly,
+                        number_of_agents=poly_agents,
+                        distance_to_agents=0.5,  # Min 0.5m between agents
+                        distance_to_polygon=0.4,  # Min 0.4m from boundaries (>0.2 required)
+                        seed=seed + idx,
+                    )
+                    spawn_positions.extend(positions)
+                    logger.info(f"  {area_name}: {len(positions)} agents")
+                except Exception as e:
+                    logger.warning(f"  {area_name}: Failed to place {poly_agents} agents - {e}")
+                    # Try with fewer agents if density is too high
+                    if poly_agents > 1:
+                        try:
+                            reduced = max(1, poly_agents // 2)
+                            positions = jps.distribute_by_number(
+                                polygon=poly,
+                                number_of_agents=reduced,
+                                distance_to_agents=0.5,
+                                distance_to_polygon=0.4,
+                                seed=seed + idx,
+                            )
+                            spawn_positions.extend(positions)
+                            logger.info(f"  {area_name}: {len(positions)} agents (reduced)")
+                        except Exception as e2:
+                            logger.error(f"  {area_name}: Could not place any agents - {e2}")
+
+        if len(spawn_positions) < num_agents:
+            logger.warning(
+                f"Only generated {len(spawn_positions)} of {num_agents} requested positions"
+            )
 
         return spawn_positions
-
-    @staticmethod
-    def _sample_point_in_polygon(polygon, rng, max_attempts: int = 200) -> Tuple[float, float]:
-        """
-        Sample a random point inside a polygon.
-
-        Args:
-            polygon: Shapely polygon to sample from
-            rng: Random number generator
-            max_attempts: Maximum attempts to find a point
-
-        Returns:
-            (x, y) coordinate tuple
-        """
-        min_x, min_y, max_x, max_y = polygon.bounds
-        for _ in range(max_attempts):
-            x = rng.uniform(min_x, max_x)
-            y = rng.uniform(min_y, max_y)
-            if polygon.contains(Point(x, y)):
-                return (x, y)
-
-        # Fallback to representative point
-        rep = polygon.representative_point()
-        return (rep.x, rep.y)
-
-    @staticmethod
-    def _point_in_any_polygon(point: Tuple[float, float], polygons: list) -> bool:
-        """
-        Check if a point is inside any of the given polygons.
-
-        Args:
-            point: (x, y) coordinate tuple
-            polygons: List of Shapely polygons
-
-        Returns:
-            True if point is in any polygon, False otherwise
-        """
-        pt = Point(point)
-        return any(poly.contains(pt) for poly in polygons)

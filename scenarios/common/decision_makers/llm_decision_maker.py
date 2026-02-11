@@ -28,6 +28,7 @@ class LLMDecisionMaker(DecisionMakerBase):
         endpoint: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
+        timeout: float = 90.0,
     ):
         """
         Initialize the shared LLM provider.
@@ -38,10 +39,13 @@ class LLMDecisionMaker(DecisionMakerBase):
             endpoint: Azure AI model endpoint URL
             api_key: Azure AI API key
             model: Model name (optional - can be None for serverless endpoints)
+            timeout: Request timeout in seconds (default: 90s)
         """
         if cls._llm_provider is None:
-            cls._llm_provider = AzureLLMProvider(endpoint=endpoint, api_key=api_key, model=model)
-            logger.info("LLM decision maker initialized")
+            cls._llm_provider = AzureLLMProvider(
+                endpoint=endpoint, api_key=api_key, model=model, timeout=timeout
+            )
+            logger.info(f"LLM decision maker initialized (timeout={timeout}s)")
 
     def __init__(self, agent: Any):
         """Initialize decision maker for an agent."""

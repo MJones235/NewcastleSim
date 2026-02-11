@@ -70,7 +70,8 @@ class AzureLLMProvider(LLMProvider):
         api_key: str | None = None,
         model: str | None = None,
         max_retries: int = 3,
-        timeout: float = 30.0,
+        timeout: float = 90.0,  # Increased from 30s for large batches
+        max_concurrent_requests: int = 50,  # Limit concurrent requests to avoid rate limiting
     ):
         """
         Initialize Azure AI Inference provider.
@@ -85,6 +86,10 @@ class AzureLLMProvider(LLMProvider):
         self.model = model
         self.max_retries = max_retries
         self.timeout = timeout
+        self.max_concurrent_requests = max_concurrent_requests
+
+        # Create semaphore to limit concurrent requests (avoid Azure rate limiting)
+        self._semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         # Token usage tracking
         self.total_prompt_tokens = 0
@@ -97,7 +102,9 @@ class AzureLLMProvider(LLMProvider):
                 endpoint=endpoint, credential=AzureKeyCredential(api_key)
             )
             model_info = f"model: {model}" if model else "serverless endpoint"
-            logger.info(f"Azure AI Inference provider initialized ({model_info})")
+            logger.info(
+                f"Azure AI Inference provider initialized ({model_info}, timeout={self.timeout}s)"
+            )
         except Exception as e:
             raise LLMError(f"Failed to initialize Azure AI Inference client: {e}")
 
@@ -125,21 +132,23 @@ class AzureLLMProvider(LLMProvider):
         if not prompts:
             return []
 
-        logger.info(f"Sending batch query with {len(prompts)} prompts")
+        logger.info(
+            f"Sending batch query with {len(prompts)} prompts (max {self.max_concurrent_requests} concurrent)"
+        )
 
         try:
-            # Create concurrent tasks for all prompts
-            tasks = [self._query_single(prompt) for prompt in prompts]
+            # Create concurrent tasks for all prompts with rate limiting
+            tasks = [self._query_single_with_semaphore(prompt) for prompt in prompts]
 
             # Wait for all to complete
             responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Check for errors
+            # Check for errors using list comprehension
+            # Log errors as side effect, then create appropriate response
             results: list[LLMResponse] = []
             for i, response in enumerate(responses):
                 if isinstance(response, Exception):
                     logger.error(f"Query {i} failed: {response}")
-                    # Return default "stay" decision on error
                     results.append(
                         LLMResponse(
                             decision="stay",
@@ -151,7 +160,6 @@ class AzureLLMProvider(LLMProvider):
                         )
                     )
                 else:
-                    # Type narrowing: response is LLMResponse here
                     results.append(response)  # type: ignore[arg-type]
 
             logger.info(f"Batch query completed: {len(results)} responses")
@@ -161,12 +169,21 @@ class AzureLLMProvider(LLMProvider):
             logger.error(f"Batch query failed: {e}")
             raise LLMError(f"Batch query failed: {e}")
 
+    async def _query_single_with_semaphore(self, prompt: str) -> LLMResponse:
+        """Query single prompt with semaphore-based rate limiting."""
+        async with self._semaphore:
+            return await self._query_single(prompt)
+
     async def _query_single(self, prompt: str) -> LLMResponse:
         """Internal method to query a single prompt with retries."""
+        import time
+
+        start_time = time.perf_counter()
         logger.debug(f"LLM Prompt:\n{prompt[:500]}...")  # Log first 500 chars
 
         for attempt in range(self.max_retries):
             try:
+                call_start = time.perf_counter()
                 # Build messages
                 messages = [
                     SystemMessage(
@@ -194,6 +211,9 @@ class AzureLLMProvider(LLMProvider):
                     model=self.model,  # Can be None for serverless endpoints
                 )
 
+                call_duration = time.perf_counter() - call_start
+                total_duration = time.perf_counter() - start_time
+
                 # Parse response - guaranteed to match schema
                 content = response.choices[0].message.content
 
@@ -210,7 +230,16 @@ class AzureLLMProvider(LLMProvider):
                 logger.debug(
                     f"Tokens: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                 )
+                logger.debug(
+                    f"Timing: API call={call_duration*1000:.0f}ms, total_with_semaphore={total_duration*1000:.0f}ms"
+                )
                 logger.debug("=" * 70)
+
+                # Warn if call took unusually long (potential rate limiting)
+                if call_duration > 2.0:
+                    logger.warning(
+                        f"Slow LLM call: {call_duration:.1f}s (tokens={total_tokens}) - possible rate limiting"
+                    )
 
                 # Update cumulative stats
                 self.total_prompt_tokens += prompt_tokens
@@ -229,10 +258,32 @@ class AzureLLMProvider(LLMProvider):
                 return parsed
 
             except Exception as e:
-                logger.warning(f"Query attempt {attempt + 1} failed: {e}")
+                error_msg = str(e).lower()
+                is_timeout = "timeout" in error_msg or "timed out" in error_msg
+                is_rate_limit = (
+                    "429" in error_msg
+                    or "rate limit" in error_msg
+                    or "too many requests" in error_msg
+                )
+
+                if is_rate_limit:
+                    logger.error(f"⚠️ RATE LIMIT HIT on attempt {attempt + 1}: {e}")
+                    await asyncio.sleep(5.0)  # Longer backoff for rate limits
+                elif is_timeout:
+                    logger.warning(
+                        f"Query attempt {attempt + 1} timed out (consider increasing timeout or reducing concurrent requests)"
+                    )
+                    await asyncio.sleep(3.0)
+                else:
+                    logger.warning(f"Query attempt {attempt + 1} failed: {e}")
+                    await asyncio.sleep(1.0)
+
                 if attempt == self.max_retries - 1:
                     raise LLMError(f"Query failed after {self.max_retries} attempts: {e}")
-                await asyncio.sleep(1.0 * (attempt + 1))  # Exponential backoff
+
+                # Longer backoff for timeouts
+                backoff_time = 3.0 * (attempt + 1) if is_timeout else 1.0 * (attempt + 1)
+                await asyncio.sleep(backoff_time)
 
         # This should never be reached due to the raise above, but satisfies type checker
         raise LLMError("Query failed - should not reach here")

@@ -13,6 +13,7 @@ This module coordinates the cognitive layer (Concordia) decision-making process.
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from concordia.typing import entity as entity_lib
@@ -74,6 +75,12 @@ class DecisionProcessor:
         self.perf_timer = perf_timer
         self.helping_relationships = helping_relationships
 
+        # Create thread pool executor for parallel agent.act() calls
+        # Use min(32, agent_count) to efficiently handle many agents
+        max_workers = min(32, len(concordia_agents))
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        logger.debug(f"DecisionProcessor initialized with {max_workers} worker threads")
+
     def process_all_agents(self, observations: dict[str, str], current_sim_time: float) -> float:
         """
         Process decision-making for all agents (parallel processing).
@@ -112,19 +119,24 @@ class DecisionProcessor:
         self, observations: dict, exits: list, zones: list, current_sim_time: float
     ):
         """Process all agents in parallel using async/await."""
-        tasks = []
-        agents_to_process = []  # Track which agents will make decisions this cycle
+        # Filter and create tasks using list comprehension for efficiency
+        agents_to_process = [
+            agent_id
+            for agent_id in self.concordia_agents.keys()
+            if agent_id not in self.exited_agents
+        ]
 
-        for agent_id, agent in self.concordia_agents.items():
-            # Skip agents who have already exited
-            if agent_id in self.exited_agents:
-                continue
-
-            agents_to_process.append(agent_id)
-            task = self._process_single_agent(
-                agent_id, agent, observations, exits, zones, current_sim_time
+        tasks = [
+            self._process_single_agent(
+                agent_id,
+                self.concordia_agents[agent_id],
+                observations,
+                exits,
+                zones,
+                current_sim_time,
             )
-            tasks.append(task)
+            for agent_id in agents_to_process
+        ]
 
         # Process all agents concurrently
         with self.perf_timer.measure("parallel_agent_processing"):
@@ -214,9 +226,10 @@ class DecisionProcessor:
 
                 # Run the LLM call in a thread pool to avoid blocking
                 # (agent.act() is synchronous, so we wrap it in run_in_executor)
+                # Use custom executor with more threads for better parallelization
                 with self.perf_timer.measure("agent_act_llm", is_parallel=True):
                     loop = asyncio.get_event_loop()
-                    action = await loop.run_in_executor(None, agent.act, action_spec)
+                    action = await loop.run_in_executor(self.executor, agent.act, action_spec)
 
                 self.last_observations[agent_id] = observation
                 self.last_actions[agent_id] = action
@@ -238,51 +251,53 @@ class DecisionProcessor:
                 translated = self.action_translator.translate(agent_id, action, position)
 
             # Extract and deliver any message
-            self.message_system.extract_and_deliver_message(
-                sender_id=agent_id,
-                action=action,
-                sender_position=position,
-                current_sim_time=current_sim_time,
-                state_queries=self.state_queries,
-                exited_agents=self.exited_agents,
-            )
+            with self.perf_timer.measure("message_delivery", is_parallel=True):
+                self.message_system.extract_and_deliver_message(
+                    sender_id=agent_id,
+                    action=action,
+                    sender_position=position,
+                    current_sim_time=current_sim_time,
+                    state_queries=self.state_queries,
+                    exited_agents=self.exited_agents,
+                )
 
-            # Detect route changes
-            new_exit = extract_exit_name(translated, self.station_layout)
-            old_exit = self.agent_destinations.get(agent_id)
-            route_changed = False
+            # Detect route changes and store decision
+            with self.perf_timer.measure("decision_storage", is_parallel=True):
+                new_exit = extract_exit_name(translated, self.station_layout)
+                old_exit = self.agent_destinations.get(agent_id)
+                route_changed = False
 
-            if new_exit:
-                if old_exit and old_exit != new_exit:
-                    # Route change detected!
-                    logger.info(f"🔄 {agent_id} changed route: {old_exit} → {new_exit}")
-                    route_changed = True
+                if new_exit:
+                    if old_exit and old_exit != new_exit:
+                        # Route change detected!
+                        logger.info(f"🔄 {agent_id} changed route: {old_exit} → {new_exit}")
+                        route_changed = True
 
-                # Update destination tracking
-                self.agent_destinations[agent_id] = new_exit
+                    # Update destination tracking
+                    self.agent_destinations[agent_id] = new_exit
 
-            # Store decision
-            if agent_id not in self.agent_decisions:
-                self.agent_decisions[agent_id] = {"decisions": []}
+                # Store decision
+                if agent_id not in self.agent_decisions:
+                    self.agent_decisions[agent_id] = {"decisions": []}
 
-            decision_record = {
-                "time": current_sim_time,
-                "observation": observation,
-                "prompt": action_spec.call_to_action if observation_changed else "cached",
-                "action": action,
-                "reasoning": reasoning,
-                "translated": translated,
-            }
-
-            # Add route change metadata if it occurred
-            if route_changed:
-                decision_record["route_change"] = {
-                    "from_exit": old_exit,
-                    "to_exit": new_exit,
-                    "reason": reasoning.get("reasoning", ""),
+                decision_record = {
+                    "time": current_sim_time,
+                    "observation": observation,
+                    "prompt": action_spec.call_to_action if observation_changed else "cached",
+                    "action": action,
+                    "reasoning": reasoning,
+                    "translated": translated,
                 }
 
-            self.agent_decisions[agent_id]["decisions"].append(decision_record)
+                # Add route change metadata if it occurred
+                if route_changed:
+                    decision_record["route_change"] = {
+                        "from_exit": old_exit,
+                        "to_exit": new_exit,
+                        "reason": reasoning.get("reasoning", ""),
+                    }
+
+                self.agent_decisions[agent_id]["decisions"].append(decision_record)
 
             # Apply to JuPedSim
             with self.perf_timer.measure("apply_to_jupedsim", is_parallel=True):

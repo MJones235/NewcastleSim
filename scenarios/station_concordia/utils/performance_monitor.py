@@ -54,7 +54,12 @@ class PerformanceTimer:
             return "No timings recorded"
 
         lines = ["\n=== PERFORMANCE PROFILE (Wall-Clock Time) ==="]
-        total_time = sum(self.timings.values())
+
+        # For TOTAL, only count truly top-level non-overlapping operations
+        # agent_decisions_total contains everything else, so just count it + independent ops
+        top_level_ops = {"agent_decisions_total", "jupedsim_step", "file_io", "event_checking"}
+
+        total_time = sum(time for name, time in self.timings.items() if name in top_level_ops)
 
         # Sort by total time descending
         sorted_items = sorted(self.timings.items(), key=lambda x: x[1], reverse=True)
@@ -67,12 +72,29 @@ class PerformanceTimer:
             # Add indicator for parallel operations
             parallel_mark = " [parallel]" if name in self.parallel_operations else ""
 
+            # Indent nested operations for visual hierarchy
+            if name in ["decision_processing", "generate_observations"]:
+                indent = "  "  # Nested in agent_decisions_total
+            elif name in [
+                "parallel_agent_processing",
+                "agent_act_llm",
+                "agent_observe",
+                "translate_action",
+                "apply_to_jupedsim",
+                "parse_json_response",
+                "message_delivery",
+                "decision_storage",
+            ]:
+                indent = "    "  # Nested deeper
+            else:
+                indent = ""
+
             lines.append(
-                f"{name:30s}: {total:8.3f}s total | {avg:8.3f}s avg | "
+                f"{indent}{name:28s}: {total:8.3f}s total | {avg:8.3f}s avg | "
                 f"{count:5d} calls | {percent:5.1f}%{parallel_mark}"
             )
 
-        lines.append(f"{'TOTAL':30s}: {total_time:8.3f}s")
+        lines.append(f"\n{'TOTAL (wall-clock)':30s}: {total_time:8.3f}s")
         lines.append("=" * 80)
 
         return "\n".join(lines)

@@ -161,19 +161,19 @@ class ActionExecutor:
                 logger.debug(f"{agent_id} moving toward {target_agent}")
         else:
             # Regular movement - check if they were helping and moving away
-            if self.helping_relationships.is_helping(agent_id):
-                # Moving without target_agent - they're moving away from who they were helping
-                helped_id = self.helping_relationships.get_helped(agent_id)
+            # Only check if we have an active helping relationship (quick set membership check)
+            if agent_id in self.helping_relationships.relationships:
+                helped_id = self.helping_relationships.relationships[agent_id].get("helping")
                 if helped_id:
                     # Check if they're still near the helped person
                     helper_pos = self.state_queries.get_agent_position(agent_id)
                     helped_pos = self.state_queries.get_agent_position(helped_id)
                     if helper_pos and helped_pos:
-                        distance = (
-                            (helper_pos[0] - helped_pos[0]) ** 2
-                            + (helper_pos[1] - helped_pos[1]) ** 2
-                        ) ** 0.5
-                        if distance > 5.0:  # More than 5 meters away
+                        # Use squared distance to avoid expensive sqrt
+                        dist_squared = (helper_pos[0] - helped_pos[0]) ** 2 + (
+                            helper_pos[1] - helped_pos[1]
+                        ) ** 2
+                        if dist_squared > 25.0:  # 5.0 meters squared
                             self.helping_relationships.stop_helping(agent_id, reason="moved_away")
                             logger.info(f"👋 {agent_id} moved away from {helped_id}, ending help")
 
@@ -213,7 +213,8 @@ class ActionExecutor:
         wait_reason = translated_action.get("wait_reason", "unspecified")
 
         # If helping and waiting for non-helping reasons, end the relationship
-        if self.helping_relationships.is_helping(agent_id):
+        # Quick membership check instead of method call
+        if agent_id in self.helping_relationships.relationships:
             if wait_reason not in ["waiting_with_injured", "helping", "assisting"]:
                 # They chose to wait for reasons unrelated to helping
                 self.helping_relationships.stop_helping(agent_id, reason="waiting_for_other_reason")

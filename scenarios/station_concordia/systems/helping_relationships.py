@@ -27,6 +27,8 @@ class HelpingRelationships:
         """Initialize empty relationship tracking."""
         # helper_id -> relationship info
         self.relationships: dict[str, dict[str, Any]] = {}
+        # helped_id -> helper_id (reverse index for fast is_being_helped lookups)
+        self._helped_to_helper: dict[str, str] = {}
 
     def start_helping(
         self,
@@ -49,6 +51,8 @@ class HelpingRelationships:
             "started": current_time,
             "help_type": help_type,
         }
+        # Update reverse index
+        self._helped_to_helper[helped_id] = helper_id
         logger.info(
             f"👥 {helper_id} started helping {helped_id} (type: {help_type}, t={current_time:.1f}s)"
         )
@@ -72,6 +76,9 @@ class HelpingRelationships:
         help_type = relationship["help_type"]
 
         del self.relationships[helper_id]
+        # Update reverse index
+        if helped_id in self._helped_to_helper:
+            del self._helped_to_helper[helped_id]
 
         logger.info(f"👋 {helper_id} stopped helping {helped_id} ({reason}, type was: {help_type})")
         return helped_id
@@ -86,10 +93,7 @@ class HelpingRelationships:
         Returns:
             Helper's ID if someone is helping, None otherwise
         """
-        for helper_id, info in self.relationships.items():
-            if info["helping"] == helped_id:
-                return helper_id
-        return None
+        return self._helped_to_helper.get(helped_id)
 
     def get_helped(self, helper_id: str) -> str | None:
         """
@@ -127,7 +131,7 @@ class HelpingRelationships:
         Returns:
             True if someone is helping them
         """
-        return self.get_helper(helped_id) is not None
+        return helped_id in self._helped_to_helper
 
     def get_relationship_info(self, helper_id: str) -> dict[str, Any] | None:
         """
