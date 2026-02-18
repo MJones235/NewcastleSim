@@ -50,7 +50,6 @@ class PositionHistoryTracker:
         agent_positions: dict[str, tuple[float, float]],
         agent_decisions: dict[str, Any],
         blocked_exits: set[str],
-        active_helping_pairs: dict[str, dict[str, Any]],
     ) -> None:
         """
         Save a frame of agent positions and state.
@@ -60,7 +59,6 @@ class PositionHistoryTracker:
             agent_positions: Current agent positions
             agent_decisions: Agent decision history
             blocked_exits: Currently blocked exits
-            active_helping_pairs: Active helping relationships
         """
         if not self.should_save(current_time):
             return
@@ -82,13 +80,6 @@ class PositionHistoryTracker:
             "positions": dict(agent_positions),  # Copy to avoid mutation
             "agent_states": agent_states,
             "blocked_exits": list(blocked_exits),
-            "helping_pairs": {
-                helper: {
-                    "helping": info["helping"],
-                    "help_type": info.get("help_type", "unknown"),
-                }
-                for helper, info in active_helping_pairs.items()
-            },
         }
 
         self.position_history.append(frame)

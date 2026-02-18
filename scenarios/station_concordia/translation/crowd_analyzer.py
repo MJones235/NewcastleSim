@@ -35,7 +35,6 @@ class CrowdAnalyzer:
         self,
         nearby_agents: list[dict[str, Any]],
         agent_injured: set[str],
-        helping_relationships,
     ) -> str:
         """
         Summarize what nearby agents are doing using three-dimensional model.
@@ -43,16 +42,16 @@ class CrowdAnalyzer:
         Args:
             nearby_agents: List of nearby agent info dictionaries
             agent_injured: Set of injured agent IDs
-            helping_relationships: HelpingRelationships tracker
-
         Returns:
             Natural language summary of behaviors
         """
         # Detect injured/slow-moving agents
         injured_nearby = []
-        helping_nearby = []
 
-        for agent in nearby_agents:
+        # Filter out agents that are following THIS agent (they'll be noted separately)
+        independent_agents = [a for a in nearby_agents if not a.get("is_following_me", False)]
+
+        for agent in independent_agents:
             agent_id = agent.get("id")
             if agent_id:
                 distance = agent.get("distance", 999)
@@ -61,27 +60,46 @@ class CrowdAnalyzer:
                 if agent_id in agent_injured and distance < 20.0:
                     injured_nearby.append(agent_id)
 
-                # Check if helping (social relationship dimension)
-                if (
-                    helping_relationships
-                    and helping_relationships.is_helping(agent_id)
-                    and distance < 20.0
-                ):
-                    helping_nearby.append(agent_id)
-
         # Build behavior summary
         parts = []
 
-        # Count movement patterns
-        moving_count = sum(1 for a in nearby_agents if a.get("is_moving", True))
-        waiting_count = len(nearby_agents) - moving_count
+        # Count movement patterns (only for independent agents)
+        moving_count = sum(1 for a in independent_agents if a.get("is_moving", True))
+        waiting_count = len(independent_agents) - moving_count
 
         if moving_count > waiting_count:
             parts.append("Most people are moving toward exits.")
         elif waiting_count > moving_count:
             parts.append("Many people are waiting or stationary.")
         else:
-            parts.append("People are mixed between moving and waiting.")
+            if independent_agents:  # Only add if there are independent agents
+                parts.append("People are mixed between moving and waiting.")
+
+        # Identify where nearby agents are heading (target exit visibility)
+        exit_targets: dict[str, list[str]] = {}
+        for agent in independent_agents:
+            target_exit = agent.get("target_exit")
+            agent_id = agent.get("id")
+            if target_exit and agent_id:
+                if target_exit not in exit_targets:
+                    exit_targets[target_exit] = []
+                exit_targets[target_exit].append(agent_id)
+
+        # Include target exit information in observations
+        if exit_targets:
+            # Find most common target exit
+            most_common_exit = max(exit_targets.items(), key=lambda x: len(x[1]))
+            target_name = most_common_exit[0].replace("jps.", "").replace("_", " ")
+            target_count = len(most_common_exit[1])
+
+            if target_count == 1:
+                target_agent = most_common_exit[1][0]
+                parts.append(f"{target_agent} is heading toward the {target_name}.")
+            elif target_count <= 3:
+                target_agents = ", ".join(most_common_exit[1])
+                parts.append(f"{target_agents} are heading toward the {target_name}.")
+            else:
+                parts.append(f"Many nearby people are heading toward the {target_name}.")
 
         # Note injured agents nearby
         if injured_nearby:
@@ -93,9 +111,6 @@ class CrowdAnalyzer:
                 parts.append(
                     f"You notice {len(injured_nearby)} people nearby appear injured or moving very slowly: {', '.join(injured_nearby[:3])}"
                 )
-
-        if helping_nearby:
-            parts.append("Someone nearby is helping another person.")
 
         return " ".join(parts)
 

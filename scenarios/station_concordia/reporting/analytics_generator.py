@@ -3,7 +3,6 @@ Analytics generation for Station Concordia simulations.
 
 Generates detailed analytics reports for:
 - Route changes (blocked exits, re-routing)
-- Help behavior (who helped whom, personality patterns)
 - Waiting behavior (information seeking, reasons)
 - Messaging (communication patterns, recipients)
 """
@@ -28,7 +27,6 @@ class AnalyticsGenerator:
     def save_all_analytics(
         output_path: Path,
         route_changes: list[dict[str, Any]],
-        help_events: list[dict[str, Any]],
         wait_events: list[dict[str, Any]],
         message_history: list[dict[str, Any]],
     ) -> None:
@@ -38,12 +36,10 @@ class AnalyticsGenerator:
         Args:
             output_path: Base output path (analytics saved to same directory)
             route_changes: List of route change events
-            help_events: List of helping behavior events
             wait_events: List of waiting behavior events
             message_history: List of all messages sent
         """
         AnalyticsGenerator._save_route_change_analytics(output_path, route_changes)
-        AnalyticsGenerator._save_help_behavior_analytics(output_path, help_events)
         AnalyticsGenerator._save_wait_behavior_analytics(output_path, wait_events)
         AnalyticsGenerator._save_message_analytics(output_path, message_history)
 
@@ -68,39 +64,6 @@ class AnalyticsGenerator:
                     f"    Reason: {rc['reason']}\n"
                 )
         logger.info(f"Route change analytics saved to {route_changes_path}")
-
-    @staticmethod
-    def _save_help_behavior_analytics(output_path: Path, help_events: list[dict[str, Any]]) -> None:
-        """Save help behavior analytics."""
-        if not help_events:
-            return
-
-        help_analytics_path = output_path.parent / "help_behavior.txt"
-        with open(help_analytics_path, "w") as f:
-            f.write("=== HELP BEHAVIOR ANALYTICS ===\n\n")
-            f.write(f"Total help events: {len(help_events)}\n")
-            f.write(f"Agents who helped: {len({h['helper'] for h in help_events})}\n\n")
-
-            # Breakdown by personality type
-            personality_counts = {}
-            for event in help_events:
-                personality = event.get("helper_personality", "UNKNOWN")
-                personality_counts[personality] = personality_counts.get(personality, 0) + 1
-
-            f.write("Help events by personality:\n")
-            for personality, count in sorted(
-                personality_counts.items(), key=lambda x: x[1], reverse=True
-            ):
-                percentage = (count / len(help_events)) * 100 if help_events else 0
-                f.write(f"  {personality}: {count} helps ({percentage:.1f}%)\n")
-
-            f.write("\nHelp Events:\n")
-            for event in help_events:
-                f.write(
-                    f"  - t={event['time']:.1f}s: {event['helper']} ({event['helper_personality']}) "
-                    f"helped {event['helped']}\n"
-                )
-        logger.info(f"Help behavior analytics saved to {help_analytics_path}")
 
     @staticmethod
     def _save_wait_behavior_analytics(output_path: Path, wait_events: list[dict[str, Any]]) -> None:

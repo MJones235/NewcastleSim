@@ -40,7 +40,6 @@ class DecisionProcessor:
         last_observations: dict[str, str],
         last_actions: dict[str, str],
         perf_timer,
-        helping_relationships,  # New simple tracker
     ):
         """
         Initialize decision processor.
@@ -58,7 +57,6 @@ class DecisionProcessor:
             last_observations: Cache of last observations for change detection
             last_actions: Cache of last actions to reuse
             perf_timer: Performance monitoring timer
-            helping_relationships: HelpingRelationships for tracking help
         """
         self.concordia_agents = concordia_agents
         self.exited_agents = exited_agents
@@ -72,8 +70,6 @@ class DecisionProcessor:
         self.last_observations = last_observations
         self.last_actions = last_actions
         self.perf_timer = perf_timer
-        self.helping_relationships = helping_relationships
-
         # Asyncio lock for shared state modifications during parallel processing
         self._state_lock = asyncio.Lock()
 
@@ -161,56 +157,52 @@ class DecisionProcessor:
                 with self.perf_timer.measure("agent_observe", is_parallel=True):
                     agent.observe(observation)
 
-                # Call LLM with comprehensive single prompt
+                # Call LLM with clear, concise decision prompt
                 action_spec = entity_lib.ActionSpec(
                     call_to_action=(
-                        "Analyze the situation and decide your next action. Respond with ONLY valid JSON:\n\n"
+                        "DECIDE YOUR NEXT ACTION. Respond with ONLY this JSON:\n"
                         "{{\n"
-                        '  "situation": "Brief 1-2 sentence situation summary",\n'
-                        '  "risk_level": "low|moderate|high",\n'
-                        '  "risk_assessment": "Brief danger/threat assessment",\n'
-                        '  "social_context": "What others are doing (if any)",\n'
-                        '  "reasoning": "Why you chose this action (1-2 sentences)",\n'
-                        '  "action_type": "wait|move",\n'
-                        '  "target_type": "current_position|exit|zone",\n'
-                        '  "exit_name": "exit name or null",\n'
-                        '  "zone_name": "zone name or null",\n'
-                        '  "wait_reason": "seeking_information|waiting_for_help|observing_others|assessing_situation|waiting_with_injured or null",\n'
-                        '  "speed": "slow_walk|normal_walk|brisk_walk|jog|run or null (m/s: 0.5|1.0|1.5|2.0|2.5)",\n'
-                        '  "message": "Short casual message or null",\n'
-                        '  "message_type": "directed|shout|quiet or null",\n'
-                        '  "target_agent": "agent_id or null"\n'
+                        '  "reasoning": "Why this action (1-2 sentences)",\n'
+                        '  "action_type": "wait" or "move",\n'
+                        '  "target_type": ONE OF: "current_position", "exit", "agent", "zone",\n'
+                        '  "target_agent": null (or agent_id like "agent_5"),\n'
+                        '  "exit_name": null (or exit name like "jps.entrance_1"),\n'
+                        '  "zone_name": null (or zone name like "jps.platform_3"),\n'
+                        '  "wait_reason": null (or reason if waiting),\n'
+                        '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
+                        '  "message": null (or your spoken words),\n'
+                        '  "message_type": null (or "directed", "shout", "quiet"),\n'
                         "}}\n\n"
+                        "VALID target_type VALUES (ONLY these four):\n"
+                        "  'current_position' → Wait at your current location (action_type='wait')\n"
+                        "  'exit' → Move to an exit for evacuation (requires exit_name)\n"
+                        "  'agent' → Move toward another agent to follow/help (requires target_agent)\n"
+                        "  'zone' → Move to a specific area or platform (requires zone_name)\n\n"
+                        "═══ YOUR OPTIONS ═══\n"
+                        "WAITING (action_type='wait', target_type='current_position'):\n"
+                        "  waiting_with_injured: Someone nearby is injured, stay with them\n"
+                        "  waiting_for_help: YOU are injured, need someone to help\n"
+                        "  seeking_information: Looking around for directions/info\n"
+                        "  observing_others: Watching what others do before deciding\n"
+                        "  assessing_situation: Thinking through options\n\n"
+                        "MOVING (action_type='move', choose ONE target_type):\n"
+                        "  target_type='agent': Move toward another agent to follow them or help them\n"
+                        "    Set target_agent='agent_5' (the person's ID)\n"
+                        "  target_type='exit': Evacuate through a specific exit\n"
+                        "    Set exit_name='jps.entrance_1'\n"
+                        "  target_type='zone': Move to a specific platform or area\n"
+                        "    Set zone_name='jps.platform_3'\n\n"
+                        "═══ COMMUNICATION ═══\n"
+                        "message: Short phrase (keep it REAL, not narrated)\n"
+                        "message_type: 'directed' (to specific person), 'shout' (urgent), 'quiet' (<3m only)\n"
+                        "target_agent: If directed/quiet message, who are you talking to?\n\n"
+                        "═══ DECISION TREE ═══\n"
+                        "1. Am I injured or helping someone? YES→ stay together or coordinate (agent)\n"
+                        "2. Do I want to approach or stay with someone? YES→ target_type='agent'\n"
+                        "3. Should I evacuate now? YES→ target_type='exit'\n"
+                        "4. Else→ wait or move to a zone\n\n"
                         f"Available exits: {[e['name'] for e in exits]}\n"
-                        f"Available zones: {zones}\n\n"
-                        "Action rules:\n"
-                        "- Use action_type='wait' and target_type='current_position' if staying put\n"
-                        "  * Set wait_reason='seeking_information' if looking for directions/information\n"
-                        "  * Set wait_reason='waiting_for_help' if injured and need assistance\n"
-                        "  * Set wait_reason='observing_others' if watching to see what others do\n"
-                        "  * Set wait_reason='assessing_situation' if evaluating risk/options\n"
-                        "  * Set wait_reason='waiting_with_injured' if staying near an injured person to help\n"
-                        "  * Set speed='slow_walk' (0.5 m/s) for seeking_information\n"
-                        "- Use action_type='move' and target_type='exit' to evacuate (set exit_name or use 'nearest')\n"
-                        "  * Set speed based on risk: 'normal_walk' (1.0 m/s) for low risk, 'brisk_walk' (1.5 m/s) for moderate, 'jog' (2.0 m/s) or 'run' (2.5 m/s) for high risk\n"
-                        "- Use action_type='move' and target_type='zone' to move to a platform/area\n"
-                        "- To help someone: Use action_type='move' with target_agent='agent_5' to move toward them\n"
-                        "  * Then use wait (with message) to stay near them, or move (with message) to guide them\n"
-                        "  * They can follow by setting target_agent to your ID\n"
-                        "  * Natural helping emerges from movement + communication, not special actions\n\n"
-                        "Communication (SPOKEN, not text - keep it brief and natural):\n"
-                        "- These are SPOKEN words, not written messages - be conversational\n"
-                        "- If someone speaks to you (marked 'to you'), respond naturally\n"
-                        "  * Use target_agent to reply (e.g., 'Person 15' → target_agent='agent_15')\n"
-                        "- Look at your conversation history - PROGRESS the dialogue, don't repeat:\n"
-                        "  * If you already asked 'You ok?' and they answered, move on or stay quiet\n"
-                        "  * If you're coordinating help, confirm and act - don't keep discussing it\n"
-                        "- Keep it SHORT: 'You ok?' not 'Are you okay and do you need assistance?'\n"
-                        "- DO NOT narrate actions: Bad: 'I'm heading to exit' / Good: 'Come on, let's go'\n"
-                        "- Message types:\n"
-                        "  * directed: to specific person (set target_agent='agent_5')\n"
-                        "  * shout: urgent warning to everyone nearby\n"
-                        "  * quiet: brief comment to very close people (<3m)"
+                        f"Available zones: {zones}\n"
                     ),
                     output_type=entity_lib.OutputType.FREE,
                 )

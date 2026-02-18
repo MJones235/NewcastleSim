@@ -75,7 +75,7 @@ class VideoGenerator:
         Extract time series of agent positions and decisions.
 
         Returns:
-            List of dicts with keys: time, positions, decisions, blocked_exits, helping_pairs
+            List of dicts with keys: time, positions, decisions, blocked_exits
         """
         time_series = []
 
@@ -90,7 +90,6 @@ class VideoGenerator:
                         "positions": frame["positions"],
                         "decisions": self.data.get("agent_decisions", {}),
                         "blocked_exits": frame.get("blocked_exits", []),
-                        "helping_pairs": frame.get("helping_pairs", {}),
                         "agent_states": frame.get("agent_states", {}),
                     }
                 )
@@ -103,7 +102,6 @@ class VideoGenerator:
             agent_positions = self.data.get("agent_positions", {})
             agent_decisions = self.data.get("agent_decisions", {})
             blocked_exits = self.data.get("blocked_exits", [])
-            active_helping_pairs = self.data.get("active_helping_pairs", {})
             final_time = self.data.get("current_time", self.data.get("final_time", 0))
 
             time_series.append(
@@ -112,7 +110,6 @@ class VideoGenerator:
                     "positions": agent_positions,
                     "decisions": agent_decisions,
                     "blocked_exits": blocked_exits,
-                    "helping_pairs": active_helping_pairs,
                     "agent_states": {},
                 }
             )
@@ -275,8 +272,6 @@ class VideoGenerator:
                         )
 
         # Determine agent states
-        helping_agents = set()
-        helped_agents = set()
         waiting_agents = {}
 
         # Use agent_states if available (from position history)
@@ -287,16 +282,6 @@ class VideoGenerator:
                 if action_type == "wait":
                     wait_reason = state.get("wait_reason", "unknown")
                     waiting_agents[agent_id] = wait_reason
-
-        # Use helping pairs
-        helping_pairs = frame_data.get("helping_pairs", {})
-        if isinstance(helping_pairs, dict):
-            for helper_id, pair_info in helping_pairs.items():
-                helping_agents.add(helper_id)
-                # Support both old and new format
-                helped_id = pair_info.get("helping") or pair_info.get("helped")
-                if helped_id:
-                    helped_agents.add(helped_id)
 
         # Fallback: extract from decisions if agent_states not available
         if not agent_states:
@@ -322,13 +307,7 @@ class VideoGenerator:
                 x, y = pos[0], pos[1]
 
                 # Determine color and size
-                if agent_id in helping_agents:
-                    color = "blue"
-                    size = 10
-                elif agent_id in helped_agents:
-                    color = "orange"
-                    size = 10
-                elif agent_id in waiting_agents:
+                if agent_id in waiting_agents:
                     wait_reason = waiting_agents[agent_id]
                     color = {
                         "seeking_information": "purple",
@@ -348,24 +327,6 @@ class VideoGenerator:
         legend_elements = [
             Line2D(
                 [0], [0], marker="o", color="w", markerfacecolor="red", markersize=8, label="Moving"
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="blue",
-                markersize=10,
-                label="Helping",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="orange",
-                markersize=10,
-                label="Being Helped",
             ),
             Line2D(
                 [0],

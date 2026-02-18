@@ -48,7 +48,7 @@ class ObservationGenerator:
         blocked_exits: set[str] | None = None,
         agent_injured: set[str] | None = None,
         agent_action: dict[str, str] | None = None,
-        helping_relationships=None,
+        agent_last_decision: dict[str, dict] | None = None,
         state_queries=None,
         received_messages: list[dict[str, Any]] | None = None,
         conversation_history: dict[str, list[dict]] | None = None,
@@ -65,7 +65,7 @@ class ObservationGenerator:
             blocked_exits: Set of blocked exit names (for visual observation)
             agent_injured: Set of injured agent IDs (physical capability dimension)
             agent_action: Dict of agent_id -> action ("moving"|"waiting")
-            helping_relationships: HelpingRelationships tracker (social dimension)
+            agent_last_decision: Dict of agent_id -> last decision (for memory)
             state_queries: SimulationStateQueries for position lookups (optional)
             received_messages: List of messages received from nearby agents
             conversation_history: Dict mapping other_agent_id to conversation history
@@ -80,6 +80,8 @@ class ObservationGenerator:
             agent_injured = set()
         if agent_action is None:
             agent_action = {}
+        if agent_last_decision is None:
+            agent_last_decision = {}
         if received_messages is None:
             received_messages = []
         if conversation_history is None:
@@ -88,6 +90,67 @@ class ObservationGenerator:
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
         # Time is also omitted as it's not meaningful for agent decisions
+
+        # ---BEGIN: AGENT'S MEMORY OF PREVIOUS DECISION (Concordia formative memory)---
+        # This allows agents to remember and reason about their commitments
+        if agent_id in agent_last_decision:
+            last_decision_lines = ObservationFormatter.format_last_decision(
+                agent_id, agent_last_decision[agent_id]
+            )
+            observations.extend(last_decision_lines)
+        # ---END: AGENT'S MEMORY OF PREVIOUS DECISION---
+
+        # EARLY CHECK: Detect circular following BEFORE other observations
+        # This makes it the most salient new information
+        followers = [a for a in nearby_agents if a.get("is_following_me", False)]
+
+        # CIRCULAR FOLLOWING DETECTION: Describe observable pattern without prescribing behavior
+        if agent_id in agent_last_decision:
+            last_decision = agent_last_decision[agent_id]
+            if (
+                last_decision.get("target_type") == "agent"
+                and last_decision.get("target_agent") is not None
+            ):
+                # We're following someone - check if they're also following us
+                our_target = last_decision.get("target_agent")
+                circular_detected = False
+                for follower in followers:
+                    if follower.get("id") == our_target:
+                        # Describe the observable situation without prescribing action
+                        target_person = our_target.replace("agent_", "Person ")
+                        observations.append(
+                            f"You are following {target_person}, and {target_person} is following YOU. "
+                            f"Neither of you is heading toward an exit."
+                        )
+                        circular_detected = True
+                        break
+
+                if not circular_detected and followers:
+                    # Not circular but still being followed - show normal follower alerts
+                    follower_ids = [a.get("id").replace("agent_", "Person ") for a in followers]
+                    if len(followers) == 1:
+                        observations.append(f"⚠️ {follower_ids[0]} is trying to follow YOU.")
+                    else:
+                        follower_list = ", ".join(follower_ids)
+                        observations.append(f"⚠️ {follower_list} are trying to follow YOU.")
+            else:
+                # Not following anyone - show normal follower alerts only
+                if followers:
+                    follower_ids = [a.get("id").replace("agent_", "Person ") for a in followers]
+                    if len(followers) == 1:
+                        observations.append(f"⚠️ {follower_ids[0]} is trying to follow YOU.")
+                    else:
+                        follower_list = ", ".join(follower_ids)
+                        observations.append(f"⚠️ {follower_list} are trying to follow YOU.")
+        else:
+            # No previous decision recorded - show normal follower alerts
+            if followers:
+                follower_ids = [a.get("id").replace("agent_", "Person ") for a in followers]
+                if len(followers) == 1:
+                    observations.append(f"⚠️ {follower_ids[0]} is trying to follow YOU.")
+                else:
+                    follower_list = ", ".join(follower_ids)
+                    observations.append(f"⚠️ {follower_list} are trying to follow YOU.")
 
         # Current location
         zone = self.spatial_analyzer.identify_zone(position)
@@ -100,15 +163,13 @@ class ObservationGenerator:
 
         # Phase 4.1: Agent's own status
         status_lines = ObservationFormatter.format_own_status(
-            agent_id, agent_injured, agent_action, helping_relationships, state_queries
+            agent_id, agent_injured, agent_action, state_queries
         )
         observations.extend(status_lines)
 
         # Nearby agent behaviors
         if nearby_agents:
-            behaviors = self.crowd_analyzer.summarize_behaviors(
-                nearby_agents, agent_injured, helping_relationships
-            )
+            behaviors = self.crowd_analyzer.summarize_behaviors(nearby_agents, agent_injured)
             observations.append(behaviors)
 
             # Phase 5.1: List nearby agent IDs for targeting messages

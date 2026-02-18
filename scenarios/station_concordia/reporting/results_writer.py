@@ -32,7 +32,6 @@ class ResultsWriter:
         current_sim_time: float,
         event_history: list[dict[str, Any]],
         blocked_exits: set[str],
-        active_helping_pairs: dict[str, dict[str, Any]],
         message_history: list[dict[str, Any]],
         decision_interval: float,
         max_steps: int,
@@ -48,7 +47,6 @@ class ResultsWriter:
             current_sim_time: Current simulation time
             event_history: All events that occurred
             blocked_exits: Set of currently blocked exits
-            active_helping_pairs: Active helper-helped pairs
             message_history: All messages sent
             decision_interval: Time between decisions
             max_steps: Maximum simulation steps
@@ -63,10 +61,6 @@ class ResultsWriter:
             "current_time": current_sim_time,
             "events": event_history,
             "blocked_exits": list(blocked_exits),
-            "active_helping_pairs": {
-                helper: {"helping": info["helping"], "help_type": info.get("help_type", "unknown")}
-                for helper, info in active_helping_pairs.items()
-            },
             "messages": message_history,
             "config": {
                 "decision_interval": decision_interval,
@@ -92,9 +86,7 @@ class ResultsWriter:
         final_sim_time: float,
         event_history: list[dict[str, Any]],
         blocked_exits: set[str],
-        active_helping_pairs: dict[str, dict[str, Any]],
         message_history: list[dict[str, Any]],
-        help_events: list[dict[str, Any]],
         wait_events: list[dict[str, Any]],
         decision_interval: float,
         max_steps: int,
@@ -112,9 +104,7 @@ class ResultsWriter:
             final_sim_time: Final simulation time
             event_history: All events that occurred
             blocked_exits: Set of blocked exits
-            active_helping_pairs: Active helper-helped pairs at end
             message_history: All messages sent
-            help_events: All helping behavior events
             wait_events: All waiting behavior events
             decision_interval: Time between decisions
             max_steps: Maximum simulation steps
@@ -146,14 +136,6 @@ class ResultsWriter:
             "blocked_exits": list(blocked_exits),
             "route_changes": route_changes,
             "messages": message_history,
-            "active_helping_pairs": {
-                helper: {
-                    "helping": info["helping"],
-                    "help_type": info.get("help_type", "unknown"),
-                    "started": info.get("started", 0.0),
-                }
-                for helper, info in active_helping_pairs.items()
-            },
             "config": {
                 "decision_interval": decision_interval,
                 "max_steps": max_steps,
@@ -183,7 +165,6 @@ class ResultsWriter:
         AnalyticsGenerator.save_all_analytics(
             output_path,
             route_changes,
-            help_events,
             wait_events,
             message_history,
         )

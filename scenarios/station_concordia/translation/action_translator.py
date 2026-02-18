@@ -76,11 +76,13 @@ class ActionTranslator:
             speed = data.get("speed")  # Phase 4.3: Dynamic speed selection
 
             # Move toward another agent (helping, following, or approaching)
-            if action_type == "move" and target_agent:
+            # ONLY if target_type explicitly says so (not if just mentioned in context)
+            if action_type == "move" and target_agent and target_type == "agent":
                 return {
                     "action_type": "move",
                     "target": None,  # Will be resolved to agent position later
                     "target_agent": target_agent,
+                    "target_type": "agent",
                     "confidence": 0.9,
                     "reasoning": f"Moving toward {target_agent}",
                     "speed": speed,
@@ -106,6 +108,8 @@ class ActionTranslator:
                     return {
                         "action_type": "move",
                         "target": nearest_exit["coords"],
+                        "target_type": "exit",
+                        "exit_name": nearest_exit["name"],
                         "confidence": 0.9,
                         "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
                         "speed": speed,  # Phase 4.3: Dynamic speed
@@ -115,6 +119,8 @@ class ActionTranslator:
                     return {
                         "action_type": "move",
                         "target": self.exits[exit_name],
+                        "target_type": "exit",
+                        "exit_name": exit_name,
                         "confidence": 0.95,
                         "reasoning": f"Moving to exit {exit_name}",
                         "speed": speed,  # Phase 4.3: Dynamic speed
@@ -127,6 +133,8 @@ class ActionTranslator:
                     return {
                         "action_type": "move",
                         "target": zone_coords,
+                        "target_type": "zone",
+                        "zone_name": zone_name,
                         "confidence": 0.9,
                         "reasoning": f"Moving to zone {zone_name}",
                         "speed": speed,  # Phase 4.3: Dynamic speed
@@ -138,6 +146,7 @@ class ActionTranslator:
         return {
             "action_type": "wait",
             "target": current_position,
+            "target_type": "current_position",
             "confidence": 0.3,
             "reasoning": f"Parse failed, defaulting to wait: {action[:100]}",
         }

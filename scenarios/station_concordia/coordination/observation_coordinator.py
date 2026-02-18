@@ -32,7 +32,7 @@ class ObservationCoordinator:
         agent_destinations: dict[str, str],
         agent_injured: set[str],
         agent_action: dict[str, str],
-        helping_relationships,
+        agent_last_decision: dict[str, dict],
         test_scenarios: dict[str, Any],
     ):
         """
@@ -48,7 +48,7 @@ class ObservationCoordinator:
             agent_destinations: Dict of agent_id -> current exit name
             agent_injured: Set of injured agent IDs (physical capability dimension)
             agent_action: Dict of agent_id -> action ("moving"|"waiting")
-            helping_relationships: HelpingRelationships tracker (social dimension)
+            agent_last_decision: Dict of agent_id -> last translated_action (for memory)
             test_scenarios: Test scenario configuration for observation radius
         """
         self.concordia_agents = concordia_agents
@@ -60,7 +60,7 @@ class ObservationCoordinator:
         self.agent_destinations = agent_destinations
         self.agent_injured = agent_injured
         self.agent_action = agent_action
-        self.helping_relationships = helping_relationships
+        self.agent_last_decision = agent_last_decision
         self.test_scenarios = test_scenarios
 
     def generate_all_observations(self, current_sim_time: float) -> dict[str, str]:
@@ -94,11 +94,22 @@ class ObservationCoordinator:
                     agent_id, radius=observation_radius
                 )
 
-                # Enrich nearby_agents with target exit info
+                # Enrich nearby_agents with target exit info and follower detection
                 for agent_info in nearby_agents:
                     other_id = agent_info.get("id")
                     if other_id:
                         agent_info["target_exit"] = self.agent_destinations.get(other_id)
+
+                        # Detect if this nearby agent is following the current agent
+                        is_following_me = False
+                        if other_id in self.agent_last_decision:
+                            last_decision = self.agent_last_decision[other_id]
+                            if (
+                                last_decision.get("target_type") == "agent"
+                                and last_decision.get("target_agent") == agent_id
+                            ):
+                                is_following_me = True
+                        agent_info["is_following_me"] = is_following_me
 
                 # Get recent events
                 recent_events = self.state_queries.get_recent_events(
@@ -121,7 +132,7 @@ class ObservationCoordinator:
                     blocked_exits=self.event_manager.blocked_exits,
                     agent_injured=self.agent_injured,
                     agent_action=self.agent_action,
-                    helping_relationships=self.helping_relationships,
+                    agent_last_decision=self.agent_last_decision,
                     state_queries=self.state_queries,
                     received_messages=received_messages,
                     conversation_history=conversation_history,

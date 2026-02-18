@@ -38,7 +38,6 @@ from scenarios.station_concordia.jps_integration.simulation_interface import Ped
 from scenarios.station_concordia.reporting.financial_reporter import FinancialReporter
 from scenarios.station_concordia.reporting.results_writer import ResultsWriter
 from scenarios.station_concordia.systems.event_manager import EventManager
-from scenarios.station_concordia.systems.helping_relationships import HelpingRelationships
 from scenarios.station_concordia.systems.messaging import MessageSystem
 from scenarios.station_concordia.translation import ActionTranslator, ObservationGenerator
 from scenarios.station_concordia.utils.performance_monitor import PerformanceTimer
@@ -119,9 +118,8 @@ class HybridSimulationRunner:
         # 2. Current action: What are they doing right now?
         self.agent_action: dict[str, str] = {}  # agent_id -> "moving"|"waiting"
 
-        # 3. Social relationships: Who is helping whom?
-        self.help_events: list[dict[str, Any]] = []  # Track all help interactions
-        self.helping_relationships = HelpingRelationships()
+        # 3. Memory of last decision: What did they commit to?
+        self.agent_last_decision: dict[str, dict] = {}  # agent_id -> translated_action dict
 
         # Build agents using AgentBuilder (parallel initialization for faster startup)
         agent_builder = AgentBuilder(
@@ -186,9 +184,8 @@ class HybridSimulationRunner:
             station_layout=station_layout,
             agent_injured=self.agent_injured,
             agent_action=self.agent_action,
+            agent_last_decision=self.agent_last_decision,
             agent_destinations=self.agent_destinations,
-            helping_relationships=self.helping_relationships,
-            help_events=self.help_events,
             wait_events=self.wait_events,
             agent_configs=agents_config,
             test_scenarios=test_scenarios or {},
@@ -208,7 +205,6 @@ class HybridSimulationRunner:
             last_observations=self.last_observations,
             last_actions=self.last_actions,
             perf_timer=self.perf_timer,
-            helping_relationships=self.helping_relationships,
         )
 
         # Observation coordination
@@ -222,7 +218,7 @@ class HybridSimulationRunner:
             agent_destinations=self.agent_destinations,
             agent_injured=self.agent_injured,
             agent_action=self.agent_action,
-            helping_relationships=self.helping_relationships,
+            agent_last_decision=self.agent_last_decision,
             test_scenarios=test_scenarios or {},
         )
 
@@ -281,9 +277,6 @@ class HybridSimulationRunner:
                     # Check for agents who have exited and remove them
                     self.exit_tracker.check_exited_agents(self.current_sim_time, self.current_step)
 
-                    # Clean up helping relationships for exited agents
-                    self.helping_relationships.cleanup_exited_agents(self.exited_agents)
-
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
                         with self.perf_timer.measure("agent_decisions_total"):
@@ -313,7 +306,6 @@ class HybridSimulationRunner:
                             self.jps_sim.get_all_agent_positions(),
                             self.agent_decisions,
                             self.event_manager.blocked_exits,
-                            self.helping_relationships.get_all_relationships(),
                         )
 
                     # Save positions every 10 steps (0.5s) for smooth visualization
@@ -327,7 +319,6 @@ class HybridSimulationRunner:
                                 self.current_sim_time,
                                 self.event_manager.event_history,
                                 self.event_manager.blocked_exits,
-                                self.helping_relationships.get_all_relationships(),
                                 self.message_system.message_history,
                                 self.decision_interval,
                                 self.max_steps,
@@ -399,9 +390,7 @@ class HybridSimulationRunner:
                 self.current_sim_time,
                 self.event_manager.event_history,
                 self.event_manager.blocked_exits,
-                self.helping_relationships.get_all_relationships(),
                 self.message_system.message_history,
-                self.help_events,
                 self.wait_events,
                 self.decision_interval,
                 self.max_steps,

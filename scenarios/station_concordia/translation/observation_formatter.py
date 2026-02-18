@@ -197,7 +197,6 @@ class ObservationFormatter:
         agent_id: str,
         agent_injured: set[str],
         agent_action: dict[str, str],
-        helping_relationships,
         state_queries=None,
     ) -> list[str]:
         """
@@ -207,7 +206,6 @@ class ObservationFormatter:
             agent_id: ID of the agent
             agent_injured: Set of injured agent IDs
             agent_action: Dict of agent_id -> action ("moving"|"waiting")
-            helping_relationships: HelpingRelationships tracker
             state_queries: SimulationStateQueries for position lookups (optional)
 
         Returns:
@@ -219,71 +217,70 @@ class ObservationFormatter:
         if agent_id in agent_injured:
             lines.append("You are injured and moving slowly.")
 
-            # Check if someone is helping them
-            if helping_relationships:
-                helper_id = helping_relationships.get_helper(agent_id)
-                if helper_id and state_queries:
-                    try:
-                        helper_pos = state_queries.get_agent_position(helper_id)
-                        helped_pos = state_queries.get_agent_position(agent_id)
-                        if helper_pos is not None and helped_pos is not None:
-                            distance = (
-                                (helper_pos[0] - helped_pos[0]) ** 2
-                                + (helped_pos[1] - helper_pos[1]) ** 2
-                            ) ** 0.5
-
-                            if distance < 3.0:
-                                lines.append(f"{helper_id} has reached you and is with you now.")
-                            elif distance < 10.0:
-                                lines.append(
-                                    f"{helper_id} is approaching to help ({distance:.1f}m away)."
-                                )
-                    except Exception:
-                        pass
-
-        # Social relationship dimension - with distance context
-        if helping_relationships and helping_relationships.is_helping(agent_id):
-            helped_id = helping_relationships.get_helped(agent_id)
-            if helped_id:
-                # Calculate distance if state_queries available
-                if state_queries:
-                    try:
-                        helper_pos = state_queries.get_agent_position(agent_id)
-                        helped_pos = state_queries.get_agent_position(helped_id)
-                        if helper_pos is not None and helped_pos is not None:
-                            distance = (
-                                (helper_pos[0] - helped_pos[0]) ** 2
-                                + (helped_pos[1] - helper_pos[1]) ** 2
-                            ) ** 0.5
-
-                            if distance < 3.0:
-                                # Close enough to have reached them
-                                lines.append(
-                                    f"You have reached {helped_id} and are now with them. "
-                                    f"You could wait with them, guide them to an exit, or continue alone."
-                                )
-                            elif distance < 10.0:
-                                lines.append(
-                                    f"You are approaching {helped_id} ({distance:.1f}m away)."
-                                )
-                            else:
-                                lines.append(f"You are moving toward {helped_id}.")
-                        else:
-                            lines.append(f"You are currently helping {helped_id}.")
-                    except Exception:
-                        lines.append(f"You are currently helping {helped_id}.")
-                else:
-                    lines.append(f"You are currently helping {helped_id}.")
-            else:
-                lines.append("You are currently helping another person.")
-
         # Action dimension (waiting for assistance is special case)
         action = agent_action.get(agent_id, "moving")
         if action == "waiting":
             # Only mention waiting if they're not already mentioned as injured/helping
-            if agent_id not in agent_injured and not (
-                helping_relationships and helping_relationships.is_helping(agent_id)
-            ):
+            if agent_id not in agent_injured:
                 lines.append("You are waiting.")
+
+        return lines
+
+    @staticmethod
+    def format_last_decision(
+        agent_id: str,
+        last_decision: dict[str, Any],
+    ) -> list[str]:
+        """
+        Format agent's previous decision as a natural language memory statement.
+
+        Allows agents to see and reason about their prior commitment, supporting consistent behavior.
+
+        Args:
+            agent_id: ID of the agent
+            last_decision: Dict containing the last translated_action details
+
+        Returns:
+            List of formatted decision memory strings
+        """
+        lines = []
+
+        action_type = last_decision.get("action_type", "unknown")
+        target_type = last_decision.get("target_type", "")
+        target_agent = last_decision.get("target_agent")
+        target_exit = last_decision.get("target_exit")
+        zone_name = last_decision.get("zone_name")
+        speed = last_decision.get("speed")
+        reasoning = last_decision.get("reasoning", "")
+        wait_reason = last_decision.get("wait_reason")
+        decision_time = last_decision.get("time", 0)
+
+        # Build natural language memory of decision
+        if action_type == "move":
+            target_desc = ""
+            if target_type == "agent" and target_agent:
+                target_desc = f"toward {target_agent.replace('agent_', 'Person ')}"
+            elif target_type == "exit" and target_exit:
+                target_desc = f"to {target_exit}"
+            elif target_type == "zone" and zone_name:
+                target_desc = f"to {zone_name}"
+            else:
+                target_desc = "to a location"
+
+            speed_desc = f" at {speed}" if speed else ""
+            lines.append(
+                f"[Your previous decision at t={decision_time:.0f}s] You decided to move {target_desc}{speed_desc}."
+            )
+
+            if reasoning:
+                lines.append(f"  Reasoning: {reasoning[:100]}")  # Limit length for clarity
+
+        elif action_type == "wait":
+            wait_desc = wait_reason if wait_reason else "at your current location"
+            lines.append(
+                f"[Your previous decision at t={decision_time:.0f}s] You decided to wait {wait_desc}."
+            )
+            if reasoning:
+                lines.append(f"  Reasoning: {reasoning[:100]}")  # Limit length for clarity
 
         return lines
