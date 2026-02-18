@@ -104,7 +104,7 @@ class ActionExecutor:
             target_agent_id = translated_action.get("target_agent")
             if target_agent_id and action_type == "move":
                 target_position = self.state_queries.get_agent_position(target_agent_id)
-                if target_position:
+                if target_position is not None:
                     target = target_position
                     translated_action["target"] = target
                     logger.debug(f"{agent_id} moving toward {target_agent_id} at {target}")
@@ -168,7 +168,7 @@ class ActionExecutor:
                     # Check if they're still near the helped person
                     helper_pos = self.state_queries.get_agent_position(agent_id)
                     helped_pos = self.state_queries.get_agent_position(helped_id)
-                    if helper_pos and helped_pos:
+                    if helper_pos is not None and helped_pos is not None:
                         # Use squared distance to avoid expensive sqrt
                         dist_squared = (helper_pos[0] - helped_pos[0]) ** 2 + (
                             helper_pos[1] - helped_pos[1]
@@ -181,24 +181,22 @@ class ActionExecutor:
         new_exit_name = extract_exit_name(translated_action, self.station_layout)
 
         if new_exit_name:
-            # Agent is moving to an exit - update destination tracking
-            self.agent_destinations[agent_id] = new_exit_name
-
             # Check if agent is trying to switch to a blocked exit
             if new_exit_name in self.event_manager.blocked_exits:
-                logger.debug(
-                    f"⚠️ {agent_id} tried to switch to blocked exit {new_exit_name} - "
-                    f"keeping waypoint only"
+                logger.warning(
+                    f"⚠️ {agent_id} tried to switch to blocked exit '{new_exit_name}' - "
+                    f"setting waypoint only, NOT updating journey or destination tracking"
                 )
                 # Only set waypoint, don't switch journey (would let them evacuate through blocked exit)
+                # Do NOT update agent_destinations - they haven't actually changed their route
                 self.jps_sim.set_agent_target(agent_id, target)
             else:
+                # Valid exit - update destination tracking ONLY for non-blocked exits
+                self.agent_destinations[agent_id] = new_exit_name
+
                 # Switch the agent's evacuation journey to this exit
-                if hasattr(self.jps_sim, "set_agent_evacuation_exit"):
-                    self.jps_sim.set_agent_evacuation_exit(agent_id, new_exit_name)
-                    logger.debug(f"Switched {agent_id} to journey for {new_exit_name}")
-                else:
-                    self.jps_sim.set_agent_target(agent_id, target)
+                self.jps_sim.set_agent_evacuation_exit(agent_id, new_exit_name)
+                logger.debug(f"Switched {agent_id} to journey for {new_exit_name}")
         else:
             # Not moving to an exit, just a waypoint
             self.jps_sim.set_agent_target(agent_id, target)

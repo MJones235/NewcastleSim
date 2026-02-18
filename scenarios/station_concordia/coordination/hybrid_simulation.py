@@ -27,12 +27,6 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-try:
-    import jupedsim as jps
-except ImportError:
-    jps = None
-    print("Warning: jupedsim not available")
-
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.concordia_integration.agent_builder import AgentBuilder
 from scenarios.station_concordia.coordination.observation_coordinator import ObservationCoordinator
@@ -40,6 +34,7 @@ from scenarios.station_concordia.coordination.simulation_state_queries import Si
 from scenarios.station_concordia.decision.action_executor import ActionExecutor
 from scenarios.station_concordia.decision.decision_processor import DecisionProcessor
 from scenarios.station_concordia.jps_integration.exit_tracker import ExitTracker
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 from scenarios.station_concordia.reporting.financial_reporter import FinancialReporter
 from scenarios.station_concordia.reporting.results_writer import ResultsWriter
 from scenarios.station_concordia.systems.event_manager import EventManager
@@ -66,7 +61,7 @@ class HybridSimulationRunner:
 
     def __init__(
         self,
-        jupedsim_simulation: Any,  # StationSimulation instance
+        jupedsim_simulation: PedestrianSimulation,
         agents_config: list[dict[str, Any]],
         station_layout: dict[str, Any],
         language_model: language_model.LanguageModel,
@@ -81,7 +76,7 @@ class HybridSimulationRunner:
         Initialize the hybrid simulation runner.
 
         Args:
-            jupedsim_simulation: Configured JuPedSim simulation
+            jupedsim_simulation: Pedestrian simulation backend (implements PedestrianSimulation)
             agents_config: List of agent configuration dictionaries
             station_layout: Station geometry and exit information
             language_model: LLM for Concordia agents
@@ -135,16 +130,10 @@ class HybridSimulationRunner:
             station_layout_description=self.observation_generator._describe_geometry(),
         )
 
-        # Run async agent building with proper thread pool
+        # Build agents asynchronously for faster initialization
         import asyncio
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        self.concordia_agents, injured_agents = loop.run_until_complete(
+        self.concordia_agents, injured_agents = asyncio.run(
             agent_builder.build_agents(agents_config)
         )
         self.agent_injured = injured_agents
@@ -169,12 +158,14 @@ class HybridSimulationRunner:
         self.event_manager = EventManager(station_layout, jupedsim_simulation)
         self.event_manager.setup_test_scenario(test_scenarios)
 
-        # Exit tracking
+        # Exit tracking with validation
         self.exit_tracker = ExitTracker(
             concordia_agents=self.concordia_agents,
             exited_agents=self.exited_agents,
             agent_destinations=self.agent_destinations,
             jps_sim=jupedsim_simulation,
+            station_layout=station_layout,  # For exit validation
+            exit_validation_radius=15.0,  # Agents must be within 15m of exit
         )
 
         # Waiting and information seeking tracking

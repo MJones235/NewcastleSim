@@ -1,13 +1,14 @@
 """
 Simulation state query utilities.
 
-This module provides helper methods for querying the JuPedSim simulation state,
+This module provides helper methods for querying the pedestrian simulation state,
 including agent positions, nearby agents, and event history.
 """
 
 from typing import Any
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 
 logger = get_logger(__name__)
 
@@ -15,16 +16,16 @@ logger = get_logger(__name__)
 class SimulationStateQueries:
     """Helper class for querying simulation state."""
 
-    def __init__(self, jps_simulation: Any):
+    def __init__(self, jps_simulation: PedestrianSimulation):
         """
         Initialize state queries.
 
         Args:
-            jps_simulation: JuPedSim simulation instance
+            jps_simulation: Pedestrian simulation instance (implements PedestrianSimulation)
         """
         self.jps_sim = jps_simulation
 
-    def get_agent_position(self, agent_id: str) -> tuple[float, float]:
+    def get_agent_position(self, agent_id: str) -> tuple[float, float] | None:
         """
         Get agent's current position from JuPedSim.
 
@@ -32,7 +33,7 @@ class SimulationStateQueries:
             agent_id: Concordia agent ID
 
         Returns:
-            Agent's (x, y) position, or (0.0, 0.0) if not found
+            Agent's (x, y) position, or None if agent has exited
         """
         return self.jps_sim.get_agent_position(agent_id)
 

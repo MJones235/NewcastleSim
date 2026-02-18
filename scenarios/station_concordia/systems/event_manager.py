@@ -11,6 +11,7 @@ Handles:
 from typing import Any
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 
 logger = get_logger(__name__)
 
@@ -26,13 +27,13 @@ class EventManager:
     - Managing blocked exits state
     """
 
-    def __init__(self, station_layout: dict[str, Any], jps_sim: Any):
+    def __init__(self, station_layout: dict[str, Any], jps_sim: PedestrianSimulation):
         """
         Initialize the event manager.
 
         Args:
             station_layout: Station geometry and exit information
-            jps_sim: JuPedSim simulation instance
+            jps_sim: Pedestrian simulation instance (implements PedestrianSimulation)
         """
         self.station_layout = station_layout
         self.jps_sim = jps_sim
@@ -106,24 +107,18 @@ class EventManager:
         # Add to blocked exits set (for observations)
         self.blocked_exits.add(exit_name)
 
-        # Place physical obstacle in JuPedSim (if supported)
+        # Place physical obstacle in JuPedSim
         # Use a radius that blocks the entrance (typically 2-3m wide, so 3-4m radius covers it)
         # This makes the exit unreachable in pathfinding - agents cannot get close enough
         # to evacuate through it, and will naturally reroute when they observe the blockage
         try:
-            if hasattr(self.jps_sim, "add_obstacle"):
-                # Obstacle radius sized for typical entrance width (2-3m)
-                obstacle_radius = 4.0
-                self.jps_sim.add_obstacle(exit_pos, radius=obstacle_radius)
-                logger.info(
-                    f"🚧 Exit {exit_name} physically blocked at {exit_pos} "
-                    f"(obstacle radius: {obstacle_radius}m)"
-                )
-            else:
-                logger.info(
-                    f"🚧 Exit {exit_name} marked as blocked (visual only, "
-                    f"JuPedSim obstacle not supported)"
-                )
+            # Obstacle radius sized for typical entrance width (2-3m)
+            obstacle_radius = 4.0
+            self.jps_sim.add_obstacle(exit_pos, radius=obstacle_radius)
+            logger.info(
+                f"🚧 Exit {exit_name} physically blocked at {exit_pos} "
+                f"(obstacle radius: {obstacle_radius}m)"
+            )
         except Exception as e:
             logger.warning(f"Failed to add physical obstacle at {exit_name}: {e}")
 

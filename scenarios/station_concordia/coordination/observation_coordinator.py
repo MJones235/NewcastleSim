@@ -83,6 +83,9 @@ class ObservationCoordinator:
             try:
                 # Get agent state from JuPedSim
                 position = self.state_queries.get_agent_position(agent_id)
+                if position is None:
+                    # Agent has exited, skip observation
+                    continue
 
                 # Get observation radius from config
                 help_config = self.test_scenarios.get("help_behavior", {})

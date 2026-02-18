@@ -13,7 +13,6 @@ This module coordinates the cognitive layer (Concordia) decision-making process.
 
 import asyncio
 import json
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from concordia.typing import entity as entity_lib
@@ -75,11 +74,10 @@ class DecisionProcessor:
         self.perf_timer = perf_timer
         self.helping_relationships = helping_relationships
 
-        # Create thread pool executor for parallel agent.act() calls
-        # Use min(32, agent_count) to efficiently handle many agents
-        max_workers = min(32, len(concordia_agents))
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        logger.debug(f"DecisionProcessor initialized with {max_workers} worker threads")
+        # Asyncio lock for shared state modifications during parallel processing
+        self._state_lock = asyncio.Lock()
+
+        logger.debug("DecisionProcessor initialized for parallel async processing")
 
     def process_all_agents(self, observations: dict[str, str], current_sim_time: float) -> float:
         """
@@ -104,14 +102,7 @@ class DecisionProcessor:
         )
 
         # Run agent processing in parallel using asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                self._process_agents_parallel(observations, exits, zones, current_sim_time)
-            )
-        finally:
-            loop.close()
+        asyncio.run(self._process_agents_parallel(observations, exits, zones, current_sim_time))
 
         return current_sim_time
 
@@ -224,21 +215,23 @@ class DecisionProcessor:
                     output_type=entity_lib.OutputType.FREE,
                 )
 
-                # Run the LLM call in a thread pool to avoid blocking
-                # (agent.act() is synchronous, so we wrap it in run_in_executor)
-                # Use custom executor with more threads for better parallelization
+                # Run the LLM call in a separate thread to avoid blocking
+                # (agent.act() is synchronous, so we use asyncio.to_thread)
                 with self.perf_timer.measure("agent_act_llm", is_parallel=True):
-                    loop = asyncio.get_event_loop()
-                    action = await loop.run_in_executor(self.executor, agent.act, action_spec)
+                    action = await asyncio.to_thread(agent.act, action_spec)
 
-                self.last_observations[agent_id] = observation
-                self.last_actions[agent_id] = action
+                # Async-safe update of observation/action cache
+                async with self._state_lock:
+                    self.last_observations[agent_id] = observation
+                    self.last_actions[agent_id] = action
                 logger.info(f"{agent_id}: Observation changed, calling LLM")
             else:
                 # Observation unchanged - reuse last action without calling observe/act
-                action = self.last_actions.get(
-                    agent_id, '{"action_type": "wait", "target_type": "current_position"}'
-                )
+                # Async-safe read from action cache
+                async with self._state_lock:
+                    action = self.last_actions.get(
+                        agent_id, '{"action_type": "wait", "target_type": "current_position"}'
+                    )
                 logger.info(f"{agent_id}: Observation unchanged, reusing last action")
 
             # Parse JSON response
@@ -247,6 +240,11 @@ class DecisionProcessor:
 
             # Translate action to JuPedSim command
             position = self.state_queries.get_agent_position(agent_id)
+            if position is None:
+                # Agent has likely exited - skip action execution
+                logger.debug(f"{agent_id}: No position found, likely exited")
+                return
+
             with self.perf_timer.measure("translate_action", is_parallel=True):
                 translated = self.action_translator.translate(agent_id, action, position)
 
@@ -264,22 +262,14 @@ class DecisionProcessor:
             # Detect route changes and store decision
             with self.perf_timer.measure("decision_storage", is_parallel=True):
                 new_exit = extract_exit_name(translated, self.station_layout)
-                old_exit = self.agent_destinations.get(agent_id)
+
+                # Async-safe read from agent_destinations
+                async with self._state_lock:
+                    old_exit = self.agent_destinations.get(agent_id)
+
                 route_changed = False
 
-                if new_exit:
-                    if old_exit and old_exit != new_exit:
-                        # Route change detected!
-                        logger.info(f"🔄 {agent_id} changed route: {old_exit} → {new_exit}")
-                        route_changed = True
-
-                    # Update destination tracking
-                    self.agent_destinations[agent_id] = new_exit
-
-                # Store decision
-                if agent_id not in self.agent_decisions:
-                    self.agent_decisions[agent_id] = {"decisions": []}
-
+                # Prepare decision record before acquiring lock
                 decision_record = {
                     "time": current_sim_time,
                     "observation": observation,
@@ -289,15 +279,30 @@ class DecisionProcessor:
                     "translated": translated,
                 }
 
-                # Add route change metadata if it occurred
-                if route_changed:
-                    decision_record["route_change"] = {
-                        "from_exit": old_exit,
-                        "to_exit": new_exit,
-                        "reason": reasoning.get("reasoning", ""),
-                    }
+                # Async-safe update of shared state
+                async with self._state_lock:
+                    if new_exit:
+                        if old_exit and old_exit != new_exit:
+                            # Route change detected!
+                            logger.info(f"🔄 {agent_id} changed route: {old_exit} → {new_exit}")
+                            route_changed = True
 
-                self.agent_decisions[agent_id]["decisions"].append(decision_record)
+                        # Update destination tracking
+                        self.agent_destinations[agent_id] = new_exit
+
+                    # Add route change metadata if it occurred
+                    if route_changed:
+                        decision_record["route_change"] = {
+                            "from_exit": old_exit,
+                            "to_exit": new_exit,
+                            "reason": reasoning.get("reasoning", ""),
+                        }
+
+                    # Store decision
+                    if agent_id not in self.agent_decisions:
+                        self.agent_decisions[agent_id] = {"decisions": []}
+
+                    self.agent_decisions[agent_id]["decisions"].append(decision_record)
 
             # Apply to JuPedSim
             with self.perf_timer.measure("apply_to_jupedsim", is_parallel=True):

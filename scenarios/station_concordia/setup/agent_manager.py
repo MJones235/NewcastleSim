@@ -5,14 +5,15 @@ This module is responsible for:
 - Complete agent lifecycle management
 - Creating agent configurations
 - Generating spawn positions
-- Adding agents to JuPedSim with appropriate speeds
+- Adding agents to the pedestrian simulation with appropriate speeds
 - Coordinating all agent-related operations
 """
 
-from typing import List, Dict, Any
+from typing import Any
 
 from scenarios.common.logger import get_logger
 from scenarios.common.walking_speed import sample_walking_speed
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 from scenarios.station_concordia.setup.agent_factory import AgentFactory
 from scenarios.station_concordia.setup.spawn_manager import SpawnManager
 
@@ -23,19 +24,21 @@ class AgentManager:
     """Handles complete agent lifecycle management."""
 
     @staticmethod
-    def create_and_populate_agents(jps_sim, config: dict) -> List[Dict[str, Any]]:
+    def create_and_populate_agents(
+        jps_sim: PedestrianSimulation, config: dict
+    ) -> list[dict[str, Any]]:
         """
-        Create agents and add them to JuPedSim simulation.
+        Create agents and add them to the pedestrian simulation.
 
         This is the main entry point for all agent-related operations.
         It handles:
         - Determining how many agents to create
         - Generating spawn positions
         - Creating agent configurations
-        - Adding agents to JuPedSim with appropriate walking speeds
+        - Adding agents to the simulation with appropriate walking speeds
 
         Args:
-            jps_sim: JuPedSim simulation instance
+            jps_sim: Pedestrian simulation instance (implements PedestrianSimulation)
             config: Configuration dictionary
 
         Returns:

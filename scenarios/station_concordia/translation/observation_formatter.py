@@ -226,7 +226,7 @@ class ObservationFormatter:
                     try:
                         helper_pos = state_queries.get_agent_position(helper_id)
                         helped_pos = state_queries.get_agent_position(agent_id)
-                        if helper_pos and helped_pos:
+                        if helper_pos is not None and helped_pos is not None:
                             distance = (
                                 (helper_pos[0] - helped_pos[0]) ** 2
                                 + (helped_pos[1] - helper_pos[1]) ** 2
@@ -250,7 +250,7 @@ class ObservationFormatter:
                     try:
                         helper_pos = state_queries.get_agent_position(agent_id)
                         helped_pos = state_queries.get_agent_position(helped_id)
-                        if helper_pos and helped_pos:
+                        if helper_pos is not None and helped_pos is not None:
                             distance = (
                                 (helper_pos[0] - helped_pos[0]) ** 2
                                 + (helped_pos[1] - helper_pos[1]) ** 2

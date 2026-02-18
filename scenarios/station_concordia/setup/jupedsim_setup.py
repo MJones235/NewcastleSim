@@ -13,6 +13,7 @@ from scenarios.common.logger import get_logger
 from scenarios.station_concordia.jps_integration.jupedsim_integration import (
     ConcordiaJuPedSimulation,
 )
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ class JuPedSimSetup:
     """Handles JuPedSim simulation initialization."""
 
     @staticmethod
-    def create_simulation(config: dict) -> ConcordiaJuPedSimulation:
+    def create_simulation(config: dict) -> PedestrianSimulation:
         """
         Create and configure a JuPedSim simulation instance.
 

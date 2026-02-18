@@ -74,6 +74,11 @@ class HelpingSystemManager:
                 helper_pos = self.state_queries.get_agent_position(helper_id)
                 injured_pos = self.state_queries.get_agent_position(helped_id)
 
+                # Skip if either agent has exited
+                if helper_pos is None or injured_pos is None:
+                    expired_pairs.append(helper_id)
+                    continue
+
                 # Calculate distance between helper and injured agent
                 distance = (
                     (helper_pos[0] - injured_pos[0]) ** 2 + (helper_pos[1] - injured_pos[1]) ** 2
@@ -107,9 +112,8 @@ class HelpingSystemManager:
                     # Both agents target the same exit (helper's current destination)
                     helper_exit = self.agent_destinations.get(helper_id)
                     if helper_exit:
-                        if hasattr(self.jps_sim, "set_agent_evacuation_exit"):
-                            self.jps_sim.set_agent_evacuation_exit(helped_id, helper_exit)
-                            logger.debug(f"Set {helped_id} to follow {helper_id} to {helper_exit}")
+                        self.jps_sim.set_agent_evacuation_exit(helped_id, helper_exit)
+                        logger.debug(f"Set {helped_id} to follow {helper_id} to {helper_exit}")
 
                     logger.info(
                         f"🚶 {helper_id} reached {helped_id} - "
@@ -172,11 +176,9 @@ class HelpingSystemManager:
                 # Keep helped agent following helper by setting their target to helper's current position
                 helper_pos = self.state_queries.get_agent_position(helper_id)
 
-                # Sanity check: if position is (0, 0), helper may have been removed
-                if helper_pos == (0.0, 0.0) or helper_pos == (0, 0):
-                    logger.warning(
-                        f"⚠️ {helper_id} has invalid position (0,0), releasing {helped_id}"
-                    )
+                # Check if helper has exited
+                if helper_pos is None:
+                    logger.warning(f"⚠️ {helper_id} has exited, releasing {helped_id}")
                     expired_pairs.append(helper_id)
                     continue
 
@@ -185,12 +187,14 @@ class HelpingSystemManager:
                 # Log occasionally to verify they're staying together
                 if int(current_sim_time) % 5 == 0:  # Every 5 seconds
                     helped_pos = self.state_queries.get_agent_position(helped_id)
-                    distance = (
-                        (helper_pos[0] - helped_pos[0]) ** 2 + (helper_pos[1] - helped_pos[1]) ** 2
-                    ) ** 0.5
-                    logger.debug(
-                        f"👥 {helper_id} and {helped_id} traveling together (distance: {distance:.1f}m)"
-                    )
+                    if helped_pos is not None:
+                        distance = (
+                            (helper_pos[0] - helped_pos[0]) ** 2
+                            + (helper_pos[1] - helped_pos[1]) ** 2
+                        ) ** 0.5
+                        logger.debug(
+                            f"👥 {helper_id} and {helped_id} traveling together (distance: {distance:.1f}m)"
+                        )
 
             # Check if help duration has expired (only for traveling phase)
             if phase == "traveling" and current_sim_time >= start_time + duration:

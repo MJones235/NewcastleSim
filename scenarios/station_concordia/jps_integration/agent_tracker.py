@@ -65,7 +65,7 @@ class AgentTracker:
         """
         self.agent_targets[agent_id] = target
 
-    def get_position(self, agent_id: str) -> tuple[float, float]:
+    def get_position(self, agent_id: str) -> tuple[float, float] | None:
         """
         Get agent's current position.
 
@@ -73,11 +73,11 @@ class AgentTracker:
             agent_id: Concordia agent ID
 
         Returns:
-            Agent's (x, y) position, or (0.0, 0.0) if agent has exited
+            Agent's (x, y) position, or None if agent has exited
         """
         if agent_id not in self.agent_ids:
             # Agent may have exited - this is expected
-            return (0.0, 0.0)
+            return None
 
         jps_id = self.agent_ids[agent_id]
 
@@ -87,7 +87,7 @@ class AgentTracker:
                 return (float(agent.position[0]), float(agent.position[1]))
 
         # Agent not found - likely exited (expected condition)
-        return (0.0, 0.0)
+        return None
 
     def get_all_positions(self) -> dict[str, tuple[float, float]]:
         """
@@ -123,7 +123,7 @@ class AgentTracker:
             return []
 
         center_pos = self.get_position(agent_id)
-        if center_pos == (0.0, 0.0):
+        if center_pos is None:
             return []
 
         nearby = []

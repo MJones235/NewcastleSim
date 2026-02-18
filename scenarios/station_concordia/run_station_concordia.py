@@ -104,10 +104,10 @@ def run_simulation(
     config: dict, model, embedder, launch_viewer: bool = True, launch_spatial: bool = True
 ):
     """
-    Run the hybrid Concordia + JuPedSim simulation.
+    Run the hybrid Concordia + pedestrian simulation.
 
     This function orchestrates the entire simulation workflow:
-    1. Setup JuPedSim with geometry
+    1. Setup pedestrian simulation with geometry
     2. Build station layout
     3. Create and populate agents
     4. Setup output directory
@@ -131,24 +131,20 @@ def run_simulation(
     # Store runner for signal handler access
     runner = None
 
-    # Step 1: Setup JuPedSim simulation
+    # Step 1: Setup pedestrian simulation
     jps_sim = JuPedSimSetup.create_simulation(config)
 
     # Step 2: Build station layout from geometry
     station_layout = StationLayoutBuilder.build_layout(jps_sim, config)
 
-    # Step 3: Create and populate agents (handles spawn positions, configs, and adding to JuPedSim)
+    # Step 3: Create and populate agents (handles spawn positions, configs, and adding to simulation)
     agents_config = AgentManager.create_and_populate_agents(jps_sim, config)
 
     # Step 4: Setup output directory and files
     run_id, output_dir, decisions_file = OutputManager.setup_output_directory(config)
 
     # Step 5: Launch viewers BEFORE simulation starts (if enabled)
-    network_path = (
-        jps_sim.network_path
-        if hasattr(jps_sim, "network_path")
-        else config.get("simulation", {}).get("network_path", "scenarios/station_sim/network")
-    )
+    network_path = jps_sim.network_path
     _viewer_process, _spatial_viewer_process = ViewerLauncher.launch_viewers(
         decisions_file=decisions_file,
         run_id=run_id,

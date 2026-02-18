@@ -136,8 +136,7 @@ class GeometryManager:
             dt=self.dt,
         )
 
-        area = main_area.area if hasattr(main_area, "area") else 0.0
-        logger.info(f"  Created simulation with area: {area:.1f} m²")
+        logger.info(f"  Created simulation with area: {main_area.area:.1f} m²")
 
         return simulation
 

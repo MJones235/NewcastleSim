@@ -30,8 +30,11 @@ class ConcordiaJuPedSimulation:
     """
     Real JuPedSim simulation wrapper for Concordia integration.
 
-    This class provides the same interface as MockJuPedSimulation but uses
-    real JuPedSim pedestrian dynamics underneath.
+    This class implements the PedestrianSimulation interface using JuPedSim
+    as the underlying pedestrian dynamics engine.
+
+    Satisfies the PedestrianSimulation protocol, making it swappable with
+    other simulation backends.
     """
 
     def __init__(
@@ -53,19 +56,17 @@ class ConcordiaJuPedSimulation:
         if network_path is None:
             raise ValueError("network_path required")
 
-        # Initialize geometry manager
+        self.network_path = network_path
         self.geometry_manager = GeometryManager(network_path, dt)
         self.simulation = self.geometry_manager.simulation
         self.stage_manager = StageManager(self.simulation)
 
-        # Initialize exit manager
         self.exit_manager = ExitManager(
             self.stage_manager,
             self.geometry_manager.entrance_areas,
             self.geometry_manager.walkable_areas_with_obstacles,
         )
 
-        # Initialize agent tracker
         self.agent_tracker = AgentTracker(self.simulation)
 
         logger.info(
@@ -74,42 +75,6 @@ class ConcordiaJuPedSimulation:
             f"{len(self.geometry_manager.entrance_areas)} entrances, "
             f"{len(self.exit_manager.evacuation_exits)} exits"
         )
-
-    # Properties for backward compatibility - expose geometry and exit data
-    @property
-    def walkable_areas(self) -> dict:
-        """Get walkable areas from geometry manager."""
-        return self.geometry_manager.walkable_areas
-
-    @property
-    def walkable_areas_with_obstacles(self) -> dict:
-        """Get walkable areas with obstacles integrated."""
-        return self.geometry_manager.walkable_areas_with_obstacles
-
-    @property
-    def entrance_areas(self) -> dict:
-        """Get entrance areas from geometry manager."""
-        return self.geometry_manager.entrance_areas
-
-    @property
-    def platform_areas(self) -> dict:
-        """Get platform areas from geometry manager."""
-        return self.geometry_manager.platform_areas
-
-    @property
-    def obstacles(self) -> list:
-        """Get obstacles from geometry manager."""
-        return self.geometry_manager.obstacles
-
-    @property
-    def evacuation_exits(self) -> dict[str, int]:
-        """Get evacuation exit IDs from exit manager."""
-        return self.exit_manager.evacuation_exits
-
-    @property
-    def evacuation_journeys(self) -> dict[str, int]:
-        """Get evacuation journey IDs from exit manager."""
-        return self.exit_manager.evacuation_journeys
 
     def add_agent(
         self, agent_id: str, position: tuple[float, float], walking_speed: float = 1.34
@@ -169,7 +134,7 @@ class ConcordiaJuPedSimulation:
 
         return True
 
-    def get_agent_position(self, agent_id: str) -> tuple[float, float]:
+    def get_agent_position(self, agent_id: str) -> tuple[float, float] | None:
         """
         Get agent's current position.
 
@@ -177,7 +142,7 @@ class ConcordiaJuPedSimulation:
             agent_id: Concordia agent ID
 
         Returns:
-            Agent's (x, y) position, or (0.0, 0.0) if agent has exited
+            Agent's (x, y) position, or None if agent has exited
         """
         return self.agent_tracker.get_position(agent_id)
 
@@ -309,3 +274,82 @@ class ConcordiaJuPedSimulation:
         }
 
         return geometry_data
+
+    def generate_spawn_positions(
+        self, num_agents: int, seed: int = 42
+    ) -> list[tuple[float, float]]:
+        """
+        Generate spawn positions for agents within the walkable geometry.
+
+        Uses JuPedSim's distribute_by_number on the actual simulation geometry
+        to ensure positions respect boundary constraints and obstacles.
+
+        Args:
+            num_agents: Number of spawn positions to generate
+            seed: Random seed for reproducibility
+
+        Returns:
+            List of (x, y) coordinate tuples for spawn positions
+
+        Raises:
+            RuntimeError: If unable to generate spawn positions
+        """
+        import random
+
+        random.seed(seed)
+
+        walkable_areas = self.geometry_manager.walkable_areas_with_obstacles
+
+        if not walkable_areas:
+            raise RuntimeError("Cannot spawn agents without geometry")
+
+        spawn_positions = []
+        area_list = list(walkable_areas.items())
+        total_area = sum(poly.area for _, poly in area_list)
+
+        logger.info(f"Distributing {num_agents} agents across {len(area_list)} walkable areas")
+
+        for idx, (area_name, poly) in enumerate(area_list):
+            # Proportional allocation based on polygon area
+            poly_agents = int(num_agents * (poly.area / total_area))
+
+            # Last polygon gets remainder to ensure exact count
+            if idx == len(area_list) - 1:
+                poly_agents = num_agents - len(spawn_positions)
+
+            if poly_agents > 0:
+                try:
+                    # Use JuPedSim's distribution with safe boundary distances
+                    positions = jps.distribute_by_number(
+                        polygon=poly,
+                        number_of_agents=poly_agents,
+                        distance_to_agents=0.5,  # Min 0.5m between agents
+                        distance_to_polygon=0.4,  # Min 0.4m from boundaries
+                        seed=seed + idx,
+                    )
+                    spawn_positions.extend(positions)
+                    logger.info(f"  {area_name}: {len(positions)} agents")
+                except Exception as e:
+                    logger.warning(f"  {area_name}: Failed to place {poly_agents} agents - {e}")
+                    # Try with fewer agents if density is too high
+                    if poly_agents > 1:
+                        try:
+                            reduced = max(1, poly_agents // 2)
+                            positions = jps.distribute_by_number(
+                                polygon=poly,
+                                number_of_agents=reduced,
+                                distance_to_agents=0.5,
+                                distance_to_polygon=0.4,
+                                seed=seed + idx,
+                            )
+                            spawn_positions.extend(positions)
+                            logger.info(f"  {area_name}: {len(positions)} agents (reduced)")
+                        except Exception as e2:
+                            logger.error(f"  {area_name}: Could not place any agents - {e2}")
+
+        if len(spawn_positions) < num_agents:
+            logger.warning(
+                f"Only generated {len(spawn_positions)} of {num_agents} requested positions"
+            )
+
+        return spawn_positions

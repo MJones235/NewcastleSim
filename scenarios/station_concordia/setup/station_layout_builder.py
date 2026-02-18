@@ -2,29 +2,30 @@
 Station layout builder for Station Concordia simulations.
 
 This module is responsible for:
-- Building station layout dictionary from JuPedSim geometry
+- Building station layout dictionary from simulation geometry
 - Processing entrance and platform areas
 - Creating zone definitions
 - Handling walkable areas and obstacles
 """
 
-from typing import Dict, Any
+from typing import Any
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 
 logger = get_logger(__name__)
 
 
 class StationLayoutBuilder:
-    """Handles creation of station layout from JuPedSim geometry."""
+    """Handles creation of station layout from simulation geometry."""
 
     @staticmethod
-    def build_layout(jps_sim, config: dict) -> Dict[str, Any]:
+    def build_layout(jps_sim: PedestrianSimulation, config: dict) -> dict[str, Any]:
         """
-        Build station layout dictionary from JuPedSim simulation geometry.
+        Build station layout dictionary from pedestrian simulation geometry.
 
         Args:
-            jps_sim: JuPedSim simulation instance with geometry loaded
+            jps_sim: Pedestrian simulation instance (implements PedestrianSimulation)
             config: Configuration dictionary
 
         Returns:
@@ -36,8 +37,8 @@ class StationLayoutBuilder:
             - zones_polygons: Dictionary of zone polygons
             - obstacles: List of obstacle polygons
         """
-        entrance_areas = jps_sim.entrance_areas
-        platform_areas = jps_sim.platform_areas
+        entrance_areas = jps_sim.geometry_manager.entrance_areas
+        platform_areas = jps_sim.geometry_manager.platform_areas
 
         station_layout = {
             **config.get("station", {}),
@@ -45,23 +46,24 @@ class StationLayoutBuilder:
                 name: (poly.centroid.x, poly.centroid.y) for name, poly in entrance_areas.items()
             },
             "exits_polygons": entrance_areas,
-            "walkable_areas": getattr(jps_sim, "walkable_areas_with_obstacles", None)
-            or jps_sim.walkable_areas,
+            "walkable_areas": jps_sim.geometry_manager.walkable_areas_with_obstacles,
             "zones": StationLayoutBuilder._build_zones(jps_sim, platform_areas),
             "zones_polygons": StationLayoutBuilder._build_zone_polygons(jps_sim, platform_areas),
-            "obstacles": jps_sim.obstacles,
+            "obstacles": jps_sim.geometry_manager.obstacles,
         }
 
         logger.info(f"Built station layout with {len(entrance_areas)} exits")
         return station_layout
 
     @staticmethod
-    def _build_zones(jps_sim, platform_areas: dict) -> Dict[str, Dict[str, float]]:
+    def _build_zones(
+        jps_sim: PedestrianSimulation, platform_areas: dict
+    ) -> dict[str, dict[str, float]]:
         """
         Build zone boundary definitions.
 
         Args:
-            jps_sim: JuPedSim simulation instance
+            jps_sim: Pedestrian simulation instance (implements PedestrianSimulation)
             platform_areas: Dictionary of platform area polygons
 
         Returns:
@@ -74,11 +76,11 @@ class StationLayoutBuilder:
             }
         else:
             # Fallback to main walkable area
-            main_area = list(jps_sim.walkable_areas.values())[0]
+            main_area = list(jps_sim.geometry_manager.walkable_areas.values())[0]
             return {"main_area": StationLayoutBuilder._polygon_bounds(main_area)}
 
     @staticmethod
-    def _build_zone_polygons(jps_sim, platform_areas: dict) -> Dict[str, Any]:
+    def _build_zone_polygons(jps_sim, platform_areas: dict) -> dict[str, Any]:
         """
         Build zone polygon definitions.
 
@@ -93,11 +95,11 @@ class StationLayoutBuilder:
             return platform_areas
         else:
             # Fallback to main walkable area
-            main_area = list(jps_sim.walkable_areas.values())[0]
+            main_area = list(jps_sim.geometry_manager.walkable_areas.values())[0]
             return {"main_area": main_area}
 
     @staticmethod
-    def _polygon_bounds(polygon) -> Dict[str, float]:
+    def _polygon_bounds(polygon) -> dict[str, float]:
         """
         Extract bounding box from a polygon.
 
