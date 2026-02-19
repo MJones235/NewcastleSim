@@ -1,0 +1,112 @@
+# Configuration for Monument Station evacuation simulation
+# Option A: Single-level concourse evacuation test
+
+# Simulation parameters
+simulation:
+  dt: 0.05  # JuPedSim timestep (seconds)
+  max_iterations: 3000  # Maximum simulation steps (3000 * 0.05 = 150 seconds)
+  decision_interval: 15.0  # Time between Concordia decisions (seconds)
+  spawn_interval: 2.0  # Time between agent spawns (seconds)
+  network_path: "scenarios/station_concordia/geometry/monument/network"  # Monument geometry
+  level_id: 0  # Load level_0.xml (concourse level)
+
+# Agent configuration
+agents:
+  count: 40  # Moderate crowd for evacuation test
+
+  # Personality distribution (percentage)
+  personalities:
+    ISTJ: 13.0
+    ISFJ: 12.0
+    INFJ: 2.0
+    INTJ: 3.0
+    ISTP: 6.0
+    ISFP: 9.0
+    INFP: 4.0
+    INTP: 3.0
+    ESTP: 6.0
+    ESFP: 9.0
+    ENFP: 8.0
+    ENTP: 3.0
+    ESTJ: 11.0
+    ESFJ: 12.0
+    ENFJ: 3.0
+    ENTJ: 2.0
+
+  # Risk tolerance distribution (affects evacuation speed)
+  risk_tolerance:
+    low: 30.0
+    moderate: 50.0
+    high: 20.0
+
+  # Age distribution
+  age:
+    min: 18
+    max: 75
+
+  # Spawn zones (Option A: concourse level only)
+  # Agents will spawn at street entrances
+  spawn_zones:
+    - concourse
+    - blackett_street
+    - grey_street
+    - eldon_square
+
+# Event configuration
+events:
+  # Simple evacuation event
+  - time: 5.0
+    message: "ALERT: Emergency evacuation. Exit immediately via nearest exit!"
+
+# Test scenarios - disabled for basic evacuation test
+test_scenarios:
+  blocked_exit:
+    enabled: false
+    description: "Disabled for basic evacuation test"
+
+  help_behavior:
+    enabled: false
+    description: "Disabled for basic evacuation test"
+
+# LLM configuration
+# Note: Credentials are loaded from .env file
+llm:
+  temperature: 0.7
+  max_retries: 3
+  max_completion_tokens: 8000
+  embedder: "sentence-transformers/all-mpnet-base-v2"
+
+# Output configuration
+output:
+  directory: "scenarios/station_concordia/output"
+  agent_decisions: "agent_decisions.json"
+  events: "events.json"
+  statistics: "statistics.json"
+
+# Video generation configuration
+video:
+  enabled: true
+  fps: 20
+  speedup: 1.0
+  dpi: 100
+  html_log: "simulation_log.html"
+
+# Performance optimization
+performance:
+  batch_processing: true
+  agent_cooldown: 10.0
+  decision_caching: true
+  max_parallel_agents: 10
+
+# Future: Spawning schedule (disabled for now)
+# agents:
+#   spawn_mode: "scheduled"
+#   spawn_schedule:
+#     - time: 0.0
+#       count: 20
+#       zones: ["concourse"]
+#       label: "initial_occupancy"
+#     - time: 15.0
+#       count: 15
+#       zones: ["concourse"]
+#       label: "additional_arrival"

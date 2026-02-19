@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Monument Station Level 0 (Concourse)
+     Note: Escalator zones temporarily removed for testing core evacuation.
+           Full geometry with escalators will be restored in Phase 2 multi-level work.
+           See git history for complete geometry with L0_esc_a through L0_esc_f zones.
+-->
+
+<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
+    <!-- JuPedSim elements -->
+    <!-- Main concourse walkable area -->
+    <poly id="jps.walkable_area_0" name="concourse" type="jupedsim.walkable_area" color="179,217,255" fill="1" layer="1.00" shape="28.210000,40.920000 28.240000,35.910000 45.590000,35.960000 45.510000,33.160000 40.310000,33.000000 40.230000,29.480000 52.950000,29.400000 54.550000,28.120000 50.900000,17.590000 56.700000,15.860000 60.950000,29.400000 70.230000,29.560000 70.550000,25.960000 67.270000,25.720000 63.270000,23.480000 61.190000,20.440000 60.710000,17.320000 60.630000,13.640000 47.430000,17.480000 45.510000,20.200000 31.670000,20.040000 31.670000,12.440000 34.710000,6.270000 39.430000,8.270000 36.550000,14.520000 40.550000,15.880000 46.630000,15.400000 67.990000,7.070000 82.080000,4.190000 88.800000,-11.970000 92.480000,-10.690000 77.990000,27.410000 78.080000,36.470000 99.550000,46.330000 97.880000,49.760000 78.960000,40.780000 75.790000,40.780000 75.880000,48.090000 54.400000,48.270000 54.580000,40.870000 28.210000,40.920000"/>
+
+    <!-- Street entrances for agent spawning -->
+    <poly id="jps.entrance_1" name="blackett_street" type="jupedsim.entrance" color="179,217,255" fill="1" layer="1.00" shape="93.410000,55.060000 100.420000,40.090000 109.310000,43.680000 103.080000,59.280000 93.410000,55.060000"/>
+    <poly id="jps.entrance_2" name="grey_street" type="jupedsim.entrance" color="179,217,255" fill="1" layer="1.00" shape="82.580000,-12.060000 98.550000,-6.150000 102.350000,-14.640000 86.660000,-20.010000 82.580000,-12.060000"/>
+    <poly id="jps.entrance_3" name="eldon_square" type="jupedsim.entrance" color="179,217,255" fill="1" layer="1.00" shape="27.660000,6.410000 43.060000,13.670000 47.480000,6.020000 31.580000,-1.330000 27.660000,6.410000"/>
+</additional>

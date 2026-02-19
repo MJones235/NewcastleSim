@@ -43,14 +43,22 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
         )
 
         walking_areas_file = network_path / "walking_areas.add.xml"
-        if not walking_areas_file.exists():
-            logger.warning(f"Geometry file not found: {walking_areas_file}")
+        level_file = network_path / "level_0.xml"
+        if level_file.exists():
+            geom_file = level_file
+        elif walking_areas_file.exists():
+            geom_file = walking_areas_file
+        else:
+            logger.warning(
+                "Geometry file not found: expected level_0.xml or walking_areas.add.xml "
+                f"in {network_path}"
+            )
             return None
 
-        walkable_areas = load_walkable_areas(str(walking_areas_file))
-        entrance_areas = load_entrance_areas(str(walking_areas_file))
-        platform_areas = load_platform_areas(str(walking_areas_file))
-        obstacles = load_obstacles(str(walking_areas_file))
+        walkable_areas = load_walkable_areas(str(geom_file))
+        entrance_areas = load_entrance_areas(str(geom_file))
+        platform_areas = load_platform_areas(str(geom_file))
+        obstacles = load_obstacles(str(geom_file))
 
         def poly_to_coords(poly):
             return list(poly.exterior.coords)
@@ -63,7 +71,7 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
         }
 
         logger.info(
-            f"Loaded geometry: {len(walkable_areas)} walkable areas, "
+            f"Loaded geometry from {geom_file}: {len(walkable_areas)} walkable areas, "
             f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
             f"{len(obstacles)} obstacles"
         )
@@ -94,7 +102,7 @@ def main():
     parser.add_argument(
         "--network-path",
         type=str,
-        default="scenarios/station_sim/network",
+        default="scenarios/station_concordia/geometry/monument/network",
         help="Path to station network directory (for geometry)",
     )
     parser.add_argument(
@@ -126,6 +134,10 @@ def main():
     # Load geometry
     network_path = Path(args.network_path)
     geometry = load_geometry_from_network(network_path)
+    if geometry is None and str(network_path) == "scenarios/station_sim/network":
+        fallback_path = Path("scenarios/station_concordia/geometry/monument/network")
+        logger.warning(f"Falling back to geometry from {fallback_path}")
+        geometry = load_geometry_from_network(fallback_path)
 
     # Check for position history
     history_file = output_file.parent / f"{output_file.stem}_history.json"

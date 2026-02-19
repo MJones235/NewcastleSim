@@ -33,20 +33,23 @@ class GeometryManager:
     - Providing access to geometry data for visualization
     """
 
-    def __init__(self, network_path: Path, dt: float = 0.05):
+    def __init__(self, network_path: Path, dt: float = 0.05, level_id: int | str = 0):
         """
         Initialize geometry manager and load station geometry.
 
         Args:
-            network_path: Path to network directory containing walking_areas.add.xml
+            network_path: Path to network directory containing level_*.xml or walking_areas.add.xml
             dt: Timestep in seconds (matches JuPedSim convention)
+            level_id: Level ID to load (default: 0). Looks for level_{level_id}.xml file.
+                     Falls back to walking_areas.add.xml if level file not found.
 
         Raises:
-            FileNotFoundError: If geometry file not found
+            FileNotFoundError: If no geometry file found
             ValueError: If no walkable areas found in geometry
         """
         self.network_path = network_path
         self.dt = dt
+        self.level_id = level_id
 
         # Load geometry
         logger.info("Loading station geometry from network files...")
@@ -74,22 +77,37 @@ class GeometryManager:
         """
         Load station geometry from SUMO network files.
 
+        Looks for level_{level_id}.xml first (for multi-level support),
+        then falls back to walking_areas.add.xml for backwards compatibility.
+
         Returns:
             Tuple of (walkable_areas, walkable_areas_with_obstacles,
                      entrance_areas, platform_areas, obstacles)
 
         Raises:
-            FileNotFoundError: If walking_areas.add.xml not found
+            FileNotFoundError: If no geometry file found
         """
+        # Try level-specific file first
+        level_file = self.network_path / f"level_{self.level_id}.xml"
         walking_areas_file = self.network_path / "walking_areas.add.xml"
 
-        if not walking_areas_file.exists():
-            raise FileNotFoundError(f"Geometry file not found: {walking_areas_file}")
+        if level_file.exists():
+            geom_file = level_file
+            logger.info(f"Loading geometry from level file: {level_file.name}")
+        elif walking_areas_file.exists():
+            geom_file = walking_areas_file
+            logger.info(f"Loading geometry from legacy file: {walking_areas_file.name}")
+        else:
+            raise FileNotFoundError(
+                f"Geometry file not found. Looked for:\n"
+                f"  - {level_file}\n"
+                f"  - {walking_areas_file}"
+            )
 
-        walkable_areas = load_walkable_areas(str(walking_areas_file))
-        entrance_areas = load_entrance_areas(str(walking_areas_file))
-        platform_areas = load_platform_areas(str(walking_areas_file))
-        obstacles = load_obstacles(str(walking_areas_file))
+        walkable_areas = load_walkable_areas(str(geom_file))
+        entrance_areas = load_entrance_areas(str(geom_file))
+        platform_areas = load_platform_areas(str(geom_file))
+        obstacles = load_obstacles(str(geom_file))
 
         # Integrate obstacles into walkable areas as polygon holes
         walkable_areas_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(

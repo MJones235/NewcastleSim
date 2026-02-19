@@ -38,15 +38,20 @@ class ConcordiaJuPedSimulation:
     """
 
     def __init__(
-        self, network_path: Path | None = None, dt: float = 0.05, exit_radius: float = 10.0
+        self,
+        network_path: Path | None = None,
+        dt: float = 0.05,
+        exit_radius: float = 10.0,
+        level_id: int | str = 0,
     ):
         """
         Initialize JuPedSim simulation with station geometry.
 
         Args:
-            network_path: Path to network directory containing walking_areas.add.xml
+            network_path: Path to network directory containing level_*.xml or walking_areas.add.xml
             dt: Timestep in seconds (matches JuPedSim convention)
             exit_radius: Radius of circular exits in meters
+            level_id: Level ID to load (default: 0). Loads level_{level_id}.xml or falls back to walking_areas.add.xml
         """
         self.dt = dt
         self.exit_radius = exit_radius
@@ -57,7 +62,7 @@ class ConcordiaJuPedSimulation:
             raise ValueError("network_path required")
 
         self.network_path = network_path
-        self.geometry_manager = GeometryManager(network_path, dt)
+        self.geometry_manager = GeometryManager(network_path, dt, level_id)
         self.simulation = self.geometry_manager.simulation
         self.stage_manager = StageManager(self.simulation)
 

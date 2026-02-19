@@ -8,7 +8,7 @@ This module is responsible for:
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -23,10 +23,10 @@ class ConfigLoader:
     @staticmethod
     def load_and_validate(
         config_path: str,
-        agents: Optional[int] = None,
-        max_steps: Optional[int] = None,
-        output_dir: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        agents: int | None = None,
+        max_steps: int | None = None,
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
         """
         Load, validate, and apply overrides to configuration in one step.
 
@@ -58,7 +58,7 @@ class ConfigLoader:
         return config
 
     @staticmethod
-    def load_config(config_path: str) -> Dict[str, Any]:
+    def load_config(config_path: str) -> dict[str, Any]:
         """
         Load configuration from YAML file.
 
@@ -84,11 +84,11 @@ class ConfigLoader:
 
     @staticmethod
     def apply_cli_overrides(
-        config: Dict[str, Any],
-        agents: Optional[int] = None,
-        max_steps: Optional[int] = None,
-        output_dir: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        config: dict[str, Any],
+        agents: int | None = None,
+        max_steps: int | None = None,
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
         """
         Apply command-line argument overrides to configuration.
 
@@ -116,7 +116,7 @@ class ConfigLoader:
         return config
 
     @staticmethod
-    def validate_config(config: Dict[str, Any]) -> None:
+    def validate_config(config: dict[str, Any]) -> None:
         """
         Validate that required configuration sections exist.
 
@@ -136,9 +136,28 @@ class ConfigLoader:
         if "count" not in agents_config:
             raise ValueError("agents.count is required in configuration")
 
+        # Validate spawn_schedule (optional)
+        if "spawn_schedule" in agents_config:
+            schedule = agents_config["spawn_schedule"]
+            if isinstance(schedule, dict) and schedule.get("enabled", False):
+                if not isinstance(agents_config.get("spawn_schedule"), dict):
+                    raise ValueError("agents.spawn_schedule must be a dictionary when enabled")
+                logger.info("Spawn schedule enabled: agents will be spawned according to schedule")
+            elif isinstance(schedule, list):
+                # List format for backwards compatibility
+                logger.info(f"Spawn schedule configured with {len(schedule)} spawn events")
+
         # Validate simulation section
         sim_config = config["simulation"]
         if "network_path" not in sim_config:
             raise ValueError("simulation.network_path is required in configuration")
+
+        # Validate multi_level (optional)
+        if "multi_level" in sim_config:
+            multi_level = sim_config["multi_level"]
+            if multi_level.get("enabled", False):
+                if "levels" not in multi_level:
+                    raise ValueError("simulation.multi_level.levels required when enabled")
+                logger.info(f"Multi-level simulation enabled: {multi_level['levels']}")
 
         logger.debug("Configuration validation passed")

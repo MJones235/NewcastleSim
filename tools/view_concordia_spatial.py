@@ -88,7 +88,7 @@ class SpatialConcordiaViewer:
             return None
 
     def _load_geometry_from_network(self, network_path: Path) -> dict | None:
-        """Load station geometry from SUMO walking_areas.add.xml files."""
+        """Load station geometry from SUMO network files."""
         try:
             from scenarios.station_jupedsim.geometry import (
                 load_entrance_areas,
@@ -98,14 +98,22 @@ class SpatialConcordiaViewer:
             )
 
             walking_areas_file = network_path / "walking_areas.add.xml"
-            if not walking_areas_file.exists():
-                print(f"Geometry file not found: {walking_areas_file}")
+            level_file = network_path / "level_0.xml"
+            if level_file.exists():
+                geom_file = level_file
+            elif walking_areas_file.exists():
+                geom_file = walking_areas_file
+            else:
+                print(
+                    "Geometry file not found: expected level_0.xml or walking_areas.add.xml "
+                    f"in {network_path}"
+                )
                 return None
 
-            walkable_areas = load_walkable_areas(str(walking_areas_file))
-            entrance_areas = load_entrance_areas(str(walking_areas_file))
-            platform_areas = load_platform_areas(str(walking_areas_file))
-            obstacles = load_obstacles(str(walking_areas_file))
+            walkable_areas = load_walkable_areas(str(geom_file))
+            entrance_areas = load_entrance_areas(str(geom_file))
+            platform_areas = load_platform_areas(str(geom_file))
+            obstacles = load_obstacles(str(geom_file))
 
             def poly_to_coords(poly):
                 return list(poly.exterior.coords)
@@ -124,7 +132,7 @@ class SpatialConcordiaViewer:
             }
 
             print(
-                f"Loaded geometry from {walking_areas_file}: "
+                f"Loaded geometry from {geom_file}: "
                 f"{len(walkable_areas)} walkable, "
                 f"{len(entrance_areas)} entrances, "
                 f"{len(platform_areas)} platforms, "

@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="scenarios/station_concordia/config/config.yaml",
+        default="scenarios/station_concordia/config/config_monument.yaml",
         help="Path to configuration file",
     )
     parser.add_argument(

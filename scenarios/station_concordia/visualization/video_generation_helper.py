@@ -38,14 +38,22 @@ class VideoGenerationHelper:
             )
 
             walking_areas_file = network_path / "walking_areas.add.xml"
-            if not walking_areas_file.exists():
-                logger.warning(f"Geometry file not found: {walking_areas_file}")
+            level_file = network_path / "level_0.xml"
+            if level_file.exists():
+                geom_file = level_file
+            elif walking_areas_file.exists():
+                geom_file = walking_areas_file
+            else:
+                logger.warning(
+                    "Geometry file not found: expected level_0.xml or walking_areas.add.xml "
+                    f"in {network_path}"
+                )
                 return None
 
-            walkable_areas = load_walkable_areas(str(walking_areas_file))
-            entrance_areas = load_entrance_areas(str(walking_areas_file))
-            platform_areas = load_platform_areas(str(walking_areas_file))
-            obstacles = load_obstacles(str(walking_areas_file))
+            walkable_areas = load_walkable_areas(str(geom_file))
+            entrance_areas = load_entrance_areas(str(geom_file))
+            platform_areas = load_platform_areas(str(geom_file))
+            obstacles = load_obstacles(str(geom_file))
 
             def poly_to_coords(poly):
                 return list(poly.exterior.coords)
@@ -64,7 +72,8 @@ class VideoGenerationHelper:
             }
 
             logger.info(
-                f"Loaded geometry: {len(walkable_areas)} walkable areas, "
+                f"Loaded geometry from {geom_file}: "
+                f"{len(walkable_areas)} walkable areas, "
                 f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
                 f"{len(obstacles)} obstacles"
             )
