@@ -24,7 +24,10 @@ class ActionTranslator:
     """
 
     def __init__(
-        self, station_layout: dict[str, Any], model: language_model.LanguageModel | None = None
+        self,
+        station_layout: dict[str, Any],
+        model: language_model.LanguageModel | None = None,
+        jps_sim=None,
     ):
         """
         Initialize the action translator.
@@ -32,11 +35,13 @@ class ActionTranslator:
         Args:
             station_layout: Dictionary with station geometry info (exits, zones, etc.)
             model: Optional LLM for ambiguous action parsing
+            jps_sim: JuPedSim simulation instance (for multi-level exit lookup)
         """
         self.station_layout = station_layout
         self.model = model
+        self.jps_sim = jps_sim
 
-        # Define exit locations from layout
+        # Define exit locations from layout (street-level exits)
         self.exits = station_layout.get("exits", {})
         self.zones = station_layout.get("zones", {})
         self.zones_polygons = station_layout.get("zones_polygons", {})
@@ -59,6 +64,10 @@ class ActionTranslator:
                 - confidence: Parsing confidence (0-1)
                 - reasoning: Explanation of translation
         """
+        # Get agent's level for multi-level exit lookup
+        agent_level = None
+        if self.jps_sim and hasattr(self.jps_sim, "agent_levels"):
+            agent_level = self.jps_sim.agent_levels.get(agent_id)
         # Try parsing as JSON first
         try:
             # Strip agent name prefix (e.g., "Agent 0 {" -> "{")
@@ -104,7 +113,7 @@ class ActionTranslator:
 
             if action_type == "move" and target_type == "exit":
                 if exit_name == "nearest" or not exit_name:
-                    nearest_exit = self._find_nearest_exit(current_position)
+                    nearest_exit = self._find_nearest_exit(current_position, agent_level)
                     return {
                         "action_type": "move",
                         "target": nearest_exit["coords"],
@@ -115,16 +124,20 @@ class ActionTranslator:
                         "speed": speed,  # Phase 4.3: Dynamic speed
                     }
 
-                if exit_name in self.exits:
+                # Look up exit coordinates (check both station_layout and multi-level exits)
+                exit_coords = self._get_exit_coordinates(exit_name, agent_level)
+                if exit_coords:
                     return {
                         "action_type": "move",
-                        "target": self.exits[exit_name],
+                        "target": exit_coords,
                         "target_type": "exit",
                         "exit_name": exit_name,
                         "confidence": 0.95,
                         "reasoning": f"Moving to exit {exit_name}",
                         "speed": speed,  # Phase 4.3: Dynamic speed
                     }
+                else:
+                    logger.warning(f"Agent {agent_id} requested unknown exit '{exit_name}'")
 
             if action_type == "move" and target_type == "zone" and zone_name:
                 zone_target = self._find_zone_target(zone_name.lower())
@@ -151,12 +164,65 @@ class ActionTranslator:
             "reasoning": f"Parse failed, defaulting to wait: {action[:100]}",
         }
 
-    def _find_nearest_exit(self, position: tuple[float, float]) -> dict[str, Any]:
-        """Find the nearest exit to a given position."""
+    def _get_exit_coordinates(
+        self, exit_name: str, agent_level: str | None = None
+    ) -> tuple[float, float] | None:
+        """
+        Get exit coordinates, checking both station_layout and multi-level exits.
+
+        Handles exit name variations (with or without '_exit' suffix) that may come from LLM.
+
+        Args:
+            exit_name: Name of the exit
+            agent_level: Agent's current level (for multi-level lookup)
+
+        Returns:
+            (x, y) coordinates or None if not found
+        """
+        # First check station_layout (consolidated exits and street exits)
+        if exit_name in self.exits:
+            return self.exits[exit_name]
+
+        # Handle LLM variations: try without '_exit' suffix if present
+        base_name = exit_name[:-5] if exit_name.endswith("_exit") else exit_name
+        if base_name != exit_name and base_name in self.exits:
+            return self.exits[base_name]
+
+        # Then check multi-level simulation exits (escalators, etc.) for agent's current level
+        if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
+            level_sim = self.jps_sim.simulations.get(agent_level)
+            if level_sim and hasattr(level_sim, "exit_manager"):
+                # Get exit coordinates from exit_coordinates dict (includes escalators)
+                if hasattr(level_sim.exit_manager, "exit_coordinates"):
+                    exit_coords = level_sim.exit_manager.exit_coordinates.get(exit_name)
+                    if exit_coords:
+                        return exit_coords
+                    # Try base name variant
+                    if base_name != exit_name:
+                        exit_coords = level_sim.exit_manager.exit_coordinates.get(base_name)
+                        if exit_coords:
+                            return exit_coords
+
+        return None
+
+    def _find_nearest_exit(
+        self, position: tuple[float, float], agent_level: str | None = None
+    ) -> dict[str, Any]:
+        """Find the nearest exit to a given position (level-aware)."""
+        # Get all exits available to this agent (from their current level)
+        available_exits = dict(self.exits)  # Start with station_layout exits
+
+        # Add level-specific exits (escalators, etc.) if multi-level
+        if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
+            level_sim = self.jps_sim.simulations.get(agent_level)
+            if level_sim and hasattr(level_sim, "exit_manager"):
+                if hasattr(level_sim.exit_manager, "exit_coordinates"):
+                    available_exits.update(level_sim.exit_manager.exit_coordinates)
+
         min_dist = float("inf")
         nearest = None
 
-        for exit_name, exit_coords in self.exits.items():
+        for exit_name, exit_coords in available_exits.items():
             dist = (
                 (position[0] - exit_coords[0]) ** 2 + (position[1] - exit_coords[1]) ** 2
             ) ** 0.5

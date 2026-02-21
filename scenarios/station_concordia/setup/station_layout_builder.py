@@ -32,27 +32,71 @@ class StationLayoutBuilder:
             Dictionary containing station layout information including:
             - exits: Dictionary of exit names to (x, y) coordinates
             - exits_polygons: Dictionary of exit area polygons
+            - exits: Dictionary of exit names to (x, y) coordinates
+            - exits_polygons: Dictionary of exit area polygons
             - walkable_areas: Dictionary of walkable area polygons
             - zones: Dictionary of zone boundaries
             - zones_polygons: Dictionary of zone polygons
             - obstacles: List of obstacle polygons
         """
-        entrance_areas = jps_sim.geometry_manager.entrance_areas
-        platform_areas = jps_sim.geometry_manager.platform_areas
+        # For multi-level simulations, consolidate exits from all levels
+        if hasattr(jps_sim, "simulations"):
+            # Multi-level: Consolidate exits and zones from ALL levels
+            all_exits = {}
+            all_exit_polygons = {}
+            all_zones = {}
+            all_zone_polygons = {}
+
+            # Collect exits from each level
+            for level_id in sorted(jps_sim.simulations.keys()):
+                level_sim = jps_sim.simulations[level_id]
+                gm = level_sim.geometry_manager
+
+                # Add street exits (from entrance areas)
+                for name, poly in gm.entrance_areas.items():
+                    all_exits[name] = (poly.centroid.x, poly.centroid.y)
+                    all_exit_polygons[name] = poly
+
+                # Add zones from this level
+                for zone_name, zone_poly in gm.platform_areas.items():
+                    zone_key = (
+                        f"{zone_name}_L{level_id}" if len(jps_sim.simulations) > 1 else zone_name
+                    )
+                    all_zones[zone_key] = StationLayoutBuilder._polygon_bounds(zone_poly)
+                    all_zone_polygons[zone_key] = zone_poly
+
+            # Add escalator exits from all levels
+            for level_sim in jps_sim.simulations.values():
+                for exit_name in level_sim.exit_manager.evacuation_exits:
+                    if exit_name.startswith("escalator_"):
+                        all_exits[exit_name] = level_sim.exit_manager.exit_coordinates.get(
+                            exit_name, (0, 0)
+                        )
+        else:
+            # Single-level: Use geometry manager and exit manager
+            gm = jps_sim.geometry_manager
+            all_exits = {
+                name: (poly.centroid.x, poly.centroid.y) for name, poly in gm.entrance_areas.items()
+            }
+            all_exit_polygons = gm.entrance_areas
+            all_zones = StationLayoutBuilder._build_zones(jps_sim, gm.platform_areas)
+            all_zone_polygons = StationLayoutBuilder._build_zone_polygons(
+                jps_sim, gm.platform_areas
+            )
 
         station_layout = {
             **config.get("station", {}),
-            "exits": {
-                name: (poly.centroid.x, poly.centroid.y) for name, poly in entrance_areas.items()
-            },
-            "exits_polygons": entrance_areas,
+            "exits": all_exits,
+            "exits_polygons": all_exit_polygons,
             "walkable_areas": jps_sim.geometry_manager.walkable_areas_with_obstacles,
-            "zones": StationLayoutBuilder._build_zones(jps_sim, platform_areas),
-            "zones_polygons": StationLayoutBuilder._build_zone_polygons(jps_sim, platform_areas),
+            "zones": all_zones,
+            "zones_polygons": all_zone_polygons,
             "obstacles": jps_sim.geometry_manager.obstacles,
         }
 
-        logger.info(f"Built station layout with {len(entrance_areas)} exits")
+        logger.info(
+            f"Built station layout with {len(all_exits)} exits (street + escalators) and {len(all_zones)} zones"
+        )
         return station_layout
 
     @staticmethod

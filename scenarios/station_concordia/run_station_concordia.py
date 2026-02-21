@@ -186,6 +186,11 @@ def run_simulation(
         sys.exit(0)
 
     # Step 8: Save final results
+    # Get agent levels for multi-level simulations
+    agent_levels = None
+    if hasattr(runner.jps_sim, "agent_levels"):
+        agent_levels = runner.jps_sim.agent_levels
+
     ResultsWriter.save_final_results(
         decisions_file,
         runner.agent_decisions,
@@ -200,6 +205,7 @@ def run_simulation(
         len(runner.concordia_agents),
         runner.perf_timer.report(),
         runner.llm_provider,
+        agent_levels,
     )
     logger.info(f"Simulation complete. Results saved to {output_dir}")
 

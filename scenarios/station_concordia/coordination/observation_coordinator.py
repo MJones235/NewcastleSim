@@ -34,6 +34,7 @@ class ObservationCoordinator:
         agent_action: dict[str, str],
         agent_last_decision: dict[str, dict],
         test_scenarios: dict[str, Any],
+        jps_sim=None,
     ):
         """
         Initialize observation coordinator.
@@ -50,6 +51,7 @@ class ObservationCoordinator:
             agent_action: Dict of agent_id -> action ("moving"|"waiting")
             agent_last_decision: Dict of agent_id -> last translated_action (for memory)
             test_scenarios: Test scenario configuration for observation radius
+            jps_sim: JuPedSim simulation (for multi-level support)
         """
         self.concordia_agents = concordia_agents
         self.exited_agents = exited_agents
@@ -62,6 +64,7 @@ class ObservationCoordinator:
         self.agent_action = agent_action
         self.agent_last_decision = agent_last_decision
         self.test_scenarios = test_scenarios
+        self.jps_sim = jps_sim
 
     def generate_all_observations(self, current_sim_time: float) -> dict[str, str]:
         """
@@ -122,6 +125,11 @@ class ObservationCoordinator:
                 # Get conversation history for this agent
                 conversation_history = self.message_system.get_conversation_history(agent_id)
 
+                # Get agent's current level for multi-level simulations
+                agent_level = None
+                if self.jps_sim and hasattr(self.jps_sim, "agent_levels"):
+                    agent_level = self.jps_sim.agent_levels.get(agent_id)
+
                 # Generate observation
                 obs = self.observation_generator.generate_observation(
                     agent_id=agent_id,
@@ -132,6 +140,7 @@ class ObservationCoordinator:
                     blocked_exits=self.event_manager.blocked_exits,
                     agent_injured=self.agent_injured,
                     agent_action=self.agent_action,
+                    agent_level=agent_level,
                     agent_last_decision=self.agent_last_decision,
                     state_queries=self.state_queries,
                     received_messages=received_messages,

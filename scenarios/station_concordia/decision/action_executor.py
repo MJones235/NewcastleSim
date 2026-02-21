@@ -152,7 +152,15 @@ class ActionExecutor:
             }
 
         except Exception as e:
-            logger.error(f"Failed to apply action for {agent_id}: {e}")
+            logger.error(
+                f"Failed to apply action for {agent_id}: {e}\n"
+                f"  Action type: {action_type}\n"
+                f"  Target: {target}\n"
+                f"  Translated action: {translated_action}"
+            )
+            import traceback
+
+            logger.debug(f"Traceback: {traceback.format_exc()}")
 
     def _handle_move_action(self, agent_id: str, translated_action: dict[str, Any], target):
         """Handle move action: agent moving to exit, waypoint, or toward another agent."""
@@ -169,6 +177,10 @@ class ActionExecutor:
             # Regular agent approach (not following)
             logger.debug(f"{agent_id} moving toward {target_agent}")
 
+        # Log current agent position and target for debugging
+        agent_pos = self.state_queries.get_agent_position(agent_id)
+        logger.debug(f"[MOVE] {agent_id} at {agent_pos} → target {target}")
+
         # Extract the NEW exit name from this action (if moving to an exit)
         new_exit_name = extract_exit_name(translated_action, self.station_layout)
 
@@ -181,16 +193,23 @@ class ActionExecutor:
                 )
                 # Only set waypoint, don't switch journey (would let them evacuate through blocked exit)
                 # Do NOT update agent_destinations - they haven't actually changed their route
+                logger.debug(
+                    f"[MOVE] {agent_id} set_agent_target({agent_id}, {target}) for blocked exit"
+                )
                 self.jps_sim.set_agent_target(agent_id, target)
             else:
                 # Valid exit - update destination tracking ONLY for non-blocked exits
                 self.agent_destinations[agent_id] = new_exit_name
 
                 # Switch the agent's evacuation journey to this exit
+                logger.debug(
+                    f"[MOVE] {agent_id} set_agent_evacuation_exit({agent_id}, {new_exit_name})"
+                )
                 self.jps_sim.set_agent_evacuation_exit(agent_id, new_exit_name)
                 logger.debug(f"Switched {agent_id} to journey for {new_exit_name}")
         else:
             # Not moving to an exit, just a waypoint
+            logger.debug(f"[MOVE] {agent_id} set_agent_target({agent_id}, {target}) - waypoint")
             self.jps_sim.set_agent_target(agent_id, target)
 
     def _handle_wait_action(
@@ -208,18 +227,61 @@ class ActionExecutor:
         if wait_reason == "seeking_information":
             # Seeking information: move slowly in a small random direction (looking around)
             # Generate a random nearby point within 3-5 meters
+            from shapely.geometry import Point
+
             distance = random.uniform(3.0, 5.0)
             angle = random.uniform(0, 2 * math.pi)
             target_x = current_position[0] + distance * math.cos(angle)
             target_y = current_position[1] + distance * math.sin(angle)
 
-            self.jps_sim.set_agent_target(agent_id, (target_x, target_y))
+            target_pos = (target_x, target_y)
+
+            # Validate that target is inside a walkable area
+            target_point = Point(target_x, target_y)
+            valid_target = False
+
+            # Try to get walkable areas - handle both single and multi-level simulations
+            walkable_areas = {}
+            if hasattr(self.jps_sim, "simulations"):
+                # Multi-level: get walkable areas from current agent's level
+                agent_level = self.jps_sim.agent_levels.get(agent_id, "0")
+                if agent_level in self.jps_sim.simulations:
+                    walkable_areas = self.jps_sim.simulations[
+                        agent_level
+                    ].geometry_manager.walkable_areas_with_obstacles
+            elif hasattr(self.jps_sim, "geometry_manager"):
+                # Single-level: use geometry manager directly
+                walkable_areas = self.jps_sim.geometry_manager.walkable_areas_with_obstacles
+
+            # Also try station_layout as fallback
+            if not walkable_areas:
+                walkable_areas = self.station_layout.get("walkable_areas", {})
+
+            # Check if target is in walkable area
+            for poly in walkable_areas.values():
+                if poly.contains(target_point):
+                    valid_target = True
+                    break
+
+            if not valid_target:
+                # Generated point is outside walkable area - use current position instead
+                logger.warning(
+                    f"[WAIT] {agent_id} seeking_information waypoint {target_pos} is outside walkable area, "
+                    f"using current position {current_position} instead"
+                )
+                target_pos = current_position
+
+            logger.debug(
+                f"[WAIT] {agent_id} at {current_position} seeking information → random waypoint {target_pos} ({distance:.1f}m away)"
+            )
+            self.jps_sim.set_agent_target(agent_id, target_pos)
             logger.debug(
                 f"{agent_id} seeking information - moving slowly to nearby point "
                 f"({distance:.1f}m away)"
             )
         else:
             # All other wait types: stand still at current position
+            logger.debug(f"[WAIT] {agent_id} at {current_position} staying still")
             self.jps_sim.set_agent_target(agent_id, current_position)
 
         # Record wait event

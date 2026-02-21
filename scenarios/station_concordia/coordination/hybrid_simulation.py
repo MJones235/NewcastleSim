@@ -104,8 +104,8 @@ class HybridSimulationRunner:
         self.llm_provider = language_model if hasattr(language_model, "get_usage_stats") else None
 
         # Translation layer components
-        self.action_translator = ActionTranslator(station_layout, language_model)
-        self.observation_generator = ObservationGenerator(station_layout)
+        self.action_translator = ActionTranslator(station_layout, language_model, self.jps_sim)
+        self.observation_generator = ObservationGenerator(station_layout, self.jps_sim)
 
         # Build Concordia agents (each with their own memory bank)
         self.concordia_agents: dict[str, entity_lib.Entity] = {}
@@ -125,7 +125,8 @@ class HybridSimulationRunner:
         agent_builder = AgentBuilder(
             language_model=language_model,
             embedder=embedder,
-            station_layout_description=self.observation_generator._describe_geometry(),
+            observation_generator=self.observation_generator,
+            jps_sim=self.jps_sim,
         )
 
         # Build agents asynchronously for faster initialization
@@ -205,6 +206,7 @@ class HybridSimulationRunner:
             last_observations=self.last_observations,
             last_actions=self.last_actions,
             perf_timer=self.perf_timer,
+            jps_sim=self.jps_sim,
         )
 
         # Observation coordination
@@ -220,6 +222,7 @@ class HybridSimulationRunner:
             agent_action=self.agent_action,
             agent_last_decision=self.agent_last_decision,
             test_scenarios=test_scenarios or {},
+            jps_sim=self.jps_sim,
         )
 
         # Position history tracker for video generation
@@ -227,6 +230,22 @@ class HybridSimulationRunner:
         if self.enable_video:
             self.position_tracker = PositionHistoryTracker(save_interval=0.5)
             logger.info("Position history tracking enabled for video generation")
+
+        # Bootstrap decisions at t=0 so agents choose initial journeys before first sim step
+        self._bootstrap_initial_decisions()
+
+    def _bootstrap_initial_decisions(self) -> None:
+        """Run one decision cycle at t=0 before the first JuPedSim step."""
+        try:
+            logger.info("Bootstrapping initial agent decisions at t=0.0s")
+            initial_time = 0.0
+            observations = self.observation_coordinator.generate_all_observations(initial_time)
+            self.last_decision_time = self.decision_processor.process_all_agents(
+                observations, initial_time
+            )
+        except Exception as e:
+            logger.error(f"Failed to bootstrap initial decisions: {e}", exc_info=True)
+            # Continue with normal runtime decision flow as fallback
 
     def run(self) -> dict[str, Any]:
         """
@@ -277,6 +296,35 @@ class HybridSimulationRunner:
                     # Check for agents who have exited and remove them
                     self.exit_tracker.check_exited_agents(self.current_sim_time, self.current_step)
 
+                    # Force immediate decision for agents who just transferred levels
+                    if hasattr(self.jps_sim, "consume_recently_transferred_agents"):
+                        transferred_agents = self.jps_sim.consume_recently_transferred_agents()
+                        if transferred_agents:
+                            logger.info(
+                                f"Processing post-transfer decisions for: {transferred_agents}"
+                            )
+                            with self.perf_timer.measure("post_transfer_decisions"):
+                                observations = (
+                                    self.observation_coordinator.generate_all_observations(
+                                        self.current_sim_time
+                                    )
+                                )
+                                target_agents = [
+                                    agent_id
+                                    for agent_id in transferred_agents
+                                    if agent_id in self.concordia_agents
+                                    and agent_id not in self.exited_agents
+                                ]
+                                if target_agents:
+                                    logger.info(
+                                        f"Making post-transfer decisions for {len(target_agents)} agents: {target_agents}"
+                                    )
+                                    self.decision_processor.process_all_agents(
+                                        observations,
+                                        self.current_sim_time,
+                                        agent_ids=target_agents,
+                                    )
+
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():
                         with self.perf_timer.measure("agent_decisions_total"):
@@ -312,6 +360,11 @@ class HybridSimulationRunner:
                     # Writing every single step (0.05s) is too slow for file I/O
                     if self.output_file and step % 10 == 0:
                         with self.perf_timer.measure("file_io"):
+                            # Get agent levels for multi-level simulations
+                            agent_levels = None
+                            if hasattr(self.jps_sim, "agent_levels"):
+                                agent_levels = self.jps_sim.agent_levels
+
                             ResultsWriter.save_incremental(
                                 self.output_file,
                                 self.agent_decisions,
@@ -323,6 +376,7 @@ class HybridSimulationRunner:
                                 self.decision_interval,
                                 self.max_steps,
                                 len(self.concordia_agents),
+                                agent_levels,
                             )
 
                     results["steps"] = step + 1
@@ -383,6 +437,11 @@ class HybridSimulationRunner:
 
         # Save partial decision results
         if self.output_file:
+            # Get agent levels for multi-level simulations
+            agent_levels = None
+            if hasattr(self.jps_sim, "agent_levels"):
+                agent_levels = self.jps_sim.agent_levels
+
             ResultsWriter.save_final_results(
                 self.output_file,
                 self.agent_decisions,
@@ -397,6 +456,7 @@ class HybridSimulationRunner:
                 len(self.concordia_agents),
                 self.perf_timer.report(),
                 self.llm_provider,
+                agent_levels,
             )
             logger.info(f"Partial results saved to {self.output_file}")
 

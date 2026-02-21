@@ -155,9 +155,15 @@ class ConfigLoader:
         # Validate multi_level (optional)
         if "multi_level" in sim_config:
             multi_level = sim_config["multi_level"]
-            if multi_level.get("enabled", False):
-                if "levels" not in multi_level:
-                    raise ValueError("simulation.multi_level.levels required when enabled")
-                logger.info(f"Multi-level simulation enabled: {multi_level['levels']}")
+            if isinstance(multi_level, bool) and multi_level:
+                # Boolean format: just enable/disable
+                levels = sim_config.get("levels", ["0", "-1"])
+                logger.info(f"Multi-level simulation enabled: {levels}")
+            elif isinstance(multi_level, dict):
+                # Dictionary format (legacy support)
+                if multi_level.get("enabled", False):
+                    if "levels" not in multi_level:
+                        raise ValueError("simulation.multi_level.levels required when enabled")
+                    logger.info(f"Multi-level simulation enabled: {multi_level['levels']}")
 
         logger.debug("Configuration validation passed")

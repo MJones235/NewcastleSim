@@ -36,6 +36,7 @@ class ResultsWriter:
         decision_interval: float,
         max_steps: int,
         num_agents: int,
+        agent_levels: dict[str, str] | None = None,
     ) -> None:
         """
         Save current results incrementally for live viewing.
@@ -51,6 +52,7 @@ class ResultsWriter:
             decision_interval: Time between decisions
             max_steps: Maximum simulation steps
             num_agents: Number of agents
+            agent_levels: Current level for each agent (multi-level simulations)
         """
         if not output_file:
             return
@@ -68,6 +70,10 @@ class ResultsWriter:
                 "num_agents": num_agents,
             },
         }
+
+        # Add agent levels for multi-level visualization
+        if agent_levels:
+            results["agent_levels"] = agent_levels
 
         try:
             output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +99,7 @@ class ResultsWriter:
         num_agents: int,
         performance_report: str,
         llm_provider: Any,
+        agent_levels: dict[str, str] | None = None,
     ) -> None:
         """
         Save final simulation results with all reports.
@@ -111,6 +118,7 @@ class ResultsWriter:
             num_agents: Number of agents
             performance_report: Performance timing report
             llm_provider: LLM provider instance for cost tracking
+            agent_levels: Final level for each agent (multi-level simulations)
         """
         # Extract route changes for analytics
         route_changes = []
@@ -142,6 +150,10 @@ class ResultsWriter:
                 "num_agents": num_agents,
             },
         }
+
+        # Add agent levels for multi-level visualization
+        if agent_levels:
+            results["agent_levels"] = agent_levels
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:

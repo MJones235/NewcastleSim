@@ -131,27 +131,76 @@ class SpatialAnalyzer:
                 return zone_name
         return "unknown area"
 
-    def get_nearest_exit_info(self, position: tuple[float, float]) -> str:
+    def get_nearest_exit_info(
+        self, position: tuple[float, float], agent_level: str | None = None, jps_sim=None
+    ) -> str:
         """
-        Get information about the nearest exit.
+        Get information about the nearest exit on the agent's current level.
 
         Args:
             position: (x, y) coordinates
+            agent_level: Current level ID (e.g., "0", "-1")
+            jps_sim: JuPedSim simulation (for multi-level exit access)
 
         Returns:
             String like "exit_name (distance_category)"
         """
-        if not self.exits:
+        # Get level-specific exits for multi-level simulations
+        exits_to_use = self.exits
+
+        if agent_level and jps_sim and hasattr(jps_sim, "simulations"):
+            level_sim = jps_sim.simulations.get(agent_level)
+            if level_sim:
+                # Get exits from the agent's current level
+                level_exits = {}
+                for exit_name in level_sim.exit_manager.evacuation_exits.keys():
+                    # Find position for this exit
+                    if exit_name.startswith("escalator_"):
+                        # Get from walkable areas matching this escalator
+                        for (
+                            zone_name,
+                            zone_poly,
+                        ) in level_sim.geometry_manager.walkable_areas.items():
+                            # Match escalator ID (e.g., "escalator_a_up" matches "L-1_esc_a_up")
+                            esc_id = exit_name.replace("escalator_", "")
+                            if f"_esc_{esc_id}" in zone_name:
+                                level_exits[exit_name] = (
+                                    zone_poly.centroid.x,
+                                    zone_poly.centroid.y,
+                                )
+                                break
+                    elif exit_name in level_sim.geometry_manager.entrance_areas:
+                        poly = level_sim.geometry_manager.entrance_areas[exit_name]
+                        level_exits[exit_name] = (poly.centroid.x, poly.centroid.y)
+
+                if level_exits:
+                    exits_to_use = level_exits
+
+        if not exits_to_use:
             return "unknown"
 
         min_dist = float("inf")
         nearest_name = "unknown"
 
-        for name, coords in self.exits.items():
+        for name, coords in exits_to_use.items():
             dist = ((position[0] - coords[0]) ** 2 + (position[1] - coords[1]) ** 2) ** 0.5
             if dist < min_dist:
                 min_dist = dist
                 nearest_name = name
+
+        # Make escalator names more readable
+        display_name = nearest_name
+        if nearest_name.startswith("escalator_"):
+            # Convert "escalator_a_up" to "escalator A (up to concourse)"
+            parts = nearest_name.replace("escalator_", "").split("_")
+            if len(parts) == 2:
+                letter, direction = parts
+                if direction == "up":
+                    display_name = f"escalator {letter.upper()} (up to concourse)"
+                elif direction == "down":
+                    display_name = f"escalator {letter.upper()} (down to platforms)"
+                else:
+                    display_name = f"escalator {letter.upper()}"
 
         # Categorize distance to prevent small changes from triggering LLM calls
         if min_dist >= 100:
@@ -160,7 +209,7 @@ class SpatialAnalyzer:
             dist_category = "50-100m"
         else:
             dist_category = "<50m"
-        return f"{nearest_name} ({dist_category})"
+        return f"{display_name} ({dist_category})"
 
     def get_visible_blocked_exits(
         self, position: tuple[float, float], blocked_exits: set[str], visual_range: float = 20.0

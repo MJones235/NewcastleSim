@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 
 def load_geometry_from_network(network_path: Path) -> dict | None:
-    """Load station geometry from SUMO network."""
+    """Load station geometry from SUMO network for all levels."""
     try:
         from scenarios.station_jupedsim.geometry import (
             load_entrance_areas,
@@ -42,39 +42,50 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
             load_walkable_areas,
         )
 
-        walking_areas_file = network_path / "walking_areas.add.xml"
-        level_file = network_path / "level_0.xml"
-        if level_file.exists():
-            geom_file = level_file
-        elif walking_areas_file.exists():
-            geom_file = walking_areas_file
-        else:
-            logger.warning(
-                "Geometry file not found: expected level_0.xml or walking_areas.add.xml "
-                f"in {network_path}"
-            )
-            return None
-
-        walkable_areas = load_walkable_areas(str(geom_file))
-        entrance_areas = load_entrance_areas(str(geom_file))
-        platform_areas = load_platform_areas(str(geom_file))
-        obstacles = load_obstacles(str(geom_file))
-
         def poly_to_coords(poly):
             return list(poly.exterior.coords)
 
-        geometry = {
-            "walkable_areas": {name: poly_to_coords(poly) for name, poly in walkable_areas.items()},
-            "entrance_areas": {name: poly_to_coords(poly) for name, poly in entrance_areas.items()},
-            "platform_areas": {name: poly_to_coords(poly) for name, poly in platform_areas.items()},
-            "obstacles": [poly_to_coords(poly) for poly in obstacles],
-        }
+        geometry = {"levels": {}}
 
-        logger.info(
-            f"Loaded geometry from {geom_file}: {len(walkable_areas)} walkable areas, "
-            f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
-            f"{len(obstacles)} obstacles"
-        )
+        # Load geometry for both Level 0 and Level -1
+        for level_name in ["level_0", "level_-1"]:
+            level_file = network_path / f"{level_name}.xml"
+
+            if not level_file.exists():
+                logger.warning(f"Geometry file not found: {level_file}")
+                continue
+
+            try:
+                walkable_areas = load_walkable_areas(str(level_file))
+                entrance_areas = load_entrance_areas(str(level_file))
+                platform_areas = load_platform_areas(str(level_file))
+                obstacles = load_obstacles(str(level_file))
+
+                geometry["levels"][level_name] = {
+                    "walkable_areas": {
+                        name: poly_to_coords(poly) for name, poly in walkable_areas.items()
+                    },
+                    "entrance_areas": {
+                        name: poly_to_coords(poly) for name, poly in entrance_areas.items()
+                    },
+                    "platform_areas": {
+                        name: poly_to_coords(poly) for name, poly in platform_areas.items()
+                    },
+                    "obstacles": [poly_to_coords(poly) for poly in obstacles],
+                }
+
+                logger.info(
+                    f"Loaded {level_name}: {len(walkable_areas)} walkable areas, "
+                    f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
+                    f"{len(obstacles)} obstacles"
+                )
+            except Exception as e:
+                logger.error(f"Failed to load {level_name}: {e}")
+                continue
+
+        if not geometry["levels"]:
+            logger.warning("No geometry levels loaded")
+            return None
 
         return geometry
     except Exception as e:

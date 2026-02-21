@@ -82,7 +82,18 @@ class GeometryProcessor:
 
             # Final validation before adding to result
             if not zone_with_holes.is_empty and zone_with_holes.is_valid:
-                zones_with_obstacles[zone_name] = zone_with_holes
+                # Handle MultiPolygon results (obstacles may split the zone)
+                if isinstance(zone_with_holes, MultiPolygon):
+                    # Keep the largest polygon if zone was split
+                    zone_with_holes = max(zone_with_holes.geoms, key=lambda p: p.area)
+
+                # Only accept proper Polygons
+                if isinstance(zone_with_holes, Polygon):
+                    zones_with_obstacles[zone_name] = zone_with_holes
+                else:
+                    print(
+                        f"Warning: {zone_name} became non-Polygon after obstacle removal, skipping"
+                    )
             elif not zone_with_holes.is_empty:
                 # Zone is invalid even after fixes, try convex hull as last resort
                 try:

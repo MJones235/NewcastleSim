@@ -47,33 +47,32 @@ class SpatialConcordiaViewer:
         self.network_path = network_path
         self.agent_positions = {}
         self.agent_decisions = {}
+        self.agent_levels = {}  # Track which level each agent is on
         self.last_update = 0
         self.blocked_exits = []  # Phase 4.2: Track blocked exits for visualization
 
-        # Load geometry if provided
-        self.geometry = None
-        if geometry_file and geometry_file.exists():
-            self.geometry = self._load_geometry(geometry_file)
-        elif self.network_path and self.network_path.exists():
-            self.geometry = self._load_geometry_from_network(self.network_path)
+        # Load geometry for both levels
+        self.geometry_level_0 = None
+        self.geometry_level_m1 = None
+        if self.network_path and self.network_path.exists():
+            self.geometry_level_0 = self._load_geometry_from_network(self.network_path, "0")
+            self.geometry_level_m1 = self._load_geometry_from_network(self.network_path, "-1")
 
-        # Setup matplotlib figure
-        self.fig, (self.ax_map, self.ax_decisions) = plt.subplots(
-            1, 2, figsize=(16, 8), gridspec_kw={"width_ratios": [2, 1]}
+        # Setup matplotlib figure with 2 map panels (no decision log)
+        self.fig, (self.ax_level_0, self.ax_level_m1) = plt.subplots(
+            1, 2, figsize=(18, 9), gridspec_kw={"width_ratios": [1, 1]}
         )
 
         self.title_text = self.fig.suptitle(
-            "Concordia Station Evacuation - Real-Time View | Time: 0.0s", fontsize=14
+            "Concordia Station Evacuation - Multi-Level View | Time: 0.0s", fontsize=14
         )
         self.current_time = 0.0
 
         self._setup_map_axes()
-        self._setup_decision_axes()
 
-        # Agent visual elements
+        # Agent visual elements per level
         self.agent_dots = {}
         self.agent_labels = {}
-        self.decision_texts = []
         self.blocked_exit_markers = []  # Phase 4.2: Visual markers for blocked exits
         self.legend_created = False  # Track if legend has been added
         self.current_data = {}  # Store current simulation data
@@ -87,8 +86,8 @@ class SpatialConcordiaViewer:
             print(f"Failed to load geometry: {e}")
             return None
 
-    def _load_geometry_from_network(self, network_path: Path) -> dict | None:
-        """Load station geometry from SUMO network files."""
+    def _load_geometry_from_network(self, network_path: Path, level_id: str = "0") -> dict | None:
+        """Load station geometry from SUMO network files for a specific level."""
         try:
             from scenarios.station_jupedsim.geometry import (
                 load_entrance_areas,
@@ -97,15 +96,16 @@ class SpatialConcordiaViewer:
                 load_walkable_areas,
             )
 
+            level_file = network_path / f"level_{level_id}.xml"
             walking_areas_file = network_path / "walking_areas.add.xml"
-            level_file = network_path / "level_0.xml"
+
             if level_file.exists():
                 geom_file = level_file
-            elif walking_areas_file.exists():
+            elif level_id == "0" and walking_areas_file.exists():
                 geom_file = walking_areas_file
             else:
                 print(
-                    "Geometry file not found: expected level_0.xml or walking_areas.add.xml "
+                    f"Geometry file not found for level {level_id}: expected level_{level_id}.xml "
                     f"in {network_path}"
                 )
                 return None
@@ -132,7 +132,7 @@ class SpatialConcordiaViewer:
             }
 
             print(
-                f"Loaded geometry from {geom_file}: "
+                f"Loaded geometry from {geom_file} (level {level_id}): "
                 f"{len(walkable_areas)} walkable, "
                 f"{len(entrance_areas)} entrances, "
                 f"{len(platform_areas)} platforms, "
@@ -141,83 +141,85 @@ class SpatialConcordiaViewer:
 
             return geometry
         except Exception as e:
-            print(f"Failed to load geometry from network: {e}")
+            print(f"Failed to load geometry from network for level {level_id}: {e}")
             return None
 
     def _setup_map_axes(self):
-        """Setup the map visualization axes."""
-        self.ax_map.set_title("Agent Positions")
-        self.ax_map.set_xlabel("X Position (m)")
-        self.ax_map.set_ylabel("Y Position (m)")
-        self.ax_map.grid(True, alpha=0.3)
-        self.ax_map.set_aspect("equal")
+        """Setup the map visualization axes for both levels."""
+        # Setup Level 0 (Concourse)
+        self.ax_level_0.set_title("Level 0 - Concourse", fontsize=12, weight="bold")
+        self.ax_level_0.set_xlabel("X Position (m)")
+        self.ax_level_0.set_ylabel("Y Position (m)")
+        self.ax_level_0.grid(True, alpha=0.3)
+        self.ax_level_0.set_aspect("equal")
 
-        # Draw geometry if available
-        if self.geometry:
-            self._draw_geometry()
-            self._set_fixed_limits_from_geometry()
-        else:
-            # Default to simple 100x100 room if no geometry provided
-            self._set_fixed_limits(0.0, 100.0, 0.0, 100.0)
+        # Setup Level -1 (Platforms)
+        self.ax_level_m1.set_title("Level -1 - Platforms", fontsize=12, weight="bold")
+        self.ax_level_m1.set_xlabel("X Position (m)")
+        self.ax_level_m1.set_ylabel("Y Position (m)")
+        self.ax_level_m1.grid(True, alpha=0.3)
+        self.ax_level_m1.set_aspect("equal")
 
-    def _setup_decision_axes(self):
-        """Setup the decision log axes."""
-        self.ax_decisions.set_title("Recent Decisions")
-        self.ax_decisions.axis("off")
-        self.ax_decisions.set_xlim(0, 1)
-        self.ax_decisions.set_ylim(0, 1)
+        # Draw geometry for both levels
+        if self.geometry_level_0:
+            self._draw_geometry(self.ax_level_0, self.geometry_level_0)
+            self._set_fixed_limits_from_geometry(self.ax_level_0, self.geometry_level_0)
 
-    def _draw_geometry(self):
-        """Draw station geometry on map."""
-        if not self.geometry:
+        if self.geometry_level_m1:
+            self._draw_geometry(self.ax_level_m1, self.geometry_level_m1)
+            self._set_fixed_limits_from_geometry(self.ax_level_m1, self.geometry_level_m1)
+
+    def _draw_geometry(self, ax, geometry):
+        """Draw station geometry on a specific axes."""
+        if not geometry:
             return
 
         # Draw walkable areas
-        if "walkable_areas" in self.geometry:
-            for _, coords in self.geometry["walkable_areas"].items():
+        if "walkable_areas" in geometry:
+            for _, coords in geometry["walkable_areas"].items():
                 if coords:
                     polygon = MPLPolygon(
                         coords, fill=True, alpha=0.2, color="gray", label="Walkable"
                     )
-                    self.ax_map.add_patch(polygon)
+                    ax.add_patch(polygon)
 
         # Draw entrances/exits
-        if "entrance_areas" in self.geometry:
-            for _, coords in self.geometry["entrance_areas"].items():
+        if "entrance_areas" in geometry:
+            for _, coords in geometry["entrance_areas"].items():
                 if coords:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.3, color="green", label="Exit")
-                    self.ax_map.add_patch(polygon)
+                    ax.add_patch(polygon)
 
         # Draw platforms
-        if "platform_areas" in self.geometry:
-            for _, coords in self.geometry["platform_areas"].items():
+        if "platform_areas" in geometry:
+            for _, coords in geometry["platform_areas"].items():
                 if coords:
                     polygon = MPLPolygon(
                         coords, fill=True, alpha=0.3, color="blue", label="Platform"
                     )
-                    self.ax_map.add_patch(polygon)
+                    ax.add_patch(polygon)
 
         # Draw obstacles
-        if "obstacles" in self.geometry:
-            for coords in self.geometry["obstacles"]:
+        if "obstacles" in geometry:
+            for coords in geometry["obstacles"]:
                 if coords:
                     polygon = MPLPolygon(
                         coords, fill=True, alpha=0.4, color="black", label="Obstacle"
                     )
-                    self.ax_map.add_patch(polygon)
+                    ax.add_patch(polygon)
 
-    def _set_fixed_limits(self, x_min: float, x_max: float, y_min: float, y_max: float):
+    def _set_fixed_limits(self, ax, x_min: float, x_max: float, y_min: float, y_max: float):
         """Set fixed axis limits with small padding."""
         pad_x = (x_max - x_min) * 0.05 if x_max > x_min else 5.0
         pad_y = (y_max - y_min) * 0.05 if y_max > y_min else 5.0
-        self.ax_map.set_xlim(x_min - pad_x, x_max + pad_x)
-        self.ax_map.set_ylim(y_min - pad_y, y_max + pad_y)
+        ax.set_xlim(x_min - pad_x, x_max + pad_x)
+        ax.set_ylim(y_min - pad_y, y_max + pad_y)
 
-    def _set_fixed_limits_from_geometry(self):
+    def _set_fixed_limits_from_geometry(self, ax, geometry):
         """Compute geometry bounds and lock axis limits."""
         coords_list = []
         for key in ("walkable_areas", "entrance_areas", "platform_areas", "obstacles"):
-            areas = self.geometry.get(key, {}) if self.geometry else {}
+            areas = geometry.get(key, {}) if geometry else {}
             if isinstance(areas, dict):
                 for coords in areas.values():
                     if coords:
@@ -230,7 +232,7 @@ class SpatialConcordiaViewer:
         if coords_list:
             xs = [c[0] for c in coords_list]
             ys = [c[1] for c in coords_list]
-            self._set_fixed_limits(min(xs), max(xs), min(ys), max(ys))
+            self._set_fixed_limits(ax, min(xs), max(xs), min(ys), max(ys))
 
     def _update_data(self):
         """Load latest data from output file."""
@@ -248,6 +250,10 @@ class SpatialConcordiaViewer:
             # Update agent decisions
             if "agent_decisions" in data:
                 self.agent_decisions = data["agent_decisions"]
+
+            # Update agent levels (from multi-level simulation)
+            if "agent_levels" in data:
+                self.agent_levels = data["agent_levels"]
 
             # Get current simulation time (use current_time from incremental saves, or final_time from final save)
             if "current_time" in data:
@@ -279,14 +285,11 @@ class SpatialConcordiaViewer:
         if not self._update_data():
             return
 
-        # Update agent positions on map
+        # Update agent positions on both levels
         self._update_agent_positions()
 
         # Update blocked exit markers (Phase 4.2)
         self._update_blocked_exits()
-
-        # Update decision log
-        self._update_decision_log()
 
     def _update_blocked_exits(self):
         """Draw visual markers for blocked exits (Phase 4.2)."""
@@ -295,11 +298,11 @@ class SpatialConcordiaViewer:
             marker.remove()
         self.blocked_exit_markers = []
 
-        if not self.blocked_exits or not self.geometry:
+        if not self.blocked_exits or not self.geometry_level_0:
             return
 
-        # Get entrance areas from geometry
-        entrance_areas = self.geometry.get("entrance_areas", {})
+        # Get entrance areas from level 0 geometry (exits are on concourse level)
+        entrance_areas = self.geometry_level_0.get("entrance_areas", {})
 
         for exit_name in self.blocked_exits:
             if exit_name in entrance_areas:
@@ -312,21 +315,21 @@ class SpatialConcordiaViewer:
                     center_x = sum(xs) / len(xs)
                     center_y = sum(ys) / len(ys)
 
-                    # Draw red X over the exit
+                    # Draw red X over the exit on level 0
                     size = 8
-                    marker1 = self.ax_map.plot(
+                    marker1 = self.ax_level_0.plot(
                         [center_x - size, center_x + size],
                         [center_y - size, center_y + size],
                         "r-",
                         linewidth=4,
                     )[0]
-                    marker2 = self.ax_map.plot(
+                    marker2 = self.ax_level_0.plot(
                         [center_x - size, center_x + size],
                         [center_y + size, center_y - size],
                         "r-",
                         linewidth=4,
                     )[0]
-                    label = self.ax_map.text(
+                    label = self.ax_level_0.text(
                         center_x,
                         center_y - size - 3,
                         "🚧 BLOCKED",
@@ -339,7 +342,7 @@ class SpatialConcordiaViewer:
                     self.blocked_exit_markers.extend([marker1, marker2, label])
 
     def _update_agent_positions(self):
-        """Update agent position markers."""
+        """Update agent position markers on both levels."""
         # Remove old dots
         for dot in self.agent_dots.values():
             dot.remove()
@@ -395,6 +398,10 @@ class SpatialConcordiaViewer:
             if pos and len(pos) >= 2:
                 x, y = pos[0], pos[1]  # Handle both list and tuple from JSON
 
+                # Determine which level this agent is on
+                agent_level = self.agent_levels.get(agent_id, "0")  # Default to level 0
+                ax = self.ax_level_0 if agent_level == "0" else self.ax_level_m1
+
                 # Color code priority: helping > helped > waiting > normal
                 if agent_id in helping_agents:
                     color = "blue"  # Helpers are blue
@@ -420,8 +427,8 @@ class SpatialConcordiaViewer:
                     color = "red"  # Normal agents are red
                     size = 8
 
-                dot = self.ax_map.plot(x, y, "o", color=color, markersize=size)[0]
-                label = self.ax_map.text(x, y + 1, agent_id, ha="center", fontsize=8)
+                dot = ax.plot(x, y, "o", color=color, markersize=size)[0]
+                label = ax.text(x, y + 1, agent_id, ha="center", fontsize=8)
 
                 self.agent_dots[agent_id] = dot
                 self.agent_labels[agent_id] = label
@@ -495,55 +502,8 @@ class SpatialConcordiaViewer:
                     label="Wait: Assessing",
                 ),
             ]
-            self.ax_map.legend(handles=legend_elements, loc="upper right", fontsize=8)
+            self.ax_level_0.legend(handles=legend_elements, loc="upper right", fontsize=8)
             self.legend_created = True
-
-        # Keep fixed axis limits (do not autoscale)
-
-    def _update_decision_log(self):
-        """Update the decision log display."""
-        # Clear old text
-        for text in self.decision_texts:
-            text.remove()
-        self.decision_texts = []
-
-        # Get recent decisions (last 5)
-        recent_decisions = []
-        if isinstance(self.agent_decisions, dict):
-            for agent_id, agent_data in self.agent_decisions.items():
-                # agent_data is a dict with keys like "decisions", "observations"
-                if isinstance(agent_data, dict) and "decisions" in agent_data:
-                    # decisions is a list of decision dicts
-                    decisions_list = agent_data["decisions"]
-                    for decision in decisions_list[-3:]:  # Last 3 per agent
-                        recent_decisions.append((agent_id, decision))
-                elif isinstance(agent_data, list):
-                    # Legacy format: agent_data is directly a list of decisions
-                    for decision in agent_data[-3:]:
-                        recent_decisions.append((agent_id, decision))
-
-        # Sort by timestamp (using "time" key from hybrid_simulation.py)
-        recent_decisions.sort(
-            key=lambda x: x[1].get("time", x[1].get("timestamp", 0)), reverse=True
-        )
-        recent_decisions = recent_decisions[:5]  # Top 5 most recent
-
-        # Display decisions
-        y_pos = 0.95
-        for agent_id, decision in recent_decisions:
-            time_val = decision.get("time", decision.get("timestamp", 0))
-            action = decision.get("action", "Unknown")
-
-            text = self.ax_decisions.text(
-                0.05,
-                y_pos,
-                f"[{time_val:.1f}s] {agent_id}:\n  → {action[:50]}...",
-                fontsize=9,
-                verticalalignment="top",
-                family="monospace",
-            )
-            self.decision_texts.append(text)
-            y_pos -= 0.18
 
     def run(self):
         """Run the viewer with animation."""

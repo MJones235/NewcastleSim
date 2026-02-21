@@ -26,7 +26,8 @@ class AgentBuilder:
         self,
         language_model: language_model.LanguageModel,
         embedder: Any,
-        station_layout_description: str,
+        observation_generator,
+        jps_sim,
     ):
         """
         Initialize the agent builder.
@@ -34,11 +35,13 @@ class AgentBuilder:
         Args:
             language_model: LLM for agent cognition
             embedder: Sentence embedding function
-            station_layout_description: Description of station geometry for agent memory
+            observation_generator: ObservationGenerator for level-aware station descriptions
+            jps_sim: JuPedSim simulation instance for level information
         """
         self.model = language_model
         self.embedder = embedder
-        self.station_layout_description = station_layout_description
+        self.observation_generator = observation_generator
+        self.jps_sim = jps_sim
 
     async def build_agents(
         self, agents_config: list[dict[str, Any]]
@@ -137,12 +140,18 @@ class AgentBuilder:
             agent: Concordia agent entity
             config: Agent configuration dictionary
         """
+        # Get agent's level for level-specific station description
+        agent_level = config.get("level_id", "0")
+
+        # Generate level-specific station layout description
+        station_layout_description = self.observation_generator._describe_geometry(agent_level)
+
         initial_memories = [
             "I am at a train station.",
             f"I am in the {config.get('initial_zone', 'platform')} area.",
             "I am waiting for my train.",
             "I am on my way to my destination.",
-            self.station_layout_description,  # Station layout info
+            station_layout_description,  # Level-specific station layout info
             "The station has clear signage for platforms and exits.",
             "I notice other passengers waiting and walking around.",
             "The atmosphere is calm and routine.",

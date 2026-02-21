@@ -203,3 +203,10 @@ class AgentTracker:
             Concordia ID if agent exists, None otherwise
         """
         return self.jps_to_concordia.get(jps_id)
+
+    def remove_agent(self, agent_id: str) -> None:
+        """Remove an agent from tracking after they exit simulation."""
+        jps_id = self.agent_ids.pop(agent_id, None)
+        if jps_id is not None:
+            self.jps_to_concordia.pop(jps_id, None)
+        self.agent_targets.pop(agent_id, None)

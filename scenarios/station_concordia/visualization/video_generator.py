@@ -51,6 +51,13 @@ class VideoGenerator:
         if not self.data:
             raise ValueError(f"Could not load data from {output_file}")
 
+        # Extract agent levels mapping
+        self.agent_levels = self.data.get("agent_levels", {})
+        logger.info(f"Loaded agent levels for {len(self.agent_levels)} agents")
+
+        # Build level bounds from geometry for coordinate-based inference
+        self.level_bounds = self._build_level_bounds()
+
         # Extract time series data
         self.time_series = self._extract_time_series()
         if not self.time_series:
@@ -69,6 +76,73 @@ class VideoGenerator:
         except Exception as e:
             logger.error(f"Failed to load data: {e}")
             return {}
+
+    def _build_level_bounds(self) -> dict:
+        """Build bounding box for each level from geometry."""
+        bounds = {}
+
+        if not self.geometry or "levels" not in self.geometry:
+            return bounds
+
+        for level_name, geom in self.geometry["levels"].items():
+            coords_list = []
+            for key in ("walkable_areas", "entrance_areas", "platform_areas", "obstacles"):
+                areas = geom.get(key, {})
+                if isinstance(areas, dict):
+                    for coords in areas.values():
+                        if coords:
+                            coords_list.extend(coords)
+                elif isinstance(areas, list):
+                    for coords in areas:
+                        if coords:
+                            coords_list.extend(coords)
+
+            if coords_list:
+                xs = [c[0] for c in coords_list]
+                ys = [c[1] for c in coords_list]
+                bounds[level_name] = {
+                    "x_min": min(xs),
+                    "x_max": max(xs),
+                    "y_min": min(ys),
+                    "y_max": max(ys),
+                }
+                logger.info(
+                    f"Level {level_name} bounds: X[{bounds[level_name]['x_min']:.1f}, {bounds[level_name]['x_max']:.1f}], Y[{bounds[level_name]['y_min']:.1f}, {bounds[level_name]['y_max']:.1f}]"
+                )
+
+        return bounds
+
+    def _determine_agent_level(self, agent_id: str, position: list) -> str:
+        """
+        Determine which level an agent is on based on position and metadata.
+
+        First checks agent_levels dict, then falls back to coordinate-based inference.
+        """
+        # First, check if we have explicit level info
+        if agent_id in self.agent_levels:
+            level = str(self.agent_levels[agent_id])
+            return level if level.startswith("level_") else f"level_{level}"
+
+        # Fall back to coordinate-based inference
+        if not position or len(position) < 2 or not self.level_bounds:
+            return "level_0"  # Default to level 0
+
+        x, y = position[0], position[1]
+
+        # Check which level's bounds contain this position
+        for level_name, bounds in self.level_bounds.items():
+            # Use generous padding for boundary check
+            x_pad = (bounds["x_max"] - bounds["x_min"]) * 0.1
+            y_pad = (bounds["y_max"] - bounds["y_min"]) * 0.1
+
+            if (
+                bounds["x_min"] - x_pad <= x <= bounds["x_max"] + x_pad
+                and bounds["y_min"] - y_pad <= y <= bounds["y_max"] + y_pad
+            ):
+                return level_name
+
+        # If no match, default to level 0
+        return "level_0"
 
     def _extract_time_series(self) -> list[dict]:
         """
@@ -118,75 +192,116 @@ class VideoGenerator:
 
     def _setup_figure(self) -> tuple:
         """
-        Setup matplotlib figure and axes.
+        Setup matplotlib figure and axes for multi-level visualization.
 
         Returns:
-            (fig, ax_map, ax_decisions)
+            (fig, axes_dict, title_text)
         """
-        fig, (ax_map, ax_decisions) = plt.subplots(
-            1, 2, figsize=(16, 8), gridspec_kw={"width_ratios": [2, 1]}
+        # Create 2 subplots for Level 0 and Level -1
+        fig, (ax_level_0, ax_level_m1) = plt.subplots(
+            1, 2, figsize=(16, 8), gridspec_kw={"width_ratios": [1, 1]}
         )
 
-        title_text = fig.suptitle("Concordia Station Evacuation | Time: 0.0s", fontsize=14)
+        title_text = fig.suptitle("Monument Station Evacuation | Time: 0.0s", fontsize=14)
 
-        # Setup map axes
-        ax_map.set_title("Agent Positions")
-        ax_map.set_xlabel("X Position (m)")
-        ax_map.set_ylabel("Y Position (m)")
-        ax_map.grid(True, alpha=0.3)
-        ax_map.set_aspect("equal")
+        # Setup Level 0 axes
+        ax_level_0.set_title("Level 0 - Concourse", fontsize=12, fontweight="bold")
+        ax_level_0.set_xlabel("X Position (m)")
+        ax_level_0.set_ylabel("Y Position (m)")
+        ax_level_0.grid(True, alpha=0.3)
+        ax_level_0.set_aspect("equal")
 
-        # Draw geometry
-        if self.geometry:
-            self._draw_geometry(ax_map)
-            self._set_limits_from_geometry(ax_map)
+        # Setup Level -1 axes
+        ax_level_m1.set_title("Level -1 - Platforms", fontsize=12, fontweight="bold")
+        ax_level_m1.set_xlabel("X Position (m)")
+        ax_level_m1.set_ylabel("Y Position (m)")
+        ax_level_m1.grid(True, alpha=0.3)
+        ax_level_m1.set_aspect("equal")
 
-        # Setup decision axes
-        ax_decisions.set_title("Recent Decisions")
-        ax_decisions.axis("off")
-        ax_decisions.set_xlim(0, 1)
-        ax_decisions.set_ylim(0, 1)
+        # Draw geometry for both levels
+        if self.geometry and "levels" in self.geometry:
+            self._draw_geometry(ax_level_0, "level_0")
+            self._set_limits_from_geometry(ax_level_0, "level_0")
 
-        return fig, ax_map, ax_decisions, title_text
+            self._draw_geometry(ax_level_m1, "level_-1")
+            self._set_limits_from_geometry(ax_level_m1, "level_-1")
 
-    def _draw_geometry(self, ax):
-        """Draw station geometry on axes."""
+        axes_dict = {"0": ax_level_0, "-1": ax_level_m1}
+        return fig, axes_dict, title_text
+
+    def _draw_geometry(self, ax, level_name: str = None):
+        """Draw station geometry on axes for a specific level."""
         if not self.geometry:
             return
 
+        # Handle both old single-level and new multi-level geometry formats
+        if "levels" in self.geometry:
+            # Multi-level format
+            if not level_name:
+                level_name = "level_0"
+            elif not level_name.startswith("level_"):
+                level_name = f"level_{level_name}"
+
+            if level_name not in self.geometry["levels"]:
+                logger.warning(f"Level {level_name} not found in geometry")
+                return
+            geom = self.geometry["levels"][level_name]
+        else:
+            # Single-level format (backward compatibility)
+            geom = self.geometry
+
         # Draw walkable areas
-        if "walkable_areas" in self.geometry:
-            for _, coords in self.geometry["walkable_areas"].items():
+        if "walkable_areas" in geom:
+            for _, coords in geom["walkable_areas"].items():
                 if coords:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.2, color="gray")
                     ax.add_patch(polygon)
 
         # Draw entrances/exits
-        if "entrance_areas" in self.geometry:
-            for _, coords in self.geometry["entrance_areas"].items():
+        if "entrance_areas" in geom:
+            for _, coords in geom["entrance_areas"].items():
                 if coords:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.3, color="green")
                     ax.add_patch(polygon)
 
         # Draw platforms
-        if "platform_areas" in self.geometry:
-            for _, coords in self.geometry["platform_areas"].items():
+        if "platform_areas" in geom:
+            for _, coords in geom["platform_areas"].items():
                 if coords:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.3, color="blue")
                     ax.add_patch(polygon)
 
         # Draw obstacles
-        if "obstacles" in self.geometry:
-            for coords in self.geometry["obstacles"]:
+        if "obstacles" in geom:
+            for coords in geom["obstacles"]:
                 if coords:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.4, color="black")
                     ax.add_patch(polygon)
 
-    def _set_limits_from_geometry(self, ax):
-        """Set axis limits from geometry."""
+    def _set_limits_from_geometry(self, ax, level_name: str = None):
+        """Set axis limits from geometry for a specific level."""
+        if not self.geometry:
+            return
+
+        # Handle both old single-level and new multi-level geometry formats
+        if "levels" in self.geometry:
+            # Multi-level format - convert level_0 or level_-1 to full key
+            if not level_name:
+                level_name = "level_0"
+            elif not level_name.startswith("level_"):
+                level_name = f"level_{level_name}"
+
+            if level_name not in self.geometry["levels"]:
+                logger.warning(f"Level {level_name} not found in geometry")
+                return
+            geom = self.geometry["levels"][level_name]
+        else:
+            # Single-level format (backward compatibility)
+            geom = self.geometry
+
         coords_list = []
         for key in ("walkable_areas", "entrance_areas", "platform_areas", "obstacles"):
-            areas = self.geometry.get(key, {})
+            areas = geom.get(key, {})
             if isinstance(areas, dict):
                 for coords in areas.values():
                     if coords:
@@ -208,68 +323,69 @@ class VideoGenerator:
             ax.set_xlim(x_min - pad_x, x_max + pad_x)
             ax.set_ylim(y_min - pad_y, y_max + pad_y)
 
-    def _draw_frame(self, ax_map, ax_decisions, frame_data, title_text):
+    def _draw_frame(self, axes_dict, frame_data, title_text):
         """
         Draw a single frame of the video.
 
         Args:
-            ax_map: Map axes
-            ax_decisions: Decision log axes
+            axes_dict: Dict of level_key -> axes for rendering each level
             frame_data: Dict with time, positions, decisions, etc.
             title_text: Title text object
         """
-        # Clear previous frame (keep geometry)
-        for artist in ax_map.get_children():
-            if hasattr(artist, "get_label") and artist.get_label() == "_agent":
-                artist.remove()
-
-        ax_decisions.clear()
-        ax_decisions.axis("off")
-        ax_decisions.set_xlim(0, 1)
-        ax_decisions.set_ylim(0, 1)
+        # Clear previous frame (keep geometry but remove agents)
+        for ax in axes_dict.values():
+            for artist in ax.get_children():
+                if hasattr(artist, "get_label") and artist.get_label() == "_agent":
+                    artist.remove()
 
         # Update title
         time_val = frame_data["time"]
-        title_text.set_text(f"Concordia Station Evacuation | Time: {time_val:.1f}s")
+        title_text.set_text(f"Monument Station Evacuation | Time: {time_val:.1f}s")
 
-        # Draw blocked exits
+        # Draw blocked exits (if multi-level geometry, show on appropriate level)
         blocked_exits = frame_data.get("blocked_exits", [])
-        if blocked_exits and self.geometry:
-            entrance_areas = self.geometry.get("entrance_areas", {})
-            for exit_name in blocked_exits:
-                if exit_name in entrance_areas:
-                    coords = entrance_areas[exit_name]
-                    if coords:
-                        xs = [c[0] for c in coords]
-                        ys = [c[1] for c in coords]
-                        center_x = sum(xs) / len(xs)
-                        center_y = sum(ys) / len(ys)
+        if blocked_exits and self.geometry and "levels" in self.geometry:
+            for level_key, ax in axes_dict.items():
+                level_name = f"level_{level_key}"
+                geom = self.geometry["levels"].get(level_name)
+                if not geom:
+                    continue
 
-                        size = 8
-                        ax_map.plot(
-                            [center_x - size, center_x + size],
-                            [center_y - size, center_y + size],
-                            "r-",
-                            linewidth=4,
-                            label="_agent",
-                        )
-                        ax_map.plot(
-                            [center_x - size, center_x + size],
-                            [center_y + size, center_y - size],
-                            "r-",
-                            linewidth=4,
-                            label="_agent",
-                        )
-                        ax_map.text(
-                            center_x,
-                            center_y - size - 3,
-                            "🚧 BLOCKED",
-                            ha="center",
-                            fontsize=10,
-                            color="red",
-                            weight="bold",
-                            label="_agent",
-                        )
+                entrance_areas = geom.get("entrance_areas", {})
+                for exit_name in blocked_exits:
+                    if exit_name in entrance_areas:
+                        coords = entrance_areas[exit_name]
+                        if coords:
+                            xs = [c[0] for c in coords]
+                            ys = [c[1] for c in coords]
+                            center_x = sum(xs) / len(xs)
+                            center_y = sum(ys) / len(ys)
+
+                            size = 8
+                            ax.plot(
+                                [center_x - size, center_x + size],
+                                [center_y - size, center_y + size],
+                                "r-",
+                                linewidth=4,
+                                label="_agent",
+                            )
+                            ax.plot(
+                                [center_x - size, center_x + size],
+                                [center_y + size, center_y - size],
+                                "r-",
+                                linewidth=4,
+                                label="_agent",
+                            )
+                            ax.text(
+                                center_x,
+                                center_y - size - 3,
+                                "🚧 BLOCKED",
+                                ha="center",
+                                fontsize=10,
+                                color="red",
+                                weight="bold",
+                                label="_agent",
+                            )
 
         # Determine agent states
         waiting_agents = {}
@@ -300,11 +416,22 @@ class VideoGenerator:
                                         wait_reason = translated.get("wait_reason", "unknown")
                                         waiting_agents[agent_id] = wait_reason
 
-        # Draw agent positions
+        # Draw agent positions on appropriate level
         positions = frame_data.get("positions", {})
         for agent_id, pos in positions.items():
             if pos and len(pos) >= 2:
                 x, y = pos[0], pos[1]
+
+                # Determine which level this agent is on
+                level_name = self._determine_agent_level(agent_id, pos)
+                # Convert from "level_0" or "level_-1" to key "0" or "-1"
+                level_key = level_name.replace("level_", "")
+
+                if level_key not in axes_dict:
+                    # Fallback: default to level 0
+                    level_key = "0"
+
+                ax = axes_dict[level_key]
 
                 # Determine color and size
                 if agent_id in waiting_agents:
@@ -320,10 +447,10 @@ class VideoGenerator:
                     color = "red"
                     size = 8
 
-                ax_map.plot(x, y, "o", color=color, markersize=size, label="_agent")
-                ax_map.text(x, y + 1, agent_id, ha="center", fontsize=8, label="_agent")
+                ax.plot(x, y, "o", color=color, markersize=size, label="_agent")
+                ax.text(x, y + 1, agent_id, ha="center", fontsize=8, label="_agent")
 
-        # Add legend
+        # Add legend (only to the first level axes)
         legend_elements = [
             Line2D(
                 [0], [0], marker="o", color="w", markerfacecolor="red", markersize=8, label="Moving"
@@ -365,43 +492,9 @@ class VideoGenerator:
                 label="Wait: Assessing",
             ),
         ]
-        ax_map.legend(handles=legend_elements, loc="upper right", fontsize=8)
-
-        # Draw decision log (only show decisions up to current frame time)
-        recent_decisions = []
-        decisions = frame_data.get("decisions", {})
-        current_time = frame_data["time"]
-
-        if isinstance(decisions, dict):
-            for agent_id, agent_data in decisions.items():
-                if isinstance(agent_data, dict) and "decisions" in agent_data:
-                    decisions_list = agent_data["decisions"]
-                    # Filter decisions that occurred before or at current frame time
-                    for decision in decisions_list:
-                        dec_time = decision.get("time", decision.get("timestamp", 0))
-                        if dec_time <= current_time:
-                            recent_decisions.append((agent_id, decision))
-
-        # Sort by timestamp and get most recent
-        recent_decisions.sort(
-            key=lambda x: x[1].get("time", x[1].get("timestamp", 0)), reverse=True
-        )
-        recent_decisions = recent_decisions[:5]
-
-        y_pos = 0.95
-        for agent_id, decision in recent_decisions:
-            dec_time = decision.get("time", decision.get("timestamp", 0))
-            action = decision.get("action", "Unknown")
-
-            ax_decisions.text(
-                0.05,
-                y_pos,
-                f"[{dec_time:.1f}s] {agent_id}:\n  → {action[:50]}...",
-                fontsize=9,
-                verticalalignment="top",
-                family="monospace",
-            )
-            y_pos -= 0.18
+        if axes_dict:
+            first_ax = list(axes_dict.values())[0]
+            first_ax.legend(handles=legend_elements, loc="upper right", fontsize=8)
 
     def generate(self, output_path: Path, dpi: int = 100) -> bool:
         """
@@ -419,7 +512,7 @@ class VideoGenerator:
 
         try:
             # Setup figure
-            fig, ax_map, ax_decisions, title_text = self._setup_figure()
+            fig, axes_dict, title_text = self._setup_figure()
 
             # Setup video writer
             writer = FFMpegWriter(fps=self.fps, metadata={"artist": "NewcastleSim"})
@@ -428,7 +521,7 @@ class VideoGenerator:
                 # For now, we only have one frame (final state)
                 # In a proper implementation, we'd iterate through time series
                 for frame_data in self.time_series:
-                    self._draw_frame(ax_map, ax_decisions, frame_data, title_text)
+                    self._draw_frame(axes_dict, frame_data, title_text)
                     writer.grab_frame()
 
             plt.close(fig)

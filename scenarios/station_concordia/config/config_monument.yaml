@@ -1,5 +1,4 @@
-# Configuration for Monument Station evacuation simulation
-# Option A: Single-level concourse evacuation test
+# Configuration for Monument Station evacuation simulation (multi-level)
 
 # Simulation parameters
 simulation:
@@ -8,11 +7,14 @@ simulation:
   decision_interval: 15.0  # Time between Concordia decisions (seconds)
   spawn_interval: 2.0  # Time between agent spawns (seconds)
   network_path: "scenarios/station_concordia/geometry/monument/network"  # Monument geometry
-  level_id: 0  # Load level_0.xml (concourse level)
+
+  # Multi-level simulation (Monument Station has 2 levels: concourse and platforms)
+  multi_level: true
+  levels: ["0", "-1"]  # Level 0 = concourse, Level -1 = platforms
 
 # Agent configuration
 agents:
-  count: 40  # Moderate crowd for evacuation test
+  count: 50  # Agents distributed across both levels
 
   # Personality distribution (percentage)
   personalities:
@@ -44,8 +46,8 @@ agents:
     min: 18
     max: 75
 
-  # Spawn zones (Option A: concourse level only)
-  # Agents will spawn at street entrances
+  # Spawn zones - agents distributed across both levels proportionally by area
+  # ~54% spawn on platforms (level -1), ~46% on concourse (level 0)
   spawn_zones:
     - concourse
     - blackett_street

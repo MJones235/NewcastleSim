@@ -57,6 +57,7 @@ class ConcordiaJuPedSimulation:
         self.exit_radius = exit_radius
         self.current_step = 0
         self.is_complete = False
+        self.level_id = str(level_id)  # Store level_id for reference
 
         if network_path is None:
             raise ValueError("network_path required")
@@ -70,9 +71,13 @@ class ConcordiaJuPedSimulation:
             self.stage_manager,
             self.geometry_manager.entrance_areas,
             self.geometry_manager.walkable_areas_with_obstacles,
+            self.geometry_manager.walkable_areas,
+            level_id=self.level_id,
         )
 
         self.agent_tracker = AgentTracker(self.simulation)
+        self.last_known_positions: dict[str, tuple[float, float]] = {}
+        self.agent_assigned_exits: dict[str, str] = {}
 
         logger.info(
             f"JuPedSim simulation initialized: "
@@ -87,19 +92,21 @@ class ConcordiaJuPedSimulation:
         """
         Add an agent to the simulation.
 
+        Agent is placed at position with a valid default evacuation journey.
+        The LLM can immediately switch this journey when making its first decision.
+
         Args:
             agent_id: Concordia agent ID
             position: Initial (x, y) position
             walking_speed: Desired walking speed in m/s (default: 1.34 m/s)
 
         Raises:
-            RuntimeError: If no evacuation exits are available
             Exception: If JuPedSim fails to add the agent
         """
-        # Get default exit from exit manager
+        # JuPedSim requires integer journey_id and stage_id at agent creation.
+        # Assign a valid default journey immediately; LLM can override on first decision.
         exit_name, stage_id, journey_id = self.exit_manager.get_default_exit()
 
-        # Add agent to JuPedSim with specified walking speed
         jps_id = self.simulation.add_agent(
             jps.CollisionFreeSpeedModelAgentParameters(
                 position=position,
@@ -111,6 +118,7 @@ class ConcordiaJuPedSimulation:
 
         # Register in agent tracker
         self.agent_tracker.add_agent(agent_id, jps_id)
+        self.agent_assigned_exits[agent_id] = exit_name
 
         logger.info(
             f"Added agent {agent_id} at {position} "
@@ -211,6 +219,8 @@ class ConcordiaJuPedSimulation:
             stage_id=stage_id,
         )
 
+        self.agent_assigned_exits[agent_id] = exit_name
+
         logger.info(f"Directed agent {agent_id} to exit '{exit_name}'")
 
     def set_agent_speed(self, agent_id: str, speed: float) -> None:
@@ -261,6 +271,92 @@ class ConcordiaJuPedSimulation:
             Dictionary mapping Concordia agent IDs to (x, y) positions
         """
         return self.agent_tracker.get_all_positions()
+
+    def check_exits(self) -> dict[str, str]:
+        """
+        Check for agents that have exited this level and determine exit type.
+
+        Returns:
+            Dictionary mapping agent_id -> exit_name for agents that just exited.
+            Agents are matched to exits by finding the nearest exit to their last position.
+        """
+        exited = {}
+
+        # Update last known positions for all still-active agents
+        current_positions = self.agent_tracker.get_all_positions()
+        self.last_known_positions.update(current_positions)
+
+        # Get list of all agents that were registered but are no longer in simulation
+        current_registered = set(self.agent_tracker.agent_ids.keys())
+        still_active = set(current_positions.keys())
+        exited_agent_ids = current_registered - still_active
+
+        if len(exited_agent_ids) > 0:
+            logger.info(f"Detected {len(exited_agent_ids)} exited agents on level {self.level_id}")
+
+        # For each exited agent, find which exit they likely used
+        for agent_id in exited_agent_ids:
+            assigned_exit = self.agent_assigned_exits.get(agent_id)
+            if assigned_exit in self.exit_manager.exit_coordinates:
+                exited[agent_id] = assigned_exit
+                logger.info(f"Agent {agent_id} exited through assigned exit {assigned_exit}")
+                self.agent_tracker.remove_agent(agent_id)
+                self.last_known_positions.pop(agent_id, None)
+                self.agent_assigned_exits.pop(agent_id, None)
+                continue
+
+            # Prefer explicit movement target; fallback to last known position.
+            match_point = self.agent_tracker.agent_targets.get(agent_id)
+            if match_point is None:
+                match_point = self.last_known_positions.get(agent_id)
+
+            if match_point is None:
+                logger.warning(
+                    f"Agent {agent_id} exited with no target and no last known position - no exit match possible"
+                )
+                self.agent_tracker.remove_agent(agent_id)
+                self.agent_assigned_exits.pop(agent_id, None)
+                continue
+
+            # Find nearest exit to the target
+            if not self.exit_manager.exit_coordinates:
+                logger.error(
+                    f"No exit coordinates available (dict is empty). Available exits in exit_manager: {list(self.exit_manager.evacuation_exits.keys())}"
+                )
+                self.agent_tracker.remove_agent(agent_id)
+                self.agent_assigned_exits.pop(agent_id, None)
+                continue
+
+            nearest_exit = None
+            min_distance = float("inf")
+
+            logger.debug(
+                f"Agent {agent_id} match point: {match_point}, checking against exits: "
+                f"{list(self.exit_manager.exit_coordinates.keys())}"
+            )
+
+            for exit_name, exit_pos in self.exit_manager.exit_coordinates.items():
+                distance = (
+                    (match_point[0] - exit_pos[0]) ** 2 + (match_point[1] - exit_pos[1]) ** 2
+                ) ** 0.5
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_exit = exit_name
+
+            if nearest_exit:
+                exited[agent_id] = nearest_exit
+                logger.info(
+                    f"Agent {agent_id} exited through {nearest_exit} "
+                    f"(match point was {min_distance:.2f}m away)"
+                )
+            else:
+                logger.warning(f"Agent {agent_id} exited but no exit found nearby")
+
+            self.agent_tracker.remove_agent(agent_id)
+            self.last_known_positions.pop(agent_id, None)
+            self.agent_assigned_exits.pop(agent_id, None)
+
+        return exited
 
     def get_geometry(self) -> dict[str, Any]:
         """

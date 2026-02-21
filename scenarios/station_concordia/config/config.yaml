@@ -6,7 +6,12 @@ simulation:
   max_iterations: 3000  # Maximum simulation steps (3000 * 0.05 = 150 seconds)
   decision_interval: 15.0  # Time between Concordia decisions (seconds) - reduced frequency for smoother movement
   spawn_interval: 2.0  # Time between agent spawns (seconds)
-  network_path: "scenarios/station_sim/network"  # Path to real station geometry
+  network_path: "scenarios/station_concordia/geometry/monument/network"  # Path to Monument Station geometry
+
+  # Multi-level configuration (Monument Station has 2 levels: concourse and platforms)
+  multi_level: true  # Enable multi-level simulation
+  levels: ["0", "-1"]  # Level IDs to load (0 = concourse, -1 = platforms)
+  level_id: 0  # Default spawn level (used only if multi_level is false)
 
 # Agent configuration
 agents:

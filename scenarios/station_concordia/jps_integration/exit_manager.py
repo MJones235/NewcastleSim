@@ -5,6 +5,7 @@ Handles creation and management of evacuation exits and journey routing
 to exits in the station environment.
 """
 
+import re
 from typing import Any
 
 from scenarios.common.logger import get_logger
@@ -30,23 +31,35 @@ class ExitManager:
         stage_manager: StageManager,
         entrance_areas: dict[str, Any],
         walkable_areas_with_obstacles: dict[str, Any],
+        walkable_areas: dict[str, Any] | None = None,
+        level_id: str | int = "0",
     ):
         """
         Initialize exit manager and create evacuation exits.
 
         Args:
             stage_manager: StageManager instance for creating exits and journeys
-            entrance_areas: Dictionary of entrance area polygons
+            entrance_areas: Dictionary of entrance area polygons (street exits)
             walkable_areas_with_obstacles: Dictionary of walkable area polygons
+            walkable_areas: Dictionary of all walkable areas (for escalator detection)
+            level_id: Level identifier for filtering escalator zones (default: "0")
 
         Raises:
             RuntimeError: If no valid exits can be created from entrance areas
         """
         self.stage_manager = stage_manager
         self.entrance_areas = entrance_areas
+        self.walkable_areas_with_obstacles = walkable_areas_with_obstacles
+        self.walkable_areas = walkable_areas or {}
+        self.level_id = str(level_id)
 
         # Setup evacuation exits and routes
-        logger.info("Setting up evacuation exits...")
+        escalable_zones = [z for z in (walkable_areas or {}).keys() if f"L{self.level_id}_esc" in z]
+        logger.info(
+            f"Setting up evacuation exits for level {self.level_id}: "
+            f"entrance_areas={list(entrance_areas.keys()) if entrance_areas else 'None'}, "
+            f"escalable_zones={escalable_zones}"
+        )
 
         walkable_geometry = GeometryProcessor.combine_geometry(
             list(walkable_areas_with_obstacles.values())
@@ -56,6 +69,10 @@ class ExitManager:
             walkable_geometry
         )
 
+        # Also store exit coordinates for translation layer
+        self.exit_coordinates = {}  # exit_name -> (x, y)
+        self._populate_exit_coordinates()
+
         logger.info(
             f"Created {len(self.evacuation_exits)} exits: {list(self.evacuation_exits.keys())}"
         )
@@ -64,25 +81,35 @@ class ExitManager:
         self, walkable_geometry: Any
     ) -> tuple[dict[str, int], dict[str, int]]:
         """
-        Create evacuation exit stages at entrance locations.
+        Create evacuation exit stages at entrance locations or escalators.
+
+        For levels with street exits (concourse): Creates exits at entrance areas.
+        For levels without exits (platforms): Creates exits at escalator locations,
+        allowing agents to naturally choose which escalator to use.
 
         Args:
             walkable_geometry: Combined walkable geometry for validation
 
         Returns:
             Tuple of (evacuation_exits dict, evacuation_journeys dict)
-
-        Raises:
-            RuntimeError: If no valid exits can be created from entrance areas
         """
         evacuation_exits = {}
         evacuation_journeys = {}
 
         if not self.entrance_areas:
-            raise RuntimeError(
-                "No entrance areas found in geometry. "
-                "Check that walking_areas.add.xml contains entrance area definitions."
+            # No street exits - look for escalators to use as "exits" from this level
+            logger.info(
+                f"No entrance areas found. Checking for escalators in walkable_areas: {list(self.walkable_areas.keys())}"
             )
+            escalator_exits, escalator_journeys = self._create_escalator_exits(walkable_geometry)
+            if escalator_exits:
+                logger.info(
+                    f"Created {len(escalator_exits)} escalator exits on this level: {list(escalator_exits.keys())}"
+                )
+                return escalator_exits, escalator_journeys
+            else:
+                logger.warning("No escalators found in walkable_areas")
+                return {}, {}
 
         failed_exits = []
         for entrance_name, entrance_polygon in self.entrance_areas.items():
@@ -108,14 +135,16 @@ class ExitManager:
                 f"(exit={exit_id}, journey={journey_id})"
             )
 
-        if not evacuation_exits:
-            raise RuntimeError(
+        if not evacuation_exits and self.entrance_areas:
+            # Only warn if we expected to create exits but failed
+            logger.warning(
                 f"Failed to create any evacuation exits. "
                 f"Attempted exits: {list(self.entrance_areas.keys())}. "
                 f"All exits failed. Check geometry configuration and ensure "
                 f"entrance areas overlap with walkable areas."
             )
 
+        return evacuation_exits, evacuation_journeys
         if failed_exits:
             logger.warning(
                 f"Successfully created {len(evacuation_exits)} exits, "
@@ -123,6 +152,124 @@ class ExitManager:
             )
 
         return evacuation_exits, evacuation_journeys
+
+    def _create_escalator_exits(
+        self, walkable_geometry: Any
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """
+        Create real terminal exits at escalator locations for levels without street exits.
+
+        Escalators are real exits from one level. When agents reach an escalator exit,
+        they exit the level and can be transferred to the other level.
+
+        In multi-level simulations, each escalator is accessible from both levels:
+        - L-1 agents exit through escalator zones to reach level 0
+        - L0 agents exit through corresponding escalator zones to reach level -1
+
+        Escalators are identified by naming pattern: L{level}_esc_{id}_{direction}
+        Example: L-1_esc_a_up, L0_esc_b_down
+
+        Args:
+            walkable_geometry: Combined walkable geometry for validation
+
+        Returns:
+            Tuple of (evacuation_exits dict, evacuation_journeys dict)
+        """
+        escalator_pattern = re.compile(r"^L([^_]+)_esc_([a-f])_(up|down)$")
+        evacuation_exits = {}
+        evacuation_journeys = {}
+
+        for zone_name, zone_polygon in self.walkable_areas.items():
+            match = escalator_pattern.match(zone_name)
+            if not match:
+                continue
+
+            level, esc_id, direction = match.groups()
+
+            # Only create exits for escalators on the current level
+            if level != self.level_id:
+                logger.debug(f"Skipping escalator zone {zone_name} (not for level {self.level_id})")
+                continue
+
+            exit_name = f"escalator_{esc_id}_{direction}"
+
+            try:
+                # Create a real terminal exit at the escalator zone
+                # Use the polygon coordinates directly as the exit boundary
+                coords = list(zone_polygon.exterior.coords)[:-1]  # Remove closing coord
+                if len(coords) < 3:
+                    logger.warning(f"Escalator {exit_name} has invalid polygon (<3 points)")
+                    continue
+
+                exit_id = self.stage_manager.create_exit_at_coordinates(
+                    exit_name=exit_name, coords=coords
+                )
+
+                # Create a simple journey to this exit
+                journey_id = self.stage_manager.create_simple_exit_journey(
+                    journey_name=f"journey_to_{exit_name}", exit_id=exit_id
+                )
+
+                evacuation_exits[exit_name] = exit_id
+                evacuation_journeys[exit_name] = journey_id
+
+                logger.info(
+                    f"Created escalator exit '{exit_name}' "
+                    f"(exit={exit_id}, journey={journey_id})"
+                )
+
+            except Exception as e:
+                logger.warning(f"Failed to create escalator exit '{exit_name}': {e}")
+                continue
+
+        return evacuation_exits, evacuation_journeys
+
+    def _populate_exit_coordinates(self):
+        """Populate exit_coordinates dict with exit center positions."""
+        # Add entrance area coordinates (street exits)
+        for entrance_name, entrance_polygon in self.entrance_areas.items():
+            if entrance_name in self.evacuation_exits:
+                centroid = entrance_polygon.centroid
+                self.exit_coordinates[entrance_name] = (centroid.x, centroid.y)
+                logger.debug(
+                    f"Added street exit {entrance_name} at {centroid.x:.2f}, {centroid.y:.2f}"
+                )
+
+        # Add escalator coordinates (escalator zone centers) - ONLY for current level
+        escalator_pattern = re.compile(r"^L([^_]+)_esc_([a-f])_(up|down)$")
+        for zone_name, zone_polygon in self.walkable_areas.items():
+            match = escalator_pattern.match(zone_name)
+            if match:
+                level, esc_id, direction = match.groups()
+                # ONLY match escalators for the current level
+                if level != self.level_id:
+                    logger.debug(
+                        f"Skipping escalator zone {zone_name} (not for level {self.level_id})"
+                    )
+                    continue
+                exit_name = f"escalator_{esc_id}_{direction}"
+                if exit_name in self.evacuation_exits:
+                    centroid = zone_polygon.centroid
+                    self.exit_coordinates[exit_name] = (centroid.x, centroid.y)
+                    logger.info(
+                        f"Added escalator exit {exit_name} (from {zone_name}) at {centroid.x:.2f}, {centroid.y:.2f}"
+                    )
+                else:
+                    # Only warn if this is actually supposed to be an escalator exit on this level
+                    # For Level 0, finding L0_esc_* zones but not having them in evacuation_exits is expected
+                    # because Level 0 uses street exits, not escalator exits
+                    if level == self.level_id:
+                        logger.debug(
+                            f"Zone {zone_name} matches escalator pattern but exit_name '{exit_name}' not in evacuation_exits. Available: {list(self.evacuation_exits.keys())}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Skipping escalator zone {zone_name} (not for level {self.level_id})"
+                        )
+
+        logger.info(
+            f"Populated {len(self.exit_coordinates)} exit coordinates for level {self.level_id}: {list(self.exit_coordinates.keys())}"
+        )
 
     def _create_convex_exit_from_polygon(
         self,
@@ -173,17 +320,19 @@ class ExitManager:
         """
         Get default exit for agents.
 
+        On levels with street exits, returns the first available street exit.
+        On platform levels, returns the first available escalator exit.
+
         Returns:
             Tuple of (exit_name, exit_id, journey_id)
-
-        Raises:
-            RuntimeError: If no evacuation exits are available
         """
         if not self.evacuation_exits:
-            raise RuntimeError(
-                "Cannot get default exit: no evacuation exits available. "
-                "Check geometry configuration."
+            # This should not happen since we create escalator exits on platform levels
+            logger.error(
+                "No evacuation exits available on this level! "
+                "This indicates a configuration problem."
             )
+            raise RuntimeError("No exits available for agent initialization")
 
         exit_name = list(self.evacuation_exits.keys())[0]
         exit_id = self.evacuation_exits[exit_name]

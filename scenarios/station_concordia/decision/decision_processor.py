@@ -40,6 +40,7 @@ class DecisionProcessor:
         last_observations: dict[str, str],
         last_actions: dict[str, str],
         perf_timer,
+        jps_sim=None,
     ):
         """
         Initialize decision processor.
@@ -57,6 +58,7 @@ class DecisionProcessor:
             last_observations: Cache of last observations for change detection
             last_actions: Cache of last actions to reuse
             perf_timer: Performance monitoring timer
+            jps_sim: JuPedSim simulation instance (for multi-level support)
         """
         self.concordia_agents = concordia_agents
         self.exited_agents = exited_agents
@@ -70,47 +72,62 @@ class DecisionProcessor:
         self.last_observations = last_observations
         self.last_actions = last_actions
         self.perf_timer = perf_timer
+        self.jps_sim = jps_sim
         # Asyncio lock for shared state modifications during parallel processing
         self._state_lock = asyncio.Lock()
 
         logger.debug("DecisionProcessor initialized for parallel async processing")
 
-    def process_all_agents(self, observations: dict[str, str], current_sim_time: float) -> float:
+    def process_all_agents(
+        self,
+        observations: dict[str, str],
+        current_sim_time: float,
+        agent_ids: list[str] | None = None,
+    ) -> float:
         """
         Process decision-making for all agents (parallel processing).
 
         Args:
             observations: Dict of agent_id -> observation string
             current_sim_time: Current simulation time in seconds
+            agent_ids: Optional subset of agent IDs to process
 
         Returns:
             Current simulation time (for updating last_decision_time)
         """
-        logger.info(f"Agent decisions at t={current_sim_time:.1f}s")
+        if agent_ids is None:
+            logger.info(f"Agent decisions at t={current_sim_time:.1f}s")
+        else:
+            logger.info(
+                f"Targeted agent decisions at t={current_sim_time:.1f}s for {len(agent_ids)} agents"
+            )
 
-        # Get available exits and zones for structured output
-        exits = [
-            {"name": name, "coords": coords}
-            for name, coords in self.action_translator.exits.items()
-        ]
+        # Get available zones (same for all levels)
         zones = list(self.action_translator.zones_polygons.keys()) or list(
             self.action_translator.zones.keys()
         )
 
         # Run agent processing in parallel using asyncio
-        asyncio.run(self._process_agents_parallel(observations, exits, zones, current_sim_time))
+        asyncio.run(self._process_agents_parallel(observations, zones, current_sim_time, agent_ids))
 
         return current_sim_time
 
     async def _process_agents_parallel(
-        self, observations: dict, exits: list, zones: list, current_sim_time: float
+        self,
+        observations: dict,
+        zones: list,
+        current_sim_time: float,
+        agent_ids: list[str] | None = None,
     ):
         """Process all agents in parallel using async/await."""
         # Filter and create tasks using list comprehension for efficiency
+        candidate_agents = (
+            agent_ids if agent_ids is not None else list(self.concordia_agents.keys())
+        )
         agents_to_process = [
             agent_id
-            for agent_id in self.concordia_agents.keys()
-            if agent_id not in self.exited_agents
+            for agent_id in candidate_agents
+            if agent_id in self.concordia_agents and agent_id not in self.exited_agents
         ]
 
         tasks = [
@@ -118,7 +135,6 @@ class DecisionProcessor:
                 agent_id,
                 self.concordia_agents[agent_id],
                 observations,
-                exits,
                 zones,
                 current_sim_time,
             )
@@ -137,11 +153,32 @@ class DecisionProcessor:
         agent_id: str,
         agent,
         observations: dict,
-        exits: list,
         zones: list,
         current_sim_time: float,
     ):
         """Process a single agent's decision (async)."""
+        # Get agent's level and filter exits accordingly
+        agent_level = None
+        if self.jps_sim and hasattr(self.jps_sim, "agent_levels"):
+            agent_level = self.jps_sim.agent_levels.get(agent_id)
+
+        # Get level-specific exits
+        if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
+            # Multi-level: get exits from agent's current level
+            level_sim = self.jps_sim.simulations.get(agent_level)
+            if level_sim:
+                exits = [
+                    {"name": name, "coords": coords}
+                    for name, coords in level_sim.exit_manager.evacuation_exits.items()
+                ]
+            else:
+                exits = []
+        else:
+            # Single-level: use all exits
+            exits = [
+                {"name": name, "coords": coords}
+                for name, coords in self.action_translator.exits.items()
+            ]
         try:
             # Get observation for this agent
             observation = observations.get(agent_id, "")
