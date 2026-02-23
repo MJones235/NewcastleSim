@@ -9,6 +9,9 @@ from typing import Any
 
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.translation.crowd_analyzer import CrowdAnalyzer
+from scenarios.station_concordia.translation.exit_name_registry import (
+    build_registry_from_station_layout,
+)
 from scenarios.station_concordia.translation.observation_formatter import ObservationFormatter
 from scenarios.station_concordia.translation.spatial_analyzer import SpatialAnalyzer
 
@@ -33,11 +36,13 @@ class ObservationGenerator:
         """
         self.station_layout = station_layout
         self.exits = station_layout.get("exits", {})
-        self._agents_with_geometry_intro: set[str] = set()
         self.jps_sim = jps_sim
 
+        # Build exit name registry for natural language display
+        self.exit_registry = build_registry_from_station_layout(station_layout, jps_sim)
+
         # Initialize analyzers
-        self.spatial_analyzer = SpatialAnalyzer(station_layout)
+        self.spatial_analyzer = SpatialAnalyzer(station_layout, self.exit_registry)
         self.crowd_analyzer = CrowdAnalyzer(self.exits)
 
     def generate_observation(
@@ -156,15 +161,41 @@ class ObservationGenerator:
                     follower_list = ", ".join(follower_ids)
                     observations.append(f"⚠️ {follower_list} are trying to follow YOU.")
 
-        # First-time geometry introduction (level-specific)
-        if agent_id not in self._agents_with_geometry_intro:
-            geometry_desc = self._describe_geometry(agent_level)
-            observations.append(geometry_desc)
-            self._agents_with_geometry_intro.add(agent_id)
-
         # Current location
         zone = self.spatial_analyzer.identify_zone(position)
-        observations.append(f"You are in the {zone}.")
+        if zone == "unknown area" and agent_level:
+            # Level 0 walkable_areas only covers the concourse; look up the
+            # agent's actual level so platform agents get a sensible description.
+            level_walkable = self.station_layout.get("walkable_areas_by_level", {}).get(
+                str(agent_level), {}
+            )
+            if level_walkable:
+                try:
+                    from shapely.geometry import Point
+
+                    pt = Point(position)
+                    for area_name, polygon in level_walkable.items():
+                        try:
+                            if polygon.covers(pt) or polygon.contains(pt):
+                                zone = area_name
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+        # Map technical area/level names to human-readable descriptions.
+        # Labels are defined in config under station.zone_labels.
+        zone_labels = self.station_layout.get("zone_labels", {})
+        zone_label = zone_labels.get(zone, zone)
+        observations.append(f"You are in {zone_label}.")
+
+        # Visual discovery of exits (efficient distance-based line of sight)
+        visible_exits = self.spatial_analyzer.get_visible_exits(
+            position, agent_level=agent_level, jps_sim=self.jps_sim, visual_range=25.0
+        )
+        exit_sight_lines = ObservationFormatter.format_visible_exits(visible_exits)
+        observations.extend(exit_sight_lines)
 
         # Crowd density (categorized to prevent constant LLM calls as people move)
         num_nearby = len(nearby_agents)
@@ -242,54 +273,4 @@ class ObservationGenerator:
         blocked_lines = ObservationFormatter.format_blocked_exits(visible_blocked)
         observations.extend(blocked_lines)
 
-        # Exit information (level-specific)
-        nearest_exit = self.spatial_analyzer.get_nearest_exit_info(
-            position, agent_level, self.jps_sim
-        )
-        observations.append(f"Nearest exit: {nearest_exit}")
-
         return " ".join(observations)
-
-    def _describe_geometry(self, agent_level: str | None = None) -> str:
-        """Create a short natural language summary of the station geometry for the agent's current level."""
-        # Get level-specific exits if multi-level simulation
-        if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
-            # Multi-level: get exits from the agent's current level
-            level_sim = self.jps_sim.simulations.get(agent_level)
-            if level_sim:
-                exit_names = list(level_sim.exit_manager.evacuation_exits.keys())
-            else:
-                exit_names = []
-        else:
-            # Single-level or fallback: use station_layout exits
-            exit_names = list(self.spatial_analyzer.exits_polygons.keys()) or list(
-                self.spatial_analyzer.exits.keys()
-            )
-
-        # Check if we have escalator exits (indicates platform level)
-        escalator_exits = [name for name in exit_names if name.startswith("escalator_")]
-        street_exits = [name for name in exit_names if not name.startswith("escalator_")]
-
-        if escalator_exits:
-            # Platform level - be clear about the two-stage evacuation process
-            up_escalators = [name for name in escalator_exits if "_up" in name]
-            down_escalators = [name for name in escalator_exits if "_down" in name]
-
-            escalator_desc = "You are on the PLATFORM LEVEL (underground). "
-            escalator_desc += (
-                "To evacuate, you must first take an escalator UP to the concourse level. "
-            )
-            escalator_desc += "The street exits (Blackett Street, Grey Street, Eldon Square) are on the concourse level above you. "
-            escalator_desc += f"\\nAvailable escalators going UP: {len(up_escalators)} options"
-            if down_escalators:
-                escalator_desc += (
-                    f" | Going DOWN: {len(down_escalators)} (away from exits, not for evacuation)"
-                )
-            return escalator_desc
-        elif street_exits:
-            # Concourse level - list street exits but don't mention platforms
-            exit_list = ", ".join(street_exits)
-            return f"You are on the CONCOURSE LEVEL. Final street exits: {exit_list}."
-        else:
-            # Fallback for other configurations
-            return "You are in the station."

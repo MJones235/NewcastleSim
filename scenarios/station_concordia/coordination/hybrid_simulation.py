@@ -125,8 +125,7 @@ class HybridSimulationRunner:
         agent_builder = AgentBuilder(
             language_model=language_model,
             embedder=embedder,
-            observation_generator=self.observation_generator,
-            jps_sim=self.jps_sim,
+            station_layout=station_layout,
         )
 
         # Build agents asynchronously for faster initialization
@@ -207,6 +206,7 @@ class HybridSimulationRunner:
             last_actions=self.last_actions,
             perf_timer=self.perf_timer,
             jps_sim=self.jps_sim,
+            agent_configs=agents_config,
         )
 
         # Observation coordination

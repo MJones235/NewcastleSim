@@ -72,6 +72,12 @@ class StationLayoutBuilder:
                         all_exits[exit_name] = level_sim.exit_manager.exit_coordinates.get(
                             exit_name, (0, 0)
                         )
+
+            # Collect per-level walkable areas for level-aware zone identification
+            all_walkable_by_level = {
+                str(level_id): level_sim.geometry_manager.walkable_areas_with_obstacles
+                for level_id, level_sim in jps_sim.simulations.items()
+            }
         else:
             # Single-level: Use geometry manager and exit manager
             gm = jps_sim.geometry_manager
@@ -89,6 +95,9 @@ class StationLayoutBuilder:
             "exits": all_exits,
             "exits_polygons": all_exit_polygons,
             "walkable_areas": jps_sim.geometry_manager.walkable_areas_with_obstacles,
+            "walkable_areas_by_level": (
+                all_walkable_by_level if hasattr(jps_sim, "simulations") else {}
+            ),
             "zones": all_zones,
             "zones_polygons": all_zone_polygons,
             "obstacles": jps_sim.geometry_manager.obstacles,

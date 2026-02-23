@@ -136,6 +136,8 @@ class ConfigLoader:
         if "count" not in agents_config:
             raise ValueError("agents.count is required in configuration")
 
+        ConfigLoader._validate_knowledge_profiles(config)
+
         # Validate spawn_schedule (optional)
         if "spawn_schedule" in agents_config:
             schedule = agents_config["spawn_schedule"]
@@ -167,3 +169,93 @@ class ConfigLoader:
                     logger.info(f"Multi-level simulation enabled: {multi_level['levels']}")
 
         logger.debug("Configuration validation passed")
+
+    @staticmethod
+    def _validate_knowledge_profiles(config: dict[str, Any]) -> None:
+        """Validate required static environment knowledge schema."""
+        station_config = config.get("station")
+        if not isinstance(station_config, dict):
+            raise ValueError("station section is required and must be a dictionary")
+
+        knowledge_config = station_config.get("knowledge")
+        if not isinstance(knowledge_config, dict):
+            raise ValueError("station.knowledge is required and must be a dictionary")
+
+        base_memories = knowledge_config.get("base_memories")
+        if not isinstance(base_memories, list) or not base_memories:
+            raise ValueError("station.knowledge.base_memories must be a non-empty list")
+        for memory in base_memories:
+            if not isinstance(memory, str) or not memory.strip():
+                raise ValueError("station.knowledge.base_memories must contain non-empty strings")
+
+        profile_memories = knowledge_config.get("profiles")
+        if not isinstance(profile_memories, dict) or not profile_memories:
+            raise ValueError("station.knowledge.profiles must be a non-empty dictionary")
+
+        for profile_name, memories in profile_memories.items():
+            if not isinstance(profile_name, str) or not profile_name.strip():
+                raise ValueError("station.knowledge.profiles keys must be non-empty strings")
+            if not isinstance(memories, list) or not memories:
+                raise ValueError(
+                    f"station.knowledge.profiles.{profile_name} must be a non-empty list"
+                )
+            for memory in memories:
+                if not isinstance(memory, str) or not memory.strip():
+                    raise ValueError(
+                        f"station.knowledge.profiles.{profile_name} must contain non-empty strings"
+                    )
+
+        location_memories = knowledge_config.get("location_memories", [])
+        if not isinstance(location_memories, list):
+            raise ValueError("station.knowledge.location_memories must be a list when provided")
+
+        for idx, rule in enumerate(location_memories):
+            if not isinstance(rule, dict):
+                raise ValueError(f"station.knowledge.location_memories[{idx}] must be a dictionary")
+
+            condition = rule.get("when", {})
+            if not isinstance(condition, dict):
+                raise ValueError(
+                    f"station.knowledge.location_memories[{idx}].when must be a dictionary"
+                )
+
+            for key in ("profiles", "level_ids", "zones"):
+                value = condition.get(key)
+                if value is None:
+                    continue
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str | int) for item in value
+                ):
+                    raise ValueError(
+                        f"station.knowledge.location_memories[{idx}].when.{key} must be a list of strings"
+                    )
+
+            memories = rule.get("memories")
+            if not isinstance(memories, list) or not memories:
+                raise ValueError(
+                    f"station.knowledge.location_memories[{idx}].memories must be a non-empty list"
+                )
+            for memory in memories:
+                if not isinstance(memory, str) or not memory.strip():
+                    raise ValueError(
+                        f"station.knowledge.location_memories[{idx}].memories must contain non-empty strings"
+                    )
+
+        agents_profiles = config["agents"].get("knowledge_profiles")
+        if not isinstance(agents_profiles, dict) or not agents_profiles:
+            raise ValueError("agents.knowledge_profiles must be a non-empty dictionary")
+
+        total_weight = 0.0
+        for profile_name, weight in agents_profiles.items():
+            if profile_name not in profile_memories:
+                raise ValueError(
+                    f"agents.knowledge_profiles contains unknown profile '{profile_name}'"
+                )
+            if not isinstance(weight, int | float) or weight <= 0:
+                raise ValueError(
+                    f"agents.knowledge_profiles.{profile_name} must be a positive number"
+                )
+            total_weight += float(weight)
+
+        if total_weight <= 0:
+            raise ValueError("agents.knowledge_profiles weights must sum to a positive value")

@@ -8,7 +8,6 @@ This module is responsible for:
 """
 
 import random
-from typing import Dict, List, Set
 
 from scenarios.common.logger import get_logger
 from scenarios.common.station_agent import PERSONALITY_TYPES
@@ -24,7 +23,7 @@ class AgentFactory:
         num_agents: int,
         config: dict,
         seed: int = 42,
-    ) -> tuple[List[Dict], Set[int]]:
+    ) -> tuple[list[dict], set[int]]:
         """
         Create agent configurations with randomized attributes.
 
@@ -45,8 +44,10 @@ class AgentFactory:
 
         # Create agent configurations
         agents_config = []
+        knowledge_distribution = config["agents"]["knowledge_profiles"]
         for i in range(num_agents):
-            agent_cfg = AgentFactory._create_single_agent(i, i in injured_agents)
+            profile = AgentFactory._select_knowledge_profile(knowledge_distribution)
+            agent_cfg = AgentFactory._create_single_agent(i, i in injured_agents, profile)
             agents_config.append(agent_cfg)
 
         logger.info(f"Created {num_agents} agent configuration(s)")
@@ -56,7 +57,7 @@ class AgentFactory:
         return agents_config, injured_agents
 
     @staticmethod
-    def _determine_injured_agents(num_agents: int, config: dict) -> Set[int]:
+    def _determine_injured_agents(num_agents: int, config: dict) -> set[int]:
         """
         Determine which agents should be injured based on test scenario config.
 
@@ -79,7 +80,11 @@ class AgentFactory:
         return injured_agents
 
     @staticmethod
-    def _create_single_agent(agent_index: int, is_injured: bool) -> Dict:
+    def _create_single_agent(
+        agent_index: int,
+        is_injured: bool,
+        knowledge_profile: str,
+    ) -> dict:
         """
         Create a single agent configuration with randomized attributes.
 
@@ -105,7 +110,15 @@ class AgentFactory:
             "age": age,
             "gender": gender,
             "risk_tolerance": risk_tolerance,
+            "knowledge_profile": knowledge_profile,
             "initial_zone": "platform",
             "destination": "exit",
             "is_injured": is_injured,
         }
+
+    @staticmethod
+    def _select_knowledge_profile(knowledge_distribution: dict[str, float]) -> str:
+        """Sample a knowledge profile according to configured distribution."""
+        profiles = list(knowledge_distribution.keys())
+        weights = [float(knowledge_distribution[p]) for p in profiles]
+        return random.choices(profiles, weights=weights, k=1)[0]

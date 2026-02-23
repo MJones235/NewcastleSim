@@ -26,8 +26,7 @@ class AgentBuilder:
         self,
         language_model: language_model.LanguageModel,
         embedder: Any,
-        observation_generator,
-        jps_sim,
+        station_layout: dict[str, Any],
     ):
         """
         Initialize the agent builder.
@@ -35,13 +34,11 @@ class AgentBuilder:
         Args:
             language_model: LLM for agent cognition
             embedder: Sentence embedding function
-            observation_generator: ObservationGenerator for level-aware station descriptions
-            jps_sim: JuPedSim simulation instance for level information
+            station_layout: Layout/config data containing authored knowledge packs
         """
         self.model = language_model
         self.embedder = embedder
-        self.observation_generator = observation_generator
-        self.jps_sim = jps_sim
+        self.station_layout = station_layout
 
     async def build_agents(
         self, agents_config: list[dict[str, Any]]
@@ -140,21 +137,29 @@ class AgentBuilder:
             agent: Concordia agent entity
             config: Agent configuration dictionary
         """
-        # Get agent's level for level-specific station description
-        agent_level = config.get("level_id", "0")
+        knowledge_config = self.station_layout["knowledge"]
+        profile_name = config["knowledge_profile"]
+        level_id = str(config.get("level_id", "0"))
+        initial_zone = config.get("initial_zone", "platform_def")
 
-        # Generate level-specific station layout description
-        station_layout_description = self.observation_generator._describe_geometry(agent_level)
+        base_memories = knowledge_config["base_memories"]
+        profile_memories = knowledge_config["profiles"][profile_name]
+        location_memories = self._select_location_memories(
+            knowledge_config=knowledge_config,
+            profile_name=profile_name,
+            level_id=level_id,
+            initial_zone=initial_zone,
+        )
+
+        # Zone labels are defined in config under station.zone_labels.
+        _zone_labels = self.station_layout.get("zone_labels", {})
+        zone_label = _zone_labels.get(initial_zone, f"the {initial_zone} area")
 
         initial_memories = [
-            "I am at a train station.",
-            f"I am in the {config.get('initial_zone', 'platform')} area.",
-            "I am waiting for my train.",
-            "I am on my way to my destination.",
-            station_layout_description,  # Level-specific station layout info
-            "The station has clear signage for platforms and exits.",
-            "I notice other passengers waiting and walking around.",
-            "The atmosphere is calm and routine.",
+            *base_memories,
+            *profile_memories,
+            *location_memories,
+            f"I am currently in {zone_label}.",
         ]
 
         # Add injury-specific memories
@@ -168,3 +173,41 @@ class AgentBuilder:
 
         for memory in initial_memories:
             agent.observe(memory)
+
+    @staticmethod
+    def _select_location_memories(
+        knowledge_config: dict[str, Any],
+        profile_name: str,
+        level_id: str,
+        initial_zone: str,
+    ) -> list[str]:
+        """Select authored location-specific memories matching the agent context."""
+        location_rules = knowledge_config.get("location_memories", [])
+        if not isinstance(location_rules, list):
+            return []
+
+        selected: list[str] = []
+        for rule in location_rules:
+            if not isinstance(rule, dict):
+                continue
+
+            condition = rule.get("when", {})
+            if not isinstance(condition, dict):
+                continue
+
+            profiles = condition.get("profiles")
+            levels = condition.get("level_ids")
+            zones = condition.get("zones")
+
+            profile_match = not profiles or profile_name in profiles
+            level_match = not levels or level_id in {str(level) for level in levels}
+            zone_match = not zones or initial_zone in zones
+
+            if profile_match and level_match and zone_match:
+                memories = rule.get("memories", [])
+                if isinstance(memories, list):
+                    selected.extend(
+                        memory for memory in memories if isinstance(memory, str) and memory.strip()
+                    )
+
+        return selected

@@ -22,18 +22,20 @@ class SpatialAnalyzer:
     - Visual range checks for blocked exits
     """
 
-    def __init__(self, station_layout: dict[str, Any]):
+    def __init__(self, station_layout: dict[str, Any], exit_registry=None):
         """
         Initialize spatial analyzer.
 
         Args:
             station_layout: Station geometry and zone information
+            exit_registry: ExitNameRegistry for display name translation
         """
         self.zones = station_layout.get("zones", {})
         self.zones_polygons = station_layout.get("zones_polygons", {})
         self.exits = station_layout.get("exits", {})
         self.exits_polygons = station_layout.get("exits_polygons", {})
         self.walkable_areas = station_layout.get("walkable_areas", {})
+        self.exit_registry = exit_registry
 
     def identify_zone(self, position: tuple[float, float]) -> str:
         """
@@ -211,6 +213,70 @@ class SpatialAnalyzer:
             dist_category = "<50m"
         return f"{display_name} ({dist_category})"
 
+    def get_visible_exits(
+        self,
+        position: tuple[float, float],
+        agent_level: str | None = None,
+        jps_sim=None,
+        visual_range: float = 25.0,
+    ) -> list[dict[str, str]]:
+        """
+        Get all exits visible from the agent's position.
+
+        Uses simple distance-based visibility (no raycasting for performance).
+        Only returns exits on the agent's current level.
+
+        Args:
+            position: Agent's (x, y) position
+            agent_level: Current level ID (e.g., "0", "-1")
+            jps_sim: JuPedSim simulation (for multi-level exit access)
+            visual_range: Maximum distance for visual observation (meters)
+
+        Returns:
+            List of visible exits with name and distance_category
+        """
+        visible_exits = []
+
+        # Get level-specific exits for multi-level simulations
+        exits_to_check = {}
+
+        if agent_level and jps_sim and hasattr(jps_sim, "simulations"):
+            level_sim = jps_sim.simulations.get(agent_level)
+            if level_sim:
+                # Get all exits on this level (street exits + escalators)
+                for exit_name in level_sim.exit_manager.evacuation_exits.keys():
+                    if exit_name in level_sim.exit_manager.exit_coordinates:
+                        exits_to_check[exit_name] = level_sim.exit_manager.exit_coordinates[
+                            exit_name
+                        ]
+        else:
+            # Single-level or no level info: use all exits
+            exits_to_check = self.exits
+
+        # Check each exit for visibility
+        for exit_name, exit_pos in exits_to_check.items():
+            distance = ((position[0] - exit_pos[0]) ** 2 + (position[1] - exit_pos[1]) ** 2) ** 0.5
+
+            if distance < visual_range:
+                # Categorize distance
+                if distance < 10:
+                    dist_cat = "very close"
+                elif distance < 20:
+                    dist_cat = "nearby"
+                else:
+                    dist_cat = "visible in distance"
+
+                # Use display name if registry available
+                display_name = (
+                    self.exit_registry.get_display_name(exit_name)
+                    if self.exit_registry
+                    else exit_name
+                )
+
+                visible_exits.append({"name": display_name, "distance": dist_cat})
+
+        return visible_exits
+
     def get_visible_blocked_exits(
         self, position: tuple[float, float], blocked_exits: set[str], visual_range: float = 20.0
     ) -> list[dict[str, Any]]:
@@ -242,7 +308,14 @@ class SpatialAnalyzer:
                     else:
                         dist_cat = "very close"
 
-                    visible_blocked.append({"name": exit_name, "distance": dist_cat})
+                    # Use display name if registry available
+                    display_name = (
+                        self.exit_registry.get_display_name(exit_name)
+                        if self.exit_registry
+                        else exit_name
+                    )
+
+                    visible_blocked.append({"name": display_name, "distance": dist_cat})
 
         return visible_blocked
 

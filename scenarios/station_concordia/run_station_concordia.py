@@ -191,6 +191,10 @@ def run_simulation(
     if hasattr(runner.jps_sim, "agent_levels"):
         agent_levels = runner.jps_sim.agent_levels
 
+    # Log cache optimization summary
+    if hasattr(runner, "decision_processor"):
+        runner.decision_processor.log_cache_summary()
+
     ResultsWriter.save_final_results(
         decisions_file,
         runner.agent_decisions,

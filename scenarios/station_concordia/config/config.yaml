@@ -52,6 +52,11 @@ agents:
     - platform
     - concourse
 
+  # Distribution of static-knowledge profiles for agents
+  knowledge_profiles:
+    novice: 35.0
+    commuter: 65.0
+
 # Event configuration
 events:
   #- time: 30.0
@@ -103,6 +108,98 @@ output:
   agent_decisions: "agent_decisions.json"
   events: "events.json"
   statistics: "statistics.json"
+
+station:
+  # Human-readable labels for zone/level IDs — used in agent observations and memories.
+  # Keys are XML geometry IDs; values are the natural-language descriptions shown to agents.
+  zone_labels:
+    level_-1: "the underground platform level"
+    level_-2: "the lower underground level"
+    level_1:  "the upper concourse level"
+    platform_1: "Platform 1"
+    platform_2: "Platform 2"
+    platform_3: "Platform 3"
+    platform_4: "Platform 4"
+    concourse:  "the concourse"
+    platform_abc: "the platform near Escalators A, B and C"
+    platform_def: "the platform near Escalators D, E and F"
+
+  # UP escalators reachable from each platform zone (used for commuter valid-exits prompt).
+  platform_up_exits:
+    platform_abc:
+      - escalator_b_up
+      - escalator_c_up
+    platform_def:
+      - escalator_e_up
+      - escalator_f_up
+
+  # Street-level exits on level 0 (used for commuter valid-exits prompt on concourse).
+  street_exits:
+    - blackett_street
+    - grey_street
+    - eldon_square
+
+  # Fallback zone when an agent's zone cannot be determined from spawn position.
+  default_platform_zone: "platform_def"
+
+  # Rules for assigning initial_zone from spawn coordinates.
+  # Each level lists named zones with coordinate conditions (x_lt, x_gt, y_lt, y_gt).
+  # Zones without conditions and with default: true are used as a catch-all.
+  zone_boundaries:
+    "-1":
+      platform_abc:
+        x_lt: -15
+        y_gt: 30
+      platform_def:
+        default: true
+    "0":
+      concourse:
+        default: true
+
+  knowledge:
+    base_memories:
+      - "I am inside Monument station in central Newcastle."
+      - "This is a multi-level station - platforms are below, concourse is above."
+      - "Street exits are reached from the concourse level, not directly from platforms."
+      - "Public announcements, signs, and nearby passenger behavior are useful for route decisions."
+
+    profiles:
+      novice:
+        - "This is one of my first times in this station and I do not know all routes by memory."
+        - "I rely heavily on signs and follow-wayfinding when choosing where to go next."
+        - "If the situation is unclear, I prefer to pause briefly and gather more local information."
+      commuter:
+        - "I use this station often and know the general layout."
+        - "I know that UP escalators on my platform lead to the concourse, but I always use the nearest one visible to me."
+        - "I navigate by what I can see around me, using my general knowledge to help interpret signs and exits."
+
+    location_memories:
+      - when:
+          profiles: ["commuter"]
+          level_ids: ["-1"]
+          zones: ["platform_abc"]
+        memories:
+          - "On this platform, Escalator B (going up) and Escalator C (going up) lead to the concourse and street exits."
+          - "Escalator A goes down and does not lead toward the street exits."
+      - when:
+          profiles: ["commuter"]
+          level_ids: ["-1"]
+          zones: ["platform_def"]
+        memories:
+          - "On this platform, Escalator E (going up) and Escalator F (going up) lead to the concourse and street exits."
+          - "Escalator D goes down and does not lead toward the street exits."
+      - when:
+          profiles: ["novice"]
+          level_ids: ["-1"]
+          zones: ["platform_abc", "platform_def"]
+        memories:
+          - "From platform level, I should look for escalators marked UP in my immediate surroundings to reach the concourse exits."
+      - when:
+          level_ids: ["0"]
+          zones: ["concourse"]
+        memories:
+          - "I am on the concourse level. Street exits from here are: Blackett Street, Grey Street, and Eldon Square."
+          - "These exits lead directly to street level outside the station."
 
 # Video generation configuration
 video:

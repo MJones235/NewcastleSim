@@ -7,18 +7,21 @@ Handles agent decision-making logic including:
 - JSON response parsing and reasoning extraction
 - Action translation and decision recording
 - Route change detection and tracking
+- Intelligent prompt caching to reduce redundant LLM calls
 
 This module coordinates the cognitive layer (Concordia) decision-making process.
 """
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from concordia.typing import entity as entity_lib
 
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.decision.action_utils import extract_exit_name
+from scenarios.station_concordia.decision.prompt_cache import PromptCache
 
 logger = get_logger(__name__)
 
@@ -41,6 +44,7 @@ class DecisionProcessor:
         last_actions: dict[str, str],
         perf_timer,
         jps_sim=None,
+        agent_configs: list[dict] | None = None,
     ):
         """
         Initialize decision processor.
@@ -73,10 +77,134 @@ class DecisionProcessor:
         self.last_actions = last_actions
         self.perf_timer = perf_timer
         self.jps_sim = jps_sim
+        self._agent_cfg: dict[str, dict] = {cfg["id"]: cfg for cfg in (agent_configs or [])}
         # Asyncio lock for shared state modifications during parallel processing
         self._state_lock = asyncio.Lock()
 
+        # Initialize prompt cache for intelligent LLM call reduction
+        self.prompt_cache = PromptCache(enable_detailed_logging=True)
+        self.llm_calls_skipped = 0  # Statistics tracking
+        self.llm_calls_made = 0
+
+        # Read geometry-specific exit lists from station config rather than hardcoding.
+        # These are defined under station.platform_up_exits / station.street_exits /
+        # station.default_platform_zone in the YAML config.
+        self._PLATFORM_UP_EXITS: dict[str, list[str]] = station_layout.get("platform_up_exits", {})
+        self._STREET_EXIT_IDS: list[str] = station_layout.get("street_exits", [])
+        self._default_platform_zone: str = station_layout.get("default_platform_zone", "")
+
         logger.debug("DecisionProcessor initialized for parallel async processing")
+
+    def _get_valid_exits_section(
+        self, agent_id: str, observation: str, agent_level: str | None
+    ) -> str:
+        """Build a prompt section listing the valid exit names for this agent.
+
+        Commuters already know their platform's UP escalators (or all street exits on
+        level 0) from memory.  Novices only know exits they can currently see; if none
+        are visible they are directed to follow another agent instead.
+        """
+        registry = self.action_translator.exit_registry
+        valid_ids = set(registry.get_all_ids())
+        cfg = self._agent_cfg.get(agent_id, {})
+        profile = cfg.get("knowledge_profile", "novice")
+        initial_zone = cfg.get("initial_zone", self._default_platform_zone)
+
+        def _is_up_exit(eid: str) -> bool:
+            """Only upward exits lead toward street level — exclude down escalators."""
+            return not eid.endswith("_down")
+
+        if profile == "commuter":
+            if agent_level == "-1":
+                fallback = next(iter(self._PLATFORM_UP_EXITS), None)
+                exit_ids = self._PLATFORM_UP_EXITS.get(initial_zone) or (
+                    self._PLATFORM_UP_EXITS.get(fallback, []) if fallback else []
+                )
+            else:
+                # Level 0 or unknown: street exits
+                exit_ids = self._STREET_EXIT_IDS
+            exits = [registry.get_display_name(eid) for eid in exit_ids if eid in valid_ids]
+            if exits:
+                bullets = "".join(f"\n  \u2022 {e}" for e in exits)
+                return (
+                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (use exactly one of these) \u2550\u2550\u2550"
+                    f"{bullets}\n\n"
+                )
+        else:
+            # Novice: only UP exits whose display name appears in this observation
+            all_display = [
+                registry.get_display_name(eid) for eid in registry.get_all_ids() if _is_up_exit(eid)
+            ]
+            visible = [n for n in all_display if n in observation]
+            if visible:
+                bullets = "".join(f"\n  \u2022 {e}" for e in visible)
+                return (
+                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (only what you can currently see) \u2550\u2550\u2550"
+                    f"{bullets}\n\n"
+                )
+            else:
+                return (
+                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS \u2550\u2550\u2550\n"
+                    "No exits are visible to you yet. Do NOT use target_type='exit'.\n"
+                    "Follow someone (target_type='agent') or wait (target_type='current_position').\n\n"
+                )
+        return ""
+
+    def _get_following_constraint_text(self, observation: str) -> str:
+        """Build a hard movement constraint block when followers are detected.
+
+        Two cases:
+        1. Circular following — both agents follow each other: force exit choice.
+        2. One-way follower   — someone is following this agent: forbid targeting them.
+        """
+        constraints = []
+
+        # Case 1: circular — "You are following Person X, and Person X is following YOU."
+        circular = re.search(
+            r"You are following (Person (\w+)), and Person \2 is following YOU",
+            observation,
+        )
+        if circular:
+            person_label = circular.group(1)  # e.g. "Person 46"
+            agent_id_str = f"agent_{circular.group(2)}"  # e.g. "agent_46"
+            constraints.append(
+                f"\n\u26d4 CIRCULAR FOLLOWING — BREAK THE LOOP: You and {person_label} are "
+                f"following each other. Neither of you is heading toward an exit. "
+                f"You MUST do something different this turn. "
+                f"Do NOT set target_agent='{agent_id_str}'. "
+                f"Choose one of: (a) target_type='exit' if an exit is listed in VALID EXIT OPTIONS, "
+                f"(b) target_type='agent' toward a DIFFERENT person who is heading toward an exit, "
+                f"or (c) target_type='current_position' to stop and reorient."
+            )
+        else:
+            # Case 2: one-way followers — "⚠\ufe0f Person X is trying to follow YOU."
+            followers = re.findall(
+                r"\u26a0\ufe0f (Person (\w+)) is trying to follow YOU", observation
+            )
+            # Also handle plural: "Person X, Person Y are trying to follow YOU"
+            if not followers:
+                plural = re.search(r"\u26a0\ufe0f (.+?) are trying to follow YOU", observation)
+                if plural:
+                    followers = [
+                        (f"Person {m}", m) for m in re.findall(r"Person (\w+)", plural.group(1))
+                    ]
+            if followers:
+                names = ", ".join(p for p, _ in followers)
+                avoid = ", ".join(f"'agent_{n}'" for _, n in followers)
+                constraints.append(
+                    f"\n\u26a0\ufe0f FOLLOWER RULE: {names} is following YOU — you are their leader. "
+                    f"Do NOT set target_agent={avoid}. "
+                    f"You must lead: choose target_type='exit' using your own knowledge, "
+                    f"or follow a DIFFERENT person who is actually heading toward an exit."
+                )
+
+        if constraints:
+            return (
+                "\n\u2550\u2550\u2550 MOVEMENT CONSTRAINTS (READ FIRST) \u2550\u2550\u2550"
+                + "".join(constraints)
+                + "\n\n"
+            )
+        return ""
 
     def process_all_agents(
         self,
@@ -156,112 +284,137 @@ class DecisionProcessor:
         zones: list,
         current_sim_time: float,
     ):
-        """Process a single agent's decision (async)."""
+        """Process a single agent's decision (async) with intelligent prompt caching."""
         # Get agent's level and filter exits accordingly
         agent_level = None
         if self.jps_sim and hasattr(self.jps_sim, "agent_levels"):
             agent_level = self.jps_sim.agent_levels.get(agent_id)
 
-        # Get level-specific exits
-        if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
-            # Multi-level: get exits from agent's current level
-            level_sim = self.jps_sim.simulations.get(agent_level)
-            if level_sim:
-                exits = [
-                    {"name": name, "coords": coords}
-                    for name, coords in level_sim.exit_manager.evacuation_exits.items()
-                ]
-            else:
-                exits = []
-        else:
-            # Single-level: use all exits
-            exits = [
-                {"name": name, "coords": coords}
-                for name, coords in self.action_translator.exits.items()
-            ]
         try:
             # Get observation for this agent
             observation = observations.get(agent_id, "")
 
-            # Check if observation changed since last decision
-            observation_changed = (
-                agent_id not in self.last_observations
-                or self.last_observations[agent_id] != observation
+            # Build profile-aware valid exit options block
+            valid_exits_text = self._get_valid_exits_section(agent_id, observation, agent_level)
+
+            # Build follower constraint block (injected when circular/following detected)
+            following_constraint_text = self._get_following_constraint_text(observation)
+
+            # Build the action spec with prompt text
+            action_spec = entity_lib.ActionSpec(
+                call_to_action=(
+                    "DECIDE YOUR NEXT ACTION. Respond with ONLY this JSON:\n"
+                    "{{\n"
+                    '  "reasoning": "Why this action (1-2 sentences)",\n'
+                    '  "action_type": "wait" or "move",\n'
+                    '  "target_type": ONE OF: "current_position", "exit", "agent", "zone",\n'
+                    '  "target_agent": null (or agent_id like "agent_5"),\n'
+                    '  "exit_name": null (or the exit name EXACTLY as shown in your observations),\n'
+                    '  "zone_name": null (or zone name like "jps.platform_3"),\n'
+                    '  "wait_reason": null (or reason if waiting),\n'
+                    '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
+                    '  "message": null (or your spoken words),\n'
+                    '  "message_type": null (or "directed", "shout"),\n'
+                    "}}\n\n"
+                    "VALID target_type VALUES (ONLY these four):\n"
+                    "  'current_position' → Wait at your current location (action_type='wait')\n"
+                    "  'exit' → Move to an exit for evacuation (requires exit_name)\n"
+                    "  'agent' → Move toward another agent to follow/help (requires target_agent)\n"
+                    "  'zone' → Move to a specific area or platform (requires zone_name)\n\n"
+                    "═══ YOUR OPTIONS ═══\n"
+                    "WAITING (action_type='wait', target_type='current_position'):\n"
+                    "  Explain why in wait_reason (e.g. 'Waiting to see which way the crowd moves').\n\n"
+                    "MOVING (action_type='move', choose ONE target_type):\n"
+                    "  target_type='agent': Move toward another agent to follow them or help them\n"
+                    "    Set target_agent='agent_5' (the person's ID)\n"
+                    "  target_type='exit': Move to a specific exit\n"
+                    "    Prefer exits you can currently see; use memory if none are visible yet\n"
+                    "    If on platform level: choose the nearest UP escalator on your platform\n"
+                    "    If on concourse level: choose a street exit\n"
+                    "    Plan level-by-level: reach concourse first, then choose street exit\n"
+                    "  target_type='zone': Move to a specific platform or area\n"
+                    "    Set zone_name='jps.platform_3'\n\n"
+                    "═══ COMMUNICATION ═══\n"
+                    "message: Short phrase (keep it REAL, not narrated)\n"
+                    "message_type: 'directed' (to specific person), 'shout' (everyone nearby can hear)\n"
+                    "target_agent: If directed message, who are you talking to?\n\n"
+                    "═══ DECISION TREE ═══\n"
+                    "1. Am I injured or helping someone? YES→ stay together or coordinate (agent)\n"
+                    "2. Should I evacuate now? YES→ target_type='exit'\n"
+                    "3. Do I want to follow someone? YES→ target_type='agent'\n"
+                    "4. Else→ wait or move to a zone\n\n"
+                    f"Available zones: {zones}\n"
+                    f"{following_constraint_text}"
+                    f"{valid_exits_text}"
+                ),
+                output_type=entity_lib.OutputType.FREE,
             )
 
-            if observation_changed:
-                # Observation changed - provide to agent and call LLM
+            prompt_text = action_spec.call_to_action
+
+            # ===== INTELLIGENT PROMPT CACHING =====
+            # Check if we should call LLM or reuse cached decision
+            try:
+                received_messages = self.message_system.get_received_messages(agent_id)
+                messages_list = (
+                    [
+                        msg.get("message", str(msg)) if isinstance(msg, dict) else msg
+                        for msg in received_messages
+                    ]
+                    if received_messages
+                    else None
+                )
+            except Exception as e:
+                logger.debug(f"{agent_id}: Could not get messages: {e}")
+                messages_list = None
+
+            # Check cache to decide whether to call LLM
+            should_call_llm, cached_decision = self.prompt_cache.should_call_llm(
+                agent_id=agent_id,
+                observation=observation,
+                action_spec_text=prompt_text,
+                received_messages=messages_list,
+            )
+
+            llm_was_called = False  # Track whether LLM was called for decision record
+
+            if not should_call_llm and cached_decision:
+                # Reuse cached decision - no new information to act on
+                action = cached_decision
+                logger.info(
+                    f"{agent_id}: ✓ Prompt unchanged, reusing cached decision (saved LLM call)"
+                )
+                async with self._state_lock:
+                    self.llm_calls_skipped += 1
+            else:
+                # Call LLM - significant new information detected
                 with self.perf_timer.measure("agent_observe", is_parallel=True):
                     agent.observe(observation)
 
-                # Call LLM with clear, concise decision prompt
-                action_spec = entity_lib.ActionSpec(
-                    call_to_action=(
-                        "DECIDE YOUR NEXT ACTION. Respond with ONLY this JSON:\n"
-                        "{{\n"
-                        '  "reasoning": "Why this action (1-2 sentences)",\n'
-                        '  "action_type": "wait" or "move",\n'
-                        '  "target_type": ONE OF: "current_position", "exit", "agent", "zone",\n'
-                        '  "target_agent": null (or agent_id like "agent_5"),\n'
-                        '  "exit_name": null (or exit name like "jps.entrance_1"),\n'
-                        '  "zone_name": null (or zone name like "jps.platform_3"),\n'
-                        '  "wait_reason": null (or reason if waiting),\n'
-                        '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
-                        '  "message": null (or your spoken words),\n'
-                        '  "message_type": null (or "directed", "shout", "quiet"),\n'
-                        "}}\n\n"
-                        "VALID target_type VALUES (ONLY these four):\n"
-                        "  'current_position' → Wait at your current location (action_type='wait')\n"
-                        "  'exit' → Move to an exit for evacuation (requires exit_name)\n"
-                        "  'agent' → Move toward another agent to follow/help (requires target_agent)\n"
-                        "  'zone' → Move to a specific area or platform (requires zone_name)\n\n"
-                        "═══ YOUR OPTIONS ═══\n"
-                        "WAITING (action_type='wait', target_type='current_position'):\n"
-                        "  waiting_with_injured: Someone nearby is injured, stay with them\n"
-                        "  waiting_for_help: YOU are injured, need someone to help\n"
-                        "  seeking_information: Looking around for directions/info\n"
-                        "  observing_others: Watching what others do before deciding\n"
-                        "  assessing_situation: Thinking through options\n\n"
-                        "MOVING (action_type='move', choose ONE target_type):\n"
-                        "  target_type='agent': Move toward another agent to follow them or help them\n"
-                        "    Set target_agent='agent_5' (the person's ID)\n"
-                        "  target_type='exit': Evacuate through a specific exit\n"
-                        "    Set exit_name='jps.entrance_1'\n"
-                        "  target_type='zone': Move to a specific platform or area\n"
-                        "    Set zone_name='jps.platform_3'\n\n"
-                        "═══ COMMUNICATION ═══\n"
-                        "message: Short phrase (keep it REAL, not narrated)\n"
-                        "message_type: 'directed' (to specific person), 'shout' (urgent), 'quiet' (<3m only)\n"
-                        "target_agent: If directed/quiet message, who are you talking to?\n\n"
-                        "═══ DECISION TREE ═══\n"
-                        "1. Am I injured or helping someone? YES→ stay together or coordinate (agent)\n"
-                        "2. Do I want to approach or stay with someone? YES→ target_type='agent'\n"
-                        "3. Should I evacuate now? YES→ target_type='exit'\n"
-                        "4. Else→ wait or move to a zone\n\n"
-                        f"Available exits: {[e['name'] for e in exits]}\n"
-                        f"Available zones: {zones}\n"
-                    ),
-                    output_type=entity_lib.OutputType.FREE,
-                )
-
                 # Run the LLM call in a separate thread to avoid blocking
-                # (agent.act() is synchronous, so we use asyncio.to_thread)
                 with self.perf_timer.measure("agent_act_llm", is_parallel=True):
                     action = await asyncio.to_thread(agent.act, action_spec)
 
-                # Async-safe update of observation/action cache
+                # Cache the decision for future reuse
+                self.prompt_cache.cache_decision(agent_id, action)
+                llm_was_called = True
+
+                if should_call_llm and messages_list:
+                    logger.info(
+                        f"{agent_id}: ✓ Calling LLM (received {len(messages_list)} message(s))"
+                    )
+                elif should_call_llm:
+                    logger.info(f"{agent_id}: ✓ Calling LLM (observation changed significantly)")
+                else:
+                    logger.info(f"{agent_id}: ✓ Calling LLM (first decision)")
+
+                async with self._state_lock:
+                    self.llm_calls_made += 1
+
+                # Update observation/action cache
                 async with self._state_lock:
                     self.last_observations[agent_id] = observation
                     self.last_actions[agent_id] = action
-                logger.info(f"{agent_id}: Observation changed, calling LLM")
-            else:
-                # Observation unchanged - reuse last action without calling observe/act
-                # Async-safe read from action cache
-                async with self._state_lock:
-                    action = self.last_actions.get(
-                        agent_id, '{"action_type": "wait", "target_type": "current_position"}'
-                    )
-                logger.info(f"{agent_id}: Observation unchanged, reusing last action")
 
             # Parse JSON response
             with self.perf_timer.measure("parse_json_response", is_parallel=True):
@@ -276,6 +429,13 @@ class DecisionProcessor:
 
             with self.perf_timer.measure("translate_action", is_parallel=True):
                 translated = self.action_translator.translate(agent_id, action, position)
+
+            # Inject the LLM's own reasoning text into the translated dict so that
+            # the previous-decision memory shown to the agent next turn uses the
+            # agent's actual words rather than the translator's description.
+            llm_reasoning = reasoning.get("reasoning", "") if isinstance(reasoning, dict) else ""
+            if llm_reasoning:
+                translated["reasoning"] = llm_reasoning
 
             # Extract and deliver any message
             with self.perf_timer.measure("message_delivery", is_parallel=True):
@@ -302,7 +462,7 @@ class DecisionProcessor:
                 decision_record = {
                     "time": current_sim_time,
                     "observation": observation,
-                    "prompt": action_spec.call_to_action if observation_changed else "cached",
+                    "prompt": action_spec.call_to_action if llm_was_called else "cached",
                     "action": action,
                     "reasoning": reasoning,
                     "translated": translated,
@@ -364,3 +524,44 @@ class DecisionProcessor:
                 "situation": "Parse error",
                 "reasoning": response[:200],
             }
+
+    def on_agent_exit(self, agent_id: str) -> None:
+        """
+        Clean up cache when agent exits simulation.
+
+        Args:
+            agent_id: ID of exiting agent
+        """
+        self.prompt_cache.clear_agent(agent_id)
+        logger.debug(f"{agent_id}: Cache cleared on exit")
+
+    def get_cache_statistics(self) -> dict[str, Any]:
+        """
+        Get statistics about LLM call optimization.
+
+        Returns:
+            Dictionary with cache and call statistics
+        """
+        total_calls = self.llm_calls_made + self.llm_calls_skipped
+        skip_rate = (self.llm_calls_skipped / total_calls * 100) if total_calls > 0 else 0
+
+        return {
+            "llm_calls_made": self.llm_calls_made,
+            "llm_calls_skipped": self.llm_calls_skipped,
+            "total_decision_cycles": total_calls,
+            "skip_rate_percent": skip_rate,
+            "cache_stats": self.prompt_cache.get_statistics(),
+        }
+
+    def log_cache_summary(self) -> None:
+        """Log summary of cache statistics to console and logger."""
+        stats = self.get_cache_statistics()
+        logger.info("=" * 70)
+        logger.info("LLM CALL OPTIMIZATION SUMMARY (Prompt Caching)")
+        logger.info("=" * 70)
+        logger.info(f"  Total decision cycles: {stats['total_decision_cycles']}")
+        logger.info(f"  LLM calls made:        {stats['llm_calls_made']}")
+        logger.info(f"  LLM calls skipped:     {stats['llm_calls_skipped']} ✓")
+        logger.info(f"  Skip rate:             {stats['skip_rate_percent']:.1f}%")
+        logger.info(f"  Cache size:            {stats['cache_stats']['cached_agents']} agents")
+        logger.info("=" * 70)

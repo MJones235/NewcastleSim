@@ -170,6 +170,40 @@ class ObservationFormatter:
         return lines
 
     @staticmethod
+    def format_visible_exits(visible_exits: list[dict[str, str]]) -> list[str]:
+        """
+        Format visible exits for observation.
+
+        Args:
+            visible_exits: List of visible exit info dicts with name and distance
+
+        Returns:
+            List of formatted visible exit strings
+        """
+        if not visible_exits:
+            return []
+
+        # Group by distance category for cleaner presentation
+        by_distance = {"very close": [], "nearby": [], "visible in distance": []}
+        for exit_info in visible_exits:
+            dist_cat = exit_info.get("distance", "visible in distance")
+            if dist_cat in by_distance:
+                by_distance[dist_cat].append(exit_info["name"])
+
+        lines = []
+        if by_distance["very close"]:
+            exits_str = ", ".join(by_distance["very close"])
+            lines.append(f"You can see {exits_str} very close to you.")
+        if by_distance["nearby"]:
+            exits_str = ", ".join(by_distance["nearby"])
+            lines.append(f"You can see {exits_str} nearby.")
+        if by_distance["visible in distance"]:
+            exits_str = ", ".join(by_distance["visible in distance"])
+            lines.append(f"You can see {exits_str} in the distance.")
+
+        return lines
+
+    @staticmethod
     def format_blocked_exits(visible_blocked: list[dict[str, Any]]) -> list[str]:
         """
         Format visible blocked exits.

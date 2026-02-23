@@ -92,6 +92,31 @@ class AgentManager:
 
             # Store level_id in agent config for use during agent initialization
             agent_cfg["level_id"] = level_id
+            agent_cfg["start_position"] = start_pos
+            # Assign initial_zone from coordinate-based rules defined in
+            # config under station.zone_boundaries.
+            zone_boundaries = config.get("station", {}).get("zone_boundaries", {})
+            level_zones = zone_boundaries.get(str(level_id), {})
+            px, py = float(start_pos[0]), float(start_pos[1])
+            assigned_zone = None
+            default_zone = None
+            for zone_name, conditions in level_zones.items():
+                if conditions.get("default", False):
+                    default_zone = zone_name
+                    continue
+                x_lt = conditions.get("x_lt")
+                x_gt = conditions.get("x_gt")
+                y_lt = conditions.get("y_lt")
+                y_gt = conditions.get("y_gt")
+                if (
+                    (x_lt is None or px < x_lt)
+                    and (x_gt is None or px > x_gt)
+                    and (y_lt is None or py < y_lt)
+                    and (y_gt is None or py > y_gt)
+                ):
+                    assigned_zone = zone_name
+                    break
+            agent_cfg["initial_zone"] = assigned_zone or default_zone or "station"
 
             is_injured = i in injured_agents
 

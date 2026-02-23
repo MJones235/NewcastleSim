@@ -13,6 +13,9 @@ from typing import Any
 from concordia.language_model import language_model
 
 from scenarios.common.logger import get_logger
+from scenarios.station_concordia.translation.exit_name_registry import (
+    build_registry_from_station_layout,
+)
 
 logger = get_logger(__name__)
 
@@ -45,6 +48,9 @@ class ActionTranslator:
         self.exits = station_layout.get("exits", {})
         self.zones = station_layout.get("zones", {})
         self.zones_polygons = station_layout.get("zones_polygons", {})
+
+        # Build exit name registry for natural language resolution
+        self.exit_registry = build_registry_from_station_layout(station_layout, jps_sim)
 
     def translate(
         self, agent_id: str, action: str, current_position: tuple[float, float]
@@ -80,6 +86,22 @@ class ActionTranslator:
             target_type = data.get("target_type")
             exit_name = data.get("exit_name")
             zone_name = data.get("zone_name")
+
+            # Reject placeholder/invalid exit names that the LLM sometimes returns
+            _INVALID_EXIT_NAMES = {
+                "none",
+                "null",
+                "n/a",
+                "nearest exit",
+                "nearest",
+                "concourse",
+                "street exit",
+                "unknown",
+                "exit",
+                "",
+            }
+            if exit_name and str(exit_name).lower().strip() in _INVALID_EXIT_NAMES:
+                exit_name = None
             target_agent = data.get("target_agent")  # Agent ID to move toward or follow
             wait_reason = data.get("wait_reason")  # Phase 4.3: Information seeking
             speed = data.get("speed")  # Phase 4.3: Dynamic speed selection
@@ -112,32 +134,41 @@ class ActionTranslator:
                 }
 
             if action_type == "move" and target_type == "exit":
-                if exit_name == "nearest" or not exit_name:
-                    nearest_exit = self._find_nearest_exit(current_position, agent_level)
-                    return {
-                        "action_type": "move",
-                        "target": nearest_exit["coords"],
-                        "target_type": "exit",
-                        "exit_name": nearest_exit["name"],
-                        "confidence": 0.9,
-                        "reasoning": f"Moving to nearest exit ({nearest_exit['name']})",
-                        "speed": speed,  # Phase 4.3: Dynamic speed
-                    }
+                if exit_name:
+                    exit_coords = self._get_exit_coordinates(exit_name, agent_level)
+                    resolved_id = self.exit_registry.resolve_to_id(exit_name)
+                else:
+                    exit_coords = None
+                    resolved_id = None
 
-                # Look up exit coordinates (check both station_layout and multi-level exits)
-                exit_coords = self._get_exit_coordinates(exit_name, agent_level)
                 if exit_coords:
+                    # Log successful resolution if display name was converted
+                    if resolved_id and resolved_id != exit_name:
+                        logger.debug(
+                            f"Agent {agent_id} exit name '{exit_name}' → resolved to '{resolved_id}'"
+                        )
                     return {
                         "action_type": "move",
                         "target": exit_coords,
                         "target_type": "exit",
                         "exit_name": exit_name,
                         "confidence": 0.95,
-                        "reasoning": f"Moving to exit {exit_name}",
+                        "reasoning": f"Moving to known exit {exit_name}",
                         "speed": speed,  # Phase 4.3: Dynamic speed
                     }
                 else:
-                    logger.warning(f"Agent {agent_id} requested unknown exit '{exit_name}'")
+                    # Provide helpful error with resolution attempt
+                    if resolved_id:
+                        logger.warning(
+                            f"Agent {agent_id} exit name '{exit_name}' resolved to '{resolved_id}' "
+                            f"but no coordinates found (may not be on level {agent_level})"
+                        )
+                    else:
+                        known_names = self.exit_registry.get_all_display_names()[:5]
+                        logger.warning(
+                            f"Agent {agent_id} requested unknown exit '{exit_name}'. "
+                            f"Could not resolve to any exit ID. Examples of known exits: {known_names}"
+                        )
 
             if action_type == "move" and target_type == "zone" and zone_name:
                 zone_target = self._find_zone_target(zone_name.lower())
@@ -168,40 +199,48 @@ class ActionTranslator:
         self, exit_name: str, agent_level: str | None = None
     ) -> tuple[float, float] | None:
         """
-        Get exit coordinates, checking both station_layout and multi-level exits.
+        Get exit coordinates, resolving natural language names to technical IDs.
 
-        Handles exit name variations (with or without '_exit' suffix) that may come from LLM.
+        Handles exit name variations that may come from LLM:
+        - "Blackett Street" -> "blackett_street"
+        - "Grey Street Exit" -> "grey_street"
+        - "Escalator B" -> "escalator_b_up"
+        - "escalator b going up" -> "escalator_b_up"
 
         Args:
-            exit_name: Name of the exit
+            exit_name: Name of the exit (natural language or technical ID)
             agent_level: Agent's current level (for multi-level lookup)
 
         Returns:
             (x, y) coordinates or None if not found
         """
-        # First check station_layout (consolidated exits and street exits)
-        if exit_name in self.exits:
-            return self.exits[exit_name]
+        # Use registry to resolve natural language to technical ID
+        resolved_id = self.exit_registry.resolve_to_id(exit_name)
 
-        # Handle LLM variations: try without '_exit' suffix if present
-        base_name = exit_name[:-5] if exit_name.endswith("_exit") else exit_name
-        if base_name != exit_name and base_name in self.exits:
-            return self.exits[base_name]
+        if resolved_id is None:
+            # Log helpful message for debugging
+            logger.debug(
+                f"Could not resolve exit name '{exit_name}' to any known exit ID. "
+                f"Known exits: {list(self.exit_registry.get_all_ids())[:10]}"
+            )
+            return None
 
-        # Then check multi-level simulation exits (escalators, etc.) for agent's current level
+        # For multi-level simulations, ONLY return coordinates for exits on the agent's
+        # current level.  This prevents level -1 agents from being sent toward street exits
+        # that only exist on level 0 (and vice-versa).
         if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
             level_sim = self.jps_sim.simulations.get(agent_level)
             if level_sim and hasattr(level_sim, "exit_manager"):
-                # Get exit coordinates from exit_coordinates dict (includes escalators)
                 if hasattr(level_sim.exit_manager, "exit_coordinates"):
-                    exit_coords = level_sim.exit_manager.exit_coordinates.get(exit_name)
+                    exit_coords = level_sim.exit_manager.exit_coordinates.get(resolved_id)
                     if exit_coords:
                         return exit_coords
-                    # Try base name variant
-                    if base_name != exit_name:
-                        exit_coords = level_sim.exit_manager.exit_coordinates.get(base_name)
-                        if exit_coords:
-                            return exit_coords
+            # Exit not on this level — do not fall through to the global layout dict
+            return None
+
+        # Single-level simulation: check station_layout exits
+        if resolved_id in self.exits:
+            return self.exits[resolved_id]
 
         return None
 
