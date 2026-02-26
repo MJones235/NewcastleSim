@@ -144,12 +144,40 @@ class ExitManager:
                 f"entrance areas overlap with walkable areas."
             )
 
-        return evacuation_exits, evacuation_journeys
-        if failed_exits:
-            logger.warning(
-                f"Successfully created {len(evacuation_exits)} exits, "
-                f"but {len(failed_exits)} failed: {failed_exits}"
-            )
+        # Also register down-escalator exits on levels that have street exits (e.g. level 0).
+        # These escalator zones are not JPS entrance areas, but agents must be able to
+        # exit through them to trigger the level transfer down to the platform level.
+        # Only register "down" direction escalators to avoid polluting the exit set
+        # with the UP escalators that are merely arrival zones on this level.
+        escalator_pattern = re.compile(r"^L([^_]+)_esc_([a-f])_(down)$")
+        for zone_name, zone_polygon in self.walkable_areas.items():
+            match = escalator_pattern.match(zone_name)
+            if not match:
+                continue
+            level, esc_id, _direction = match.groups()
+            if level != self.level_id:
+                continue
+            exit_name = f"escalator_{esc_id}_down"
+            if exit_name in evacuation_exits:
+                continue  # Already registered (shouldn't happen, but be safe)
+            try:
+                coords = list(zone_polygon.exterior.coords)[:-1]
+                if len(coords) < 3:
+                    continue
+                exit_id = self.stage_manager.create_exit_at_coordinates(
+                    exit_name=exit_name, coords=coords
+                )
+                journey_id = self.stage_manager.create_simple_exit_journey(
+                    journey_name=f"journey_to_{exit_name}", exit_id=exit_id
+                )
+                evacuation_exits[exit_name] = exit_id
+                evacuation_journeys[exit_name] = journey_id
+                logger.info(
+                    f"Created down-escalator exit '{exit_name}' on level {self.level_id} "
+                    f"(from {zone_name}, exit={exit_id})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create down-escalator exit '{exit_name}': {e}")
 
         return evacuation_exits, evacuation_journeys
 
@@ -189,6 +217,17 @@ class ExitManager:
             # Only create exits for escalators on the current level
             if level != self.level_id:
                 logger.debug(f"Skipping escalator zone {zone_name} (not for level {self.level_id})")
+                continue
+
+            # On platform levels (no street exits), only UP escalators are departure exits.
+            # DOWN escalator zones on this level are *arrival* zones — agents spawn here
+            # after transferring from above.  Registering them as JuPedSim exit stages
+            # would immediately remove any newly-spawned agent and bounce them back up.
+            if direction == "down":
+                logger.debug(
+                    f"Skipping escalator zone {zone_name}: 'down' zones are arrival zones "
+                    f"on level {self.level_id}, not departure exits"
+                )
                 continue
 
             exit_name = f"escalator_{esc_id}_{direction}"

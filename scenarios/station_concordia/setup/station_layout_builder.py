@@ -57,13 +57,21 @@ class StationLayoutBuilder:
                     all_exits[name] = (poly.centroid.x, poly.centroid.y)
                     all_exit_polygons[name] = poly
 
-                # Add zones from this level
+                # Add zones from explicitly-typed platform areas (jupedsim.platform)
                 for zone_name, zone_poly in gm.platform_areas.items():
                     zone_key = (
                         f"{zone_name}_L{level_id}" if len(jps_sim.simulations) > 1 else zone_name
                     )
                     all_zones[zone_key] = StationLayoutBuilder._polygon_bounds(zone_poly)
                     all_zone_polygons[zone_key] = zone_poly
+
+                # Also harvest platform zones from walkable areas whose names start
+                # with "platform_" (the monument geometry uses jupedsim.walkable_area
+                # type for these polys, so they are not detected by platform_areas).
+                for wa_name, wa_poly in gm.walkable_areas_with_obstacles.items():
+                    if wa_name.startswith("platform_") and wa_name not in all_zone_polygons:
+                        all_zones[wa_name] = StationLayoutBuilder._polygon_bounds(wa_poly)
+                        all_zone_polygons[wa_name] = wa_poly
 
             # Add escalator exits from all levels
             for level_sim in jps_sim.simulations.values():
@@ -90,6 +98,50 @@ class StationLayoutBuilder:
                 jps_sim, gm.platform_areas
             )
 
+        # Build down-access exits: concourse-level escalator zones that lead to platforms.
+        # These are walkable-area level-transfer triggers, not JPS evacuation exits.
+        # Exposing them as named exits lets agents explicitly choose between escalators,
+        # stairs, lifts, etc. rather than having routing silently redirected.
+        import re as _re
+
+        down_access_exits: dict[str, tuple[float, float]] = {}
+        custom_exit_display_names: dict[str, str] = {}
+        platform_down_cfg: dict[str, list[str]] = config.get("station", {}).get(
+            "platform_down_exits", {}
+        )
+        zone_labels_cfg: dict[str, str] = config.get("station", {}).get("zone_labels", {})
+
+        if platform_down_cfg and hasattr(jps_sim, "simulations"):
+            # Invert config: esc_zone_name -> [platform names it serves]
+            esc_to_platforms: dict[str, list[str]] = {}
+            for plat_name, esc_zones in platform_down_cfg.items():
+                for esc_zone in esc_zones:
+                    esc_to_platforms.setdefault(esc_zone, []).append(plat_name)
+
+            level_0_areas = all_walkable_by_level.get("0", {})
+            for esc_zone, platforms in esc_to_platforms.items():
+                if esc_zone in level_0_areas:
+                    poly = level_0_areas[esc_zone]
+                    down_access_exits[esc_zone] = (poly.centroid.x, poly.centroid.y)
+
+                    m = _re.match(r"L[^_]+_esc_([a-f])_down", esc_zone)
+                    if m:
+                        letter = m.group(1).upper()
+                        # Only include specific-numbered platforms (platform_N) in the label
+                        plat_labels = sorted(
+                            {
+                                zone_labels_cfg.get(p, p.replace("_", " ").title())
+                                for p in platforms
+                                if _re.match(r"^platform_\d+$", p)
+                            }
+                        )
+                        if plat_labels:
+                            dest = " & ".join(plat_labels)
+                            display = f"Escalator {letter} (down to {dest})"
+                        else:
+                            display = f"Escalator {letter} (going down)"
+                        custom_exit_display_names[esc_zone] = display
+
         station_layout = {
             **config.get("station", {}),
             "exits": all_exits,
@@ -101,6 +153,10 @@ class StationLayoutBuilder:
             "zones": all_zones,
             "zones_polygons": all_zone_polygons,
             "obstacles": jps_sim.geometry_manager.obstacles,
+            # Concourse-level escalator zones leading to platforms (zone_name -> centroid)
+            "down_access_exits": down_access_exits,
+            # Custom display names for exits needing non-default labels
+            "custom_exit_display_names": custom_exit_display_names,
         }
 
         logger.info(

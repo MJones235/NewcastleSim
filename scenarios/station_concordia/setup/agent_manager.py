@@ -9,6 +9,7 @@ This module is responsible for:
 - Coordinating all agent-related operations
 """
 
+import random
 from typing import Any
 
 from scenarios.common.logger import get_logger
@@ -117,6 +118,16 @@ class AgentManager:
                     assigned_zone = zone_name
                     break
             agent_cfg["initial_zone"] = assigned_zone or default_zone or "station"
+
+            # Assign scenario role based on where the agent spawned:
+            #   concourse / other level-0 zone  -> heading to a platform to catch a train
+            #   platform zone                   -> 50 % waiting to board, 50 % just arrived
+            initial_zone = agent_cfg["initial_zone"]
+            if initial_zone in ("platform_abc", "platform_def"):
+                agent_cfg["agent_role"] = random.choice(["waiting_for_train", "just_arrived"])
+            else:
+                # concourse or any entrance zone
+                agent_cfg["agent_role"] = "heading_to_platform"
 
             is_injured = i in injured_agents
 

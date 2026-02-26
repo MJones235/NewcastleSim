@@ -5,8 +5,12 @@ Manages multiple levels (concourse + platforms) and agent transfers between them
 via escalators. Each level has its own JuPedSim simulation instance.
 """
 
+import math
+import random
 from pathlib import Path
 from typing import Any
+
+from shapely.geometry import Point
 
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.coordination.level_transfer_manager import LevelTransferManager
@@ -65,6 +69,19 @@ class MultiLevelJuPedSimulation:
         # Track which level each agent is on
         self.agent_levels: dict[str, str] = {}  # agent_id -> level_id
         self.recently_transferred_agents: set[str] = set()
+        # Positions used for transfers in the current step (cleared each step).
+        # Prevents same-step transfers from landing on top of each other.
+        self._pending_spawn_positions: list[tuple[float, float]] = []
+        # Transfers deferred because the landing zone was too crowded.
+        # Retried at the start of the next step.
+        self._deferred_transfers: list[tuple[str, str, str]] = (
+            []
+        )  # (agent_id, current_level, exit_name)
+        # Cooldown: minimum steps between consecutive transfers for the same agent.
+        # At dt=0.05 s, 100 steps = 5 seconds — enough time to walk clear of the
+        # arrival zone before a return trip could be triggered accidentally.
+        self._transfer_cooldown_steps: int = 100
+        self._last_transfer_step: dict[str, int] = {}  # agent_id -> step number
 
         # Setup level transfer manager
         self.transfer_manager = LevelTransferManager(network_path, levels)
@@ -149,6 +166,17 @@ class MultiLevelJuPedSimulation:
         Escalators are exits that connect two levels. When an agent exits through
         an escalator on one level, they are spawned into the target level.
         """
+        # Reset same-step spawn tracking so each step starts fresh.
+        self._pending_spawn_positions.clear()
+
+        # Retry any transfers that were deferred last step because the zone was crowded.
+        if self._deferred_transfers:
+            deferred = self._deferred_transfers[:]
+            self._deferred_transfers.clear()
+            for agent_id, from_level, esc_name in deferred:
+                logger.info(f"Retrying deferred transfer for {agent_id} via {esc_name}")
+                self._transfer_agent_through_escalator(agent_id, from_level, esc_name)
+
         # Check each level for agent exits
         for level_id, sim in self.simulations.items():
             exited_agents = sim.check_exits()
@@ -170,6 +198,19 @@ class MultiLevelJuPedSimulation:
                         del self.agent_levels[agent_id]
                     continue
 
+                # Enforce cooldown to prevent immediate bounce-back transfers.
+                last_step = self._last_transfer_step.get(agent_id, -self._transfer_cooldown_steps)
+                steps_since = self.current_step - last_step
+                if steps_since < self._transfer_cooldown_steps:
+                    remaining_s = (self._transfer_cooldown_steps - steps_since) * self.dt
+                    logger.warning(
+                        f"Agent {agent_id} tried to transfer again via {exit_name} only "
+                        f"{steps_since} steps after last transfer (cooldown: "
+                        f"{self._transfer_cooldown_steps} steps). "
+                        f"Ignoring for {remaining_s:.1f}s more."
+                    )
+                    continue
+
                 # This is an escalator exit - transfer to target level
                 logger.info(
                     f"Agent {agent_id} reached escalator exit {exit_name} on level {level_id} - initiating transfer"
@@ -180,58 +221,147 @@ class MultiLevelJuPedSimulation:
         """
         Transfer an agent from one level to another through an escalator.
 
-        Escalators have the same name on both levels (e.g., escalator_a_up exists on both level -1 and level 0).
-        When an agent exits through an escalator, they spawn at the same escalator zone on the other level.
+        The up/down suffix in the exit name is for agent decision-making only.
+        For the physical transfer, only the escalator letter (a-f) matters:
+        an agent exiting through any escalator_X_* on level N spawns at the
+        escalator_X zone on the other level, regardless of direction.
 
         Args:
             agent_id: Concordia agent ID
             current_level: Current level ID (e.g., "0" or "-1")
-            exit_name: Name of the escalator exit (e.g., "escalator_a_up")
+            exit_name: Name of the escalator exit (e.g., "escalator_a_down")
         """
-        # Determine target level (flip between 0 and -1)
-        if current_level == "0":
-            target_level = "-1"
-        elif current_level == "-1":
-            target_level = "0"
-        else:
-            logger.error(f"Unknown current level: {current_level}")
-            return
+        # Two levels only: flip between them
+        target_level = "-1" if current_level == "0" else "0"
 
-        # Make sure target level exists
         if target_level not in self.simulations:
             logger.warning(f"Target level {target_level} not in simulation")
             return
 
-        # Get the corresponding escalator zone on the target level
-        # The escalator has the same name on both levels (e.g., escalator_a_up)
-        target_zone_name = (
-            f"L{target_level}_esc_{exit_name.split('_')[1]}_{exit_name.split('_')[2]}"
+        # Extract escalator letter — only this matters for locating the arrival zone.
+        # exit_name format: "escalator_{letter}_{direction}" e.g. "escalator_a_down"
+        parts = exit_name.split("_")
+        if len(parts) < 2:
+            logger.error(f"Cannot parse escalator letter from '{exit_name}'")
+            return
+        esc_letter = parts[1]  # 'a', 'b', 'c', etc.
+
+        # Find whatever zone exists for this letter on the target level.
+        # Zone naming: L{level}_esc_{letter}_{direction}
+        target_zone_name = next(
+            (
+                k
+                for k in self.transfer_manager.escalator_zones
+                if k.startswith(f"L{target_level}_esc_{esc_letter}_")
+            ),
+            None,
         )
 
-        # Get spawn position inside the escalator zone
-        if target_zone_name not in self.transfer_manager.escalator_zones:
+        if target_zone_name is None:
             logger.error(
-                f"Target escalator zone not found for agent {agent_id}: {target_zone_name}"
-            )
-            logger.error(f"Available zones: {list(self.transfer_manager.escalator_zones.keys())}")
-            logger.error(
-                f"Exit name parsing: {exit_name} -> parts [1]={exit_name.split('_')[1]}, parts [2]={exit_name.split('_')[2]}"
+                f"No arrival zone found for escalator '{esc_letter}' on level {target_level}. "
+                f"Available: {list(self.transfer_manager.escalator_zones.keys())}"
             )
             return
 
         target_zone_poly = self.transfer_manager.escalator_zones[target_zone_name]
-        spawn_pos = (target_zone_poly.centroid.x, target_zone_poly.centroid.y)
+        centroid = target_zone_poly.centroid
+
+        # Erode the polygon by JuPedSim's minimum boundary clearance (0.2 m) plus a
+        # small margin so random candidates are never too close to walls.
+        BOUNDARY_MARGIN = 0.3
+        safe_zone = target_zone_poly.buffer(-BOUNDARY_MARGIN)
+        if safe_zone.is_empty:
+            # Polygon too small to erode — fall back to centroid only
+            safe_zone = target_zone_poly
+
+        # Choose a spawn position that doesn't collide with:
+        #   (a) agents already present on the target level, and
+        #   (b) other agents being transferred to this level in the same step.
+        MIN_AGENT_SEP = 0.4
+        existing_positions = (
+            list(self.simulations[target_level].get_all_agent_positions().values())
+            + self._pending_spawn_positions
+        )
+
+        spawn_pos = None
+        for _attempt in range(60):
+            angle = random.uniform(0, 2 * math.pi)
+            radius = random.uniform(0.0, 0.7)
+            candidate = (
+                centroid.x + math.cos(angle) * radius,
+                centroid.y + math.sin(angle) * radius,
+            )
+            if not safe_zone.contains(Point(candidate)):
+                continue
+            if any(
+                math.hypot(candidate[0] - p[0], candidate[1] - p[1]) < MIN_AGENT_SEP
+                for p in existing_positions
+            ):
+                continue
+            spawn_pos = candidate
+            break
+
+        if spawn_pos is None:
+            # Escalator zone is too crowded — wait until next step rather than crash.
+            logger.warning(
+                f"Cannot find free spawn point for {agent_id} in {target_zone_name} "
+                f"({len(existing_positions)} agents nearby). Deferring transfer."
+            )
+            self._deferred_transfers.append((agent_id, current_level, exit_name))
+            return
+
+        self._pending_spawn_positions.append(spawn_pos)
 
         # Spawn agent in target level
         try:
             self.simulations[target_level].add_agent(agent_id, spawn_pos)
             self.agent_levels[agent_id] = target_level
             self.recently_transferred_agents.add(agent_id)
+            self._last_transfer_step[agent_id] = self.current_step
 
             logger.info(
                 f"Transferred agent {agent_id} from level {current_level} to {target_level} "
                 f"through {exit_name} at {spawn_pos}"
             )
+
+            # Assign a temporary waypoint inside the main walkable area of the
+            # target level so the agent keeps moving until the next decision
+            # cycle gives them a real goal.  We do NOT route to an exit here
+            # because the agent may have transferred to catch a train, not to
+            # leave the building.
+            level_sim = self.simulations[target_level]
+            try:
+                walkable = level_sim.geometry_manager.walkable_areas_with_obstacles
+                # Use the largest walkable polygon as the roaming area
+                main_poly = max(walkable.values(), key=lambda p: p.area)
+                safe_main = main_poly.buffer(-0.3)
+                if safe_main.is_empty:
+                    safe_main = main_poly
+                main_centroid = safe_main.centroid
+                temp_pos = None
+                for _wp_attempt in range(60):
+                    wp_angle = random.uniform(0, 2 * math.pi)
+                    wp_radius = random.uniform(
+                        0.5, min(3.0, safe_main.bounds[2] - safe_main.bounds[0]) / 3
+                    )
+                    wp_candidate = (
+                        main_centroid.x + math.cos(wp_angle) * wp_radius,
+                        main_centroid.y + math.sin(wp_angle) * wp_radius,
+                    )
+                    if safe_main.contains(Point(wp_candidate)):
+                        temp_pos = wp_candidate
+                        break
+                if temp_pos is None:
+                    temp_pos = (main_centroid.x, main_centroid.y)
+                level_sim.set_agent_target(agent_id, temp_pos)
+                logger.debug(
+                    f"Assigned temporary waypoint {temp_pos} to "
+                    f"transferred agent {agent_id} on level {target_level}"
+                )
+            except Exception as dest_err:
+                logger.warning(f"Could not assign temporary waypoint to {agent_id}: {dest_err}")
+
         except Exception as e:
             logger.error(f"Failed to transfer agent {agent_id} to level {target_level}: {e}")
             # Remove agent from tracking if transfer failed

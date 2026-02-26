@@ -101,6 +101,11 @@ class ActionExecutor:
             if target_agent_id and action_type == "move":
                 target_position = self.state_queries.get_agent_position(target_agent_id)
                 if target_position is not None:
+                    if target_type == "agent":
+                        agent_pos = self.state_queries.get_agent_position(agent_id)
+                        target_position = self._safe_follow_target(
+                            agent_id, agent_pos, target_position
+                        )
                     target = target_position
                     translated_action["target"] = target
 
@@ -108,8 +113,6 @@ class ActionExecutor:
                     if target_type == "agent":
                         logger.debug(f"{agent_id} following {target_agent_id} at {target}")
 
-                        # Check if close enough to match speed (within 10m)
-                        agent_pos = self.state_queries.get_agent_position(agent_id)
                         if agent_pos is not None:
                             distance = (
                                 (agent_pos[0] - target_position[0]) ** 2
@@ -161,6 +164,84 @@ class ActionExecutor:
             import traceback
 
             logger.debug(f"Traceback: {traceback.format_exc()}")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_walkable_areas_for_agent(self, agent_id: str) -> dict:
+        """Return the walkable-area polygons for the level the agent is on."""
+        if hasattr(self.jps_sim, "simulations"):
+            agent_level = self.jps_sim.agent_levels.get(agent_id, "0")
+            sim = self.jps_sim.simulations.get(agent_level)
+            if sim is not None:
+                return sim.geometry_manager.walkable_areas_with_obstacles
+        elif hasattr(self.jps_sim, "geometry_manager"):
+            return self.jps_sim.geometry_manager.walkable_areas_with_obstacles
+        return {}
+
+    def _safe_follow_target(
+        self,
+        agent_id: str,
+        agent_pos: tuple[float, float] | None,
+        target_pos: tuple[float, float],
+    ) -> tuple[float, float]:
+        """
+        Return a waypoint toward *target_pos* that lies strictly inside a walkable
+        polygon.  If the raw target is already valid it is returned unchanged.
+
+        Otherwise, the nearest point on the boundary of the closest walkable
+        polygon is found and nudged 0.1 m inward toward that polygon's centroid.
+        Falls back to the agent's own position if everything else fails.
+        """
+        from shapely.geometry import Point
+        from shapely.ops import nearest_points as shapely_nearest_points
+
+        walkable_areas = self._get_walkable_areas_for_agent(agent_id)
+        if not walkable_areas:
+            return target_pos
+
+        p = Point(target_pos)
+
+        # Fast path: already inside
+        for poly in walkable_areas.values():
+            if poly.contains(p):
+                return target_pos
+
+        # Find the nearest point on the boundary of the closest polygon
+        best_poly = None
+        best_boundary_pt = None
+        best_dist = float("inf")
+        for poly in walkable_areas.values():
+            boundary_pt = shapely_nearest_points(p, poly)[1]
+            d = p.distance(boundary_pt)
+            if d < best_dist:
+                best_dist = d
+                best_boundary_pt = boundary_pt
+                best_poly = poly
+
+        if best_poly is None or best_boundary_pt is None:
+            return agent_pos if agent_pos is not None else target_pos
+
+        # Nudge the boundary point slightly inward toward the polygon centroid
+        cx, cy = best_poly.centroid.x, best_poly.centroid.y
+        bx, by = best_boundary_pt.x, best_boundary_pt.y
+        dx, dy = cx - bx, cy - by
+        length = (dx * dx + dy * dy) ** 0.5
+        if length > 0:
+            _nudge = 0.1  # metres inward
+            candidate = (bx + dx / length * _nudge, by + dy / length * _nudge)
+            if best_poly.contains(Point(candidate)):
+                logger.debug(
+                    f"[FOLLOW] {agent_id}: target {target_pos} outside walkable area; "
+                    f"snapped to nearest interior point {candidate}"
+                )
+                return candidate
+
+        # Centroid nudge landed outside (very thin polygon edge case) - stay put
+        fallback = agent_pos if agent_pos is not None else target_pos
+        logger.debug(f"[FOLLOW] {agent_id}: nearest-point snap failed; using fallback {fallback}")
+        return fallback
 
     def _handle_move_action(self, agent_id: str, translated_action: dict[str, Any], target):
         """Handle move action: agent moving to exit, waypoint, or toward another agent."""

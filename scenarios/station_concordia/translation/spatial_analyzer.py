@@ -36,6 +36,10 @@ class SpatialAnalyzer:
         self.exits_polygons = station_layout.get("exits_polygons", {})
         self.walkable_areas = station_layout.get("walkable_areas", {})
         self.exit_registry = exit_registry
+        # Concourse-level down-escalator zones (zone_name -> centroid coords)
+        self.down_access_exits: dict[str, tuple[float, float]] = station_layout.get(
+            "down_access_exits", {}
+        )
 
     def identify_zone(self, position: tuple[float, float]) -> str:
         """
@@ -243,12 +247,16 @@ class SpatialAnalyzer:
         if agent_level and jps_sim and hasattr(jps_sim, "simulations"):
             level_sim = jps_sim.simulations.get(agent_level)
             if level_sim:
-                # Get all exits on this level (street exits + escalators)
+                # Get all exits on this level (street exits + up escalators)
                 for exit_name in level_sim.exit_manager.evacuation_exits.keys():
                     if exit_name in level_sim.exit_manager.exit_coordinates:
                         exits_to_check[exit_name] = level_sim.exit_manager.exit_coordinates[
                             exit_name
                         ]
+            # Level 0: also add down-access escalator zones (not in evacuation_exits;
+            # they are walkable-area level-transfer triggers)
+            if agent_level == "0" and self.down_access_exits:
+                exits_to_check.update(self.down_access_exits)
         else:
             # Single-level or no level info: use all exits
             exits_to_check = self.exits

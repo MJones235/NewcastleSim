@@ -52,6 +52,18 @@ class ActionTranslator:
         # Build exit name registry for natural language resolution
         self.exit_registry = build_registry_from_station_layout(station_layout, jps_sim)
 
+        # Down-access escalator zones on the concourse (level 0) that lead to platforms.
+        # Agents can now explicitly choose these as exits; this dict provides their
+        # coordinates for translation.
+        self._level0_down_esc_centroids: dict[str, tuple[float, float]] = station_layout.get(
+            "down_access_exits", {}
+        )
+        # Keep a mapping from platform zone name -> down escalator zone for the
+        # safety-net redirect (catches LLM hallucinations of platform zones on level 0).
+        self._platform_down_exits: dict[str, list[str]] = station_layout.get(
+            "platform_down_exits", {}
+        )
+
     def translate(
         self, agent_id: str, action: str, current_position: tuple[float, float]
     ) -> dict[str, Any]:
@@ -173,14 +185,41 @@ class ActionTranslator:
             if action_type == "move" and target_type == "zone" and zone_name:
                 zone_target = self._find_zone_target(zone_name.lower())
                 if zone_target:
-                    zone_name, zone_coords = zone_target
+                    zone_name_resolved, zone_coords = zone_target
+                    # Safety net: if a level-0 agent somehow requests a platform zone
+                    # (which is physically on level -1), redirect to the appropriate
+                    # down-access escalator rather than sending them to invalid coords.
+                    import re as _re
+
+                    if agent_level == "0" and _re.match(r"^platform_", zone_name_resolved.lower()):
+                        # Look up the correct escalator for this specific platform
+                        down_zones = self._platform_down_exits.get(zone_name_resolved.lower(), [])
+                        if not down_zones:
+                            # Fall back to any available down escalator
+                            down_zones = list(self._level0_down_esc_centroids.keys())[:1]
+                        for esc_zone in down_zones:
+                            esc_coords = self._level0_down_esc_centroids.get(esc_zone)
+                            if esc_coords:
+                                logger.warning(
+                                    f"{agent_id} (level 0) requested platform zone "
+                                    f"'{zone_name_resolved}' — redirecting to {esc_zone}"
+                                )
+                                return {
+                                    "action_type": "move",
+                                    "target": esc_coords,
+                                    "target_type": "zone",
+                                    "zone_name": zone_name_resolved,
+                                    "confidence": 0.6,
+                                    "reasoning": "Redirected from platform zone to down escalator",
+                                    "speed": speed,
+                                }
                     return {
                         "action_type": "move",
                         "target": zone_coords,
                         "target_type": "zone",
-                        "zone_name": zone_name,
+                        "zone_name": zone_name_resolved,
                         "confidence": 0.9,
-                        "reasoning": f"Moving to zone {zone_name}",
+                        "reasoning": f"Moving to zone {zone_name_resolved}",
                         "speed": speed,  # Phase 4.3: Dynamic speed
                     }
 
@@ -225,17 +264,41 @@ class ActionTranslator:
             )
             return None
 
-        # For multi-level simulations, ONLY return coordinates for exits on the agent's
-        # current level.  This prevents level -1 agents from being sent toward street exits
-        # that only exist on level 0 (and vice-versa).
+        # For multi-level simulations, only return coordinates for exits on the
+        # agent's current level.
         if agent_level and self.jps_sim and hasattr(self.jps_sim, "simulations"):
             level_sim = self.jps_sim.simulations.get(agent_level)
-            if level_sim and hasattr(level_sim, "exit_manager"):
-                if hasattr(level_sim.exit_manager, "exit_coordinates"):
-                    exit_coords = level_sim.exit_manager.exit_coordinates.get(resolved_id)
-                    if exit_coords:
-                        return exit_coords
-            # Exit not on this level — do not fall through to the global layout dict
+            level_exits = (
+                level_sim.exit_manager.exit_coordinates
+                if level_sim and hasattr(level_sim, "exit_manager")
+                else {}
+            )
+
+            # 1. Direct lookup by resolved ID (covers street exits + exact escalator IDs)
+            if resolved_id in level_exits:
+                return level_exits[resolved_id]
+
+            # 2. Escalator: only the letter matters.  The registry may have resolved to
+            #    the wrong direction for this level (e.g. "Escalator B" → escalator_b_up
+            #    but the agent is on level 0 where only _down escalators are exits).
+            #    Also handles zone-name form: L0_esc_d_down → letter 'd'.
+            #    Find any escalator with the same letter that IS valid on this level.
+            import re as _re
+
+            m = _re.match(r"^escalator_([a-f])_(?:up|down)$", resolved_id) or _re.match(
+                r"^L[^_]+_esc_([a-f])_(?:up|down)$", resolved_id
+            )
+            if m:
+                letter = m.group(1)
+                for key, coords in level_exits.items():
+                    if _re.match(rf"^escalator_{letter}_(?:up|down)$", key):
+                        logger.debug(
+                            f"Escalator '{resolved_id}' not on level {agent_level} "
+                            f"— using '{key}' (same letter, valid on this level)"
+                        )
+                        return coords
+
+            # Exit not available on this level
             return None
 
         # Single-level simulation: check station_layout exits

@@ -46,13 +46,13 @@ agents:
     min: 18
     max: 75
 
-  # Spawn zones - agents distributed across both levels proportionally by area
-  # ~54% spawn on platforms (level -1), ~46% on concourse (level 0)
+  # Spawn zones - agents distributed across concourse/entrances and platforms
+  # Concourse/entrance agents: heading to a platform to catch a train
+  # Platform agents: 50% waiting to board, 50% just arrived and leaving
   spawn_zones:
     - concourse
-    - blackett_street
-    - grey_street
-    - eldon_square
+    - platform_abc
+    - platform_def
 
   # Distribution of static-knowledge profiles for agents
   knowledge_profiles:
@@ -61,19 +61,19 @@ agents:
 
 # Event configuration
 events:
-  # Simple evacuation event
-  - time: 5.0
-    message: "ALERT: Emergency evacuation. Exit immediately via nearest exit!"
+  # A single global event: the fire alarm is sounding
+  - time: 15.0
+    message: "The fire alarm is sounding throughout the station.  You cannot see any evidence of a fire."
 
-# Test scenarios - disabled for basic evacuation test
+# Test scenarios - disabled
 test_scenarios:
   blocked_exit:
     enabled: false
-    description: "Disabled for basic evacuation test"
+    description: "Disabled"
 
   help_behavior:
     enabled: false
-    description: "Disabled for basic evacuation test"
+    description: "Disabled"
 
 # LLM configuration
 # Note: Credentials are loaded from .env file
@@ -112,6 +112,24 @@ station:
     platform_def:
       - escalator_e_up
       - escalator_f_up
+
+  # DOWN escalator zones on level 0 that lead to each platform zone.
+  # Values are L0_esc_* walkable area names that trigger level transfer when entered.
+  # platform_abc (Platforms 3 & 4) is reached via Escalator A (going down).
+  # platform_def (Platforms 1 & 2) is reached via Escalator D (going down).
+  platform_down_exits:
+    platform_abc:
+      - L0_esc_a_down
+    platform_def:
+      - L0_esc_d_down
+    platform_1:
+      - L0_esc_d_down
+    platform_2:
+      - L0_esc_d_down
+    platform_3:
+      - L0_esc_a_down
+    platform_4:
+      - L0_esc_a_down
 
   # Street-level exits on level 0 (used for commuter valid-exits prompt on concourse).
   street_exits:
@@ -178,6 +196,8 @@ station:
         memories:
           - "I am on the concourse level. From here, street exits are: Blackett Street, Grey Street, and Eldon Square."
           - "These are the final exits to leave the station and reach street level."
+          - "To reach Platforms 3 and 4, I use 'Escalator A (down to Platforms 3 & 4)'."
+          - "To reach Platforms 1 and 2, I use 'Escalator D (down to Platforms 1 & 2)'."
 
 # Video generation configuration
 video:

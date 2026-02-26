@@ -14,6 +14,19 @@ from scenarios.common.station_agent import PERSONALITY_TYPES
 
 logger = get_logger(__name__)
 
+# Trip purposes for agents — used in initial goal/memory injection
+_TRIP_PURPOSES = [
+    "work",
+    "school",
+    "a shopping trip in the city centre",
+    "a medical appointment",
+    "a visit to family",
+    "a university lecture",
+    "a day out in the city",
+    "a job interview",
+    "a meeting in the city centre",
+]
+
 
 class AgentFactory:
     """Handles creation of agent configurations."""
@@ -103,6 +116,10 @@ class AgentFactory:
         gender = random.choice(["male", "female"])
         risk_tolerance = random.choice(["low", "moderate", "high"])
 
+        # Scenario purpose: which platform and why they are travelling
+        target_platform = random.randint(1, 4)
+        trip_purpose = random.choice(_TRIP_PURPOSES)
+
         return {
             "id": agent_id,
             "name": f"Agent {agent_index}",
@@ -114,6 +131,9 @@ class AgentFactory:
             "initial_zone": "platform",
             "destination": "exit",
             "is_injured": is_injured,
+            "target_platform": target_platform,
+            "trip_purpose": trip_purpose,
+            # agent_role is assigned later by AgentManager once the spawn zone is known
         }
 
     @staticmethod

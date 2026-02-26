@@ -296,34 +296,15 @@ class HybridSimulationRunner:
                     # Check for agents who have exited and remove them
                     self.exit_tracker.check_exited_agents(self.current_sim_time, self.current_step)
 
-                    # Force immediate decision for agents who just transferred levels
+                    # Drain the recently-transferred set.  Transferred agents are
+                    # given a temporary destination so they keep moving
                     if hasattr(self.jps_sim, "consume_recently_transferred_agents"):
                         transferred_agents = self.jps_sim.consume_recently_transferred_agents()
                         if transferred_agents:
                             logger.info(
-                                f"Processing post-transfer decisions for: {transferred_agents}"
+                                f"Transferred agents will decide at next decision cycle: "
+                                f"{transferred_agents}"
                             )
-                            with self.perf_timer.measure("post_transfer_decisions"):
-                                observations = (
-                                    self.observation_coordinator.generate_all_observations(
-                                        self.current_sim_time
-                                    )
-                                )
-                                target_agents = [
-                                    agent_id
-                                    for agent_id in transferred_agents
-                                    if agent_id in self.concordia_agents
-                                    and agent_id not in self.exited_agents
-                                ]
-                                if target_agents:
-                                    logger.info(
-                                        f"Making post-transfer decisions for {len(target_agents)} agents: {target_agents}"
-                                    )
-                                    self.decision_processor.process_all_agents(
-                                        observations,
-                                        self.current_sim_time,
-                                        agent_ids=target_agents,
-                                    )
 
                     # Check if it's time for Concordia decisions
                     if self._should_make_decisions():

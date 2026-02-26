@@ -91,9 +91,38 @@ class DecisionProcessor:
         # station.default_platform_zone in the YAML config.
         self._PLATFORM_UP_EXITS: dict[str, list[str]] = station_layout.get("platform_up_exits", {})
         self._STREET_EXIT_IDS: list[str] = station_layout.get("street_exits", [])
+        self._DOWN_ACCESS_EXIT_IDS: list[str] = list(
+            station_layout.get("down_access_exits", {}).keys()
+        )
         self._default_platform_zone: str = station_layout.get("default_platform_zone", "")
 
         logger.debug("DecisionProcessor initialized for parallel async processing")
+
+    def _build_zones_section(self, zones: list[str], agent_level: str | None = None) -> str:
+        """Build the AVAILABLE ZONES block for the prompt.
+
+        Uses zone_labels from station config to show human-readable names alongside
+        the technical zone_name the LLM must copy verbatim into its JSON response.
+        Returns an empty string when no zones are configured.
+
+        Platform zones (platform_N) are suppressed for level-0 (concourse) agents
+        because those zones are physically on level -1 and cannot be walked to
+        directly — agents should instead choose a down escalator exit.
+        """
+        if not zones:
+            return ""
+        zone_labels: dict[str, str] = self.station_layout.get("zone_labels", {})
+        lines = []
+        for z in zones:
+            # Hide platform-level zones from concourse agents
+            if agent_level == "0" and re.match(r"^platform_", z):
+                continue
+            label = zone_labels.get(z, z.replace("_", " ").title())
+            lines.append(f"  \u2022 {label} (zone_name='{z}')")
+        if not lines:
+            return ""
+        bullets = "\n".join(lines)
+        return "\n\u2550\u2550\u2550 AVAILABLE ZONES \u2550\u2550\u2550\n" f"{bullets}\n\n"
 
     def _get_valid_exits_section(
         self, agent_id: str, observation: str, agent_level: str | None
@@ -110,9 +139,20 @@ class DecisionProcessor:
         profile = cfg.get("knowledge_profile", "novice")
         initial_zone = cfg.get("initial_zone", self._default_platform_zone)
 
-        def _is_up_exit(eid: str) -> bool:
-            """Only upward exits lead toward street level — exclude down escalators."""
-            return not eid.endswith("_down")
+        def _is_standard_exit(eid: str) -> bool:
+            """Only include exits that are valid departure points for the agent's level.
+            - Level 0 (concourse): street exits + down escalators only (no up escalators)
+            - Level -1 (platform): up escalators only (no down escalators, no street exits)
+            - Unknown level: exclude escalator_X_down (legacy safe default)
+            """
+            if agent_level == "0":
+                # Concourse: bar up-escalators (they are arrival zones here, not exits)
+                return not re.match(r"^escalator_[a-f]_up$", eid)
+            elif agent_level == "-1":
+                # Platform: bar down-escalators (they are arrival zones here, not exits)
+                return not re.match(r"^escalator_[a-f]_down$", eid)
+            # Unknown level: keep original safe default
+            return not re.match(r"^escalator_[a-f]_down$", eid)
 
         if profile == "commuter":
             if agent_level == "-1":
@@ -120,20 +160,30 @@ class DecisionProcessor:
                 exit_ids = self._PLATFORM_UP_EXITS.get(initial_zone) or (
                     self._PLATFORM_UP_EXITS.get(fallback, []) if fallback else []
                 )
+                exits = [registry.get_display_name(eid) for eid in exit_ids if eid in valid_ids]
+                if exits:
+                    bullets = "".join(f"\n  \u2022 {e}" for e in exits)
+                    return (
+                        "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (use exactly one of these) \u2550\u2550\u2550"
+                        f"{bullets}\n\n"
+                    )
             else:
-                # Level 0 or unknown: street exits
-                exit_ids = self._STREET_EXIT_IDS
-            exits = [registry.get_display_name(eid) for eid in exit_ids if eid in valid_ids]
-            if exits:
-                bullets = "".join(f"\n  \u2022 {e}" for e in exits)
-                return (
-                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (use exactly one of these) \u2550\u2550\u2550"
-                    f"{bullets}\n\n"
-                )
+                # Level 0: include both down-access escalators (to reach platforms)
+                # and street exits (for evacuation). Agent decides which to use.
+                combined_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
+                exits = [registry.get_display_name(eid) for eid in combined_ids if eid in valid_ids]
+                if exits:
+                    bullets = "".join(f"\n  \u2022 {e}" for e in exits)
+                    return (
+                        "\n\u2550\u2550\u2550 EXITS AVAILABLE FROM THIS LEVEL \u2550\u2550\u2550"
+                        f"{bullets}\n\n"
+                    )
         else:
-            # Novice: only UP exits whose display name appears in this observation
+            # Novice: only exits whose display name appears in this observation
             all_display = [
-                registry.get_display_name(eid) for eid in registry.get_all_ids() if _is_up_exit(eid)
+                registry.get_display_name(eid)
+                for eid in registry.get_all_ids()
+                if _is_standard_exit(eid)
             ]
             visible = [n for n in all_display if n in observation]
             if visible:
@@ -142,12 +192,23 @@ class DecisionProcessor:
                     "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (only what you can currently see) \u2550\u2550\u2550"
                     f"{bullets}\n\n"
                 )
-            else:
-                return (
-                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS \u2550\u2550\u2550\n"
-                    "No exits are visible to you yet. Do NOT use target_type='exit'.\n"
-                    "Follow someone (target_type='agent') or wait (target_type='current_position').\n\n"
-                )
+            elif agent_level != "-1":
+                # On the concourse: fall back to street exits + down escalators from memory
+                fallback_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
+                fallback = [
+                    registry.get_display_name(eid) for eid in fallback_ids if eid in valid_ids
+                ]
+                if fallback:
+                    bullets = "".join(f"\n  \u2022 {e}" for e in fallback)
+                    return (
+                        "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (known from your station memory) \u2550\u2550\u2550"
+                        f"{bullets}\n\n"
+                    )
+            return (
+                "\n\u2550\u2550\u2550 VALID EXIT OPTIONS \u2550\u2550\u2550\n"
+                "No exits are visible to you yet. Do NOT use target_type='exit'.\n"
+                "Follow someone (target_type='agent') or wait (target_type='current_position').\n\n"
+            )
         return ""
 
     def _get_following_constraint_text(self, observation: str) -> str:
@@ -300,6 +361,42 @@ class DecisionProcessor:
             # Build follower constraint block (injected when circular/following detected)
             following_constraint_text = self._get_following_constraint_text(observation)
 
+            # Pre-compute zones section so we can suppress the 'zone' target_type when
+            # no zones are available on the agent's current level (e.g. level-0 agents
+            # whose only navigable targets are escalator/street exits, not zone areas).
+            zones_section = self._build_zones_section(zones, agent_level)
+            has_zones = bool(zones_section.strip())
+
+            # The 'zone' target_type is only valid when AVAILABLE ZONES is non-empty.
+            zone_target_type_line = (
+                '  "target_type": ONE OF: "current_position", "exit", "agent", "zone",\n'
+                if has_zones
+                else '  "target_type": ONE OF: "current_position", "exit", "agent",\n'
+            )
+            zone_name_example = (
+                '  "zone_name": null (or zone name EXACTLY as shown in AVAILABLE ZONES),\n'
+                if has_zones
+                else '  "zone_name": null,\n'
+            )
+            # target_type listing and movement instructions
+            zone_valid_value = (
+                "  'zone' → Move to a specific nearby area (requires zone_name from AVAILABLE ZONES)\n\n"
+                if has_zones
+                else ""
+            )
+            zone_move_guidance = (
+                "  target_type='zone': Move to a specific area\n"
+                "    Set zone_name exactly as shown in AVAILABLE ZONES below\n"
+                if has_zones
+                else ""
+            )
+            zone_decision_tree = (
+                "4. Do I want to reach a specific nearby area? YES→ target_type='zone'\n"
+                "5. Else→ wait\n\n"
+                if has_zones
+                else "4. Else→ wait\n\n"
+            )
+
             # Build the action spec with prompt text
             action_spec = entity_lib.ActionSpec(
                 call_to_action=(
@@ -307,34 +404,33 @@ class DecisionProcessor:
                     "{{\n"
                     '  "reasoning": "Why this action (1-2 sentences)",\n'
                     '  "action_type": "wait" or "move",\n'
-                    '  "target_type": ONE OF: "current_position", "exit", "agent", "zone",\n'
+                    f"{zone_target_type_line}"
                     '  "target_agent": null (or agent_id like "agent_5"),\n'
                     '  "exit_name": null (or the exit name EXACTLY as shown in your observations),\n'
-                    '  "zone_name": null (or zone name like "jps.platform_3"),\n'
+                    f"{zone_name_example}"
                     '  "wait_reason": null (or reason if waiting),\n'
                     '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
                     '  "message": null (or your spoken words),\n'
                     '  "message_type": null (or "directed", "shout"),\n'
                     "}}\n\n"
-                    "VALID target_type VALUES (ONLY these four):\n"
+                    f"VALID target_type VALUES:\n"
                     "  'current_position' → Wait at your current location (action_type='wait')\n"
-                    "  'exit' → Move to an exit for evacuation (requires exit_name)\n"
+                    "  'exit' → Move to an exit for evacuation or to change level (requires exit_name)\n"
                     "  'agent' → Move toward another agent to follow/help (requires target_agent)\n"
-                    "  'zone' → Move to a specific area or platform (requires zone_name)\n\n"
+                    f"{zone_valid_value}"
                     "═══ YOUR OPTIONS ═══\n"
                     "WAITING (action_type='wait', target_type='current_position'):\n"
                     "  Explain why in wait_reason (e.g. 'Waiting to see which way the crowd moves').\n\n"
                     "MOVING (action_type='move', choose ONE target_type):\n"
                     "  target_type='agent': Move toward another agent to follow them or help them\n"
                     "    Set target_agent='agent_5' (the person's ID)\n"
-                    "  target_type='exit': Move to a specific exit\n"
+                    "  target_type='exit': Move to an exit for evacuation or to change level\n"
                     "    Prefer exits you can currently see; use memory if none are visible yet\n"
-                    "    If on platform level: choose the nearest UP escalator on your platform\n"
-                    "    If on concourse level: choose a street exit\n"
-                    "    Plan level-by-level: reach concourse first, then choose street exit\n"
-                    "  target_type='zone': Move to a specific platform or area\n"
-                    "    Set zone_name='jps.platform_3'\n\n"
-                    "═══ COMMUNICATION ═══\n"
+                    "    If on platform level: choose a UP escalator to reach the concourse\n"
+                    "    If on concourse level: choose a DOWN escalator to reach platforms, or a street exit to leave\n"
+                    "    Plan level-by-level: use escalators to change level, then choose your destination\n"
+                    f"{zone_move_guidance}"
+                    "\n═══ COMMUNICATION ═══\n"
                     "message: Short phrase (keep it REAL, not narrated)\n"
                     "message_type: 'directed' (to specific person), 'shout' (everyone nearby can hear)\n"
                     "target_agent: If directed message, who are you talking to?\n\n"
@@ -342,8 +438,8 @@ class DecisionProcessor:
                     "1. Am I injured or helping someone? YES→ stay together or coordinate (agent)\n"
                     "2. Should I evacuate now? YES→ target_type='exit'\n"
                     "3. Do I want to follow someone? YES→ target_type='agent'\n"
-                    "4. Else→ wait or move to a zone\n\n"
-                    f"Available zones: {zones}\n"
+                    f"{zone_decision_tree}"
+                    f"{zones_section}"
                     f"{following_constraint_text}"
                     f"{valid_exits_text}"
                 ),

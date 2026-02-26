@@ -22,6 +22,29 @@ class CrowdAnalyzer:
     - Crowd density classification
     """
 
+    @staticmethod
+    def _classify_destination(target_exit: str | None) -> str | None:
+        """
+        Classify a raw destination key into a human-readable category.
+
+        Args:
+            target_exit: Raw exit/zone key stored in agent_destinations
+
+        Returns:
+            Human-readable destination category, or None if unknown
+        """
+        if not target_exit:
+            return None
+        tl = target_exit.lower()
+        if "escalator" in tl:
+            return "the escalators"
+        if tl.startswith("platform_"):
+            num = tl.split("_", 1)[1]
+            return f"Platform {num}"
+        # Street exits and other named exits
+        readable = target_exit.replace("_", " ").title()
+        return readable
+
     def __init__(self, exits: dict[str, tuple[float, float]]):
         """
         Initialize crowd analyzer.
@@ -63,43 +86,30 @@ class CrowdAnalyzer:
         # Build behavior summary
         parts = []
 
-        # Count movement patterns (only for independent agents)
-        moving_count = sum(1 for a in independent_agents if a.get("is_moving", True))
-        waiting_count = len(independent_agents) - moving_count
+        # Classify where moving agents are actually heading
+        moving_agents = [a for a in independent_agents if a.get("is_moving", True)]
+        waiting_count = len(independent_agents) - len(moving_agents)
 
-        if moving_count > waiting_count:
-            parts.append("Most people are moving toward exits.")
-        elif waiting_count > moving_count:
-            parts.append("Many people are waiting or stationary.")
-        else:
-            if independent_agents:  # Only add if there are independent agents
-                parts.append("People are mixed between moving and waiting.")
+        dest_counts: dict[str, int] = {}
+        for agent in moving_agents:
+            dest = CrowdAnalyzer._classify_destination(agent.get("target_exit"))
+            if dest:
+                dest_counts[dest] = dest_counts.get(dest, 0) + 1
 
-        # Identify where nearby agents are heading (target exit visibility)
-        exit_targets: dict[str, list[str]] = {}
-        for agent in independent_agents:
-            target_exit = agent.get("target_exit")
-            agent_id = agent.get("id")
-            if target_exit and agent_id:
-                if target_exit not in exit_targets:
-                    exit_targets[target_exit] = []
-                exit_targets[target_exit].append(agent_id)
-
-        # Include target exit information in observations
-        if exit_targets:
-            # Find most common target exit
-            most_common_exit = max(exit_targets.items(), key=lambda x: len(x[1]))
-            target_name = most_common_exit[0].replace("jps.", "").replace("_", " ")
-            target_count = len(most_common_exit[1])
-
-            if target_count == 1:
-                target_agent = most_common_exit[1][0]
-                parts.append(f"{target_agent} is heading toward the {target_name}.")
-            elif target_count <= 3:
-                target_agents = ", ".join(most_common_exit[1])
-                parts.append(f"{target_agents} are heading toward the {target_name}.")
+        if dest_counts:
+            top_dest = max(dest_counts, key=dest_counts.__getitem__)
+            if len(moving_agents) > waiting_count:
+                if len(dest_counts) == 1:
+                    parts.append(f"Most people nearby are heading toward {top_dest}.")
+                else:
+                    dest_list = sorted(dest_counts, key=dest_counts.__getitem__, reverse=True)
+                    parts.append(f"People nearby are heading toward {' and '.join(dest_list[:2])}.")
             else:
-                parts.append(f"Many nearby people are heading toward the {target_name}.")
+                parts.append(f"Some people are heading toward {top_dest}; others are waiting.")
+        elif moving_agents and len(moving_agents) > waiting_count:
+            parts.append("Most people nearby are moving.")
+        elif independent_agents:
+            parts.append("Many people are waiting or stationary.")
 
         # Note injured agents nearby
         if injured_nearby:
@@ -190,9 +200,26 @@ class CrowdAnalyzer:
         moving_count = sum(1 for a in nearby_agents if a.get("is_moving", True))
         moving_pct = (moving_count / len(nearby_agents)) * 100
 
+        dest_counts: dict[str, int] = {}
+        for agent in nearby_agents:
+            if agent.get("is_moving", True):
+                dest = CrowdAnalyzer._classify_destination(agent.get("target_exit"))
+                if dest:
+                    dest_counts[dest] = dest_counts.get(dest, 0) + 1
+
         if moving_pct > 70:
-            return "Most people around you are moving purposefully toward exits."
+            if dest_counts:
+                top_dest = max(dest_counts, key=dest_counts.__getitem__)
+                if len(dest_counts) == 1:
+                    return f"Most people around you are heading toward {top_dest}."
+                dest_list = sorted(dest_counts, key=dest_counts.__getitem__, reverse=True)
+                return f"Most people around you are heading toward {' and '.join(dest_list[:2])}."
+            return "Most people around you are on the move."
         elif moving_pct > 40:
-            return "The crowd is mixed - some evacuating, others waiting or uncertain."
+            if dest_counts:
+                dest_list = sorted(dest_counts, key=dest_counts.__getitem__, reverse=True)
+                top_two = " and ".join(dest_list[:2])
+                return f"The crowd is mixed — some heading toward {top_two}, others waiting."
+            return "The crowd is mixed — some moving, others waiting."
         else:
-            return "Many people around you are waiting or looking for information."
+            return "Many people around you are waiting or stationary."

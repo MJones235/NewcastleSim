@@ -80,6 +80,16 @@ class ExitTracker:
                 exit_name = self.agent_destinations.get(agent_id, "unknown")
                 last_position = self.last_known_positions.get(agent_id)
 
+                # Escalator exits are level transfers, not final evacuations.
+                # The agent will reappear on the target level — do NOT add them to
+                # exited_agents or they'll be excluded from the decision loop.
+                if exit_name.startswith("escalator_"):
+                    logger.debug(
+                        f"🔄 {agent_id} exited through escalator '{exit_name}' "
+                        f"— skipping final-evacuation marking (level transfer)"
+                    )
+                    continue
+
                 if self._validate_exit_reached(agent_id, exit_name, last_position):
                     # Valid evacuation
                     self.exited_agents.add(agent_id)
