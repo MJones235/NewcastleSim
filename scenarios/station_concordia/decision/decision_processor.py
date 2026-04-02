@@ -139,6 +139,39 @@ class DecisionProcessor:
         profile = cfg.get("knowledge_profile", "novice")
         initial_zone = cfg.get("initial_zone", self._default_platform_zone)
 
+        def _extract_visible_distance_ranks(text: str) -> dict[str, int]:
+            """Map visible exit display names to distance rank (0=closest)."""
+            ranks: dict[str, int] = {}
+            distance_patterns = [
+                (r"You can see\s+([^\.]+?)\s+very close to you\.", 0),
+                (r"You can see\s+([^\.]+?)\s+nearby\.", 1),
+                (r"You can see\s+([^\.]+?)\s+in the distance\.", 2),
+            ]
+
+            for pattern, rank in distance_patterns:
+                for m in re.finditer(pattern, text):
+                    for raw_name in m.group(1).split(","):
+                        name = raw_name.strip()
+                        if not name:
+                            continue
+                        if name not in ranks or rank < ranks[name]:
+                            ranks[name] = rank
+            return ranks
+
+        visible_distance_rank = _extract_visible_distance_ranks(observation)
+
+        def _sort_display_exits(display_names: list[str]) -> list[str]:
+            """Sort exits by observed visibility, then observed proximity, then original order."""
+            indexed = list(enumerate(display_names))
+
+            def key_fn(item: tuple[int, str]) -> tuple[int, int, int, str]:
+                idx, name = item
+                is_visible = 0 if name in visible_distance_rank else 1
+                dist_rank = visible_distance_rank.get(name, 99)
+                return (is_visible, dist_rank, idx, name.lower())
+
+            return [name for _, name in sorted(indexed, key=key_fn)]
+
         def _is_standard_exit(eid: str) -> bool:
             """Only include exits that are valid departure points for the agent's level.
             - Level 0 (concourse): street exits + down escalators only (no up escalators)
@@ -161,6 +194,7 @@ class DecisionProcessor:
                     self._PLATFORM_UP_EXITS.get(fallback, []) if fallback else []
                 )
                 exits = [registry.get_display_name(eid) for eid in exit_ids if eid in valid_ids]
+                exits = _sort_display_exits(exits)
                 if exits:
                     bullets = "".join(f"\n  \u2022 {e}" for e in exits)
                     return (
@@ -172,6 +206,7 @@ class DecisionProcessor:
                 # and street exits (for evacuation). Agent decides which to use.
                 combined_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
                 exits = [registry.get_display_name(eid) for eid in combined_ids if eid in valid_ids]
+                exits = _sort_display_exits(exits)
                 if exits:
                     bullets = "".join(f"\n  \u2022 {e}" for e in exits)
                     return (
@@ -185,7 +220,12 @@ class DecisionProcessor:
                 for eid in registry.get_all_ids()
                 if _is_standard_exit(eid)
             ]
-            visible = [n for n in all_display if n in observation]
+
+            # Restrict "visible" exits to explicit visual sentences only.
+            # This avoids false positives from lines like "People heading toward exits".
+            visual_fragments = re.findall(r"You can see\s+([^\.]+)\.", observation)
+            visual_text = " ".join(visual_fragments)
+            visible = [n for n in all_display if n in visual_text]
             if visible:
                 bullets = "".join(f"\n  \u2022 {e}" for e in visible)
                 return (

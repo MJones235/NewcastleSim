@@ -8,6 +8,7 @@ Handles:
 - Conversation tracking between agents
 """
 
+import re
 from typing import Any
 
 from scenarios.common.logger import get_logger
@@ -34,6 +35,10 @@ class MessageSystem:
         self,
         default_radius: float = 10.0,
         memory_window: float = 60.0,
+        shout_cooldown: float = 45.0,
+        local_duplicate_window: float = 20.0,
+        local_duplicate_radius: float = 12.0,
+        max_shouts_per_timestep: int = 2,
     ):
         """
         Initialize the message system.
@@ -41,12 +46,23 @@ class MessageSystem:
         Args:
             default_radius: Default radius for message delivery (meters)
             memory_window: How long to remember sent messages (seconds)
+            shout_cooldown: Minimum seconds between shouts from same agent
+            local_duplicate_window: Time window for suppressing duplicate local alerts
+            local_duplicate_radius: Radius for local duplicate alert suppression
+            max_shouts_per_timestep: Maximum number of shouts allowed globally per step
         """
         self.default_radius = default_radius
+        self.shout_cooldown = shout_cooldown
+        self.local_duplicate_window = local_duplicate_window
+        self.local_duplicate_radius = local_duplicate_radius
+        self.max_shouts_per_timestep = max_shouts_per_timestep
 
         # Message state
         self.agent_messages: dict[str, list[dict[str, Any]]] = {}  # agent_id -> received messages
         self.message_history: list[dict[str, Any]] = []  # All messages sent
+        self._last_shout_time_by_agent: dict[str, float] = {}
+        self._recent_local_alerts: list[dict[str, Any]] = []
+        self._shout_count_by_bucket: dict[int, int] = {}
 
         # Initialize subsystems
         self.memory = MessageMemory(memory_window)
@@ -85,6 +101,16 @@ class MessageSystem:
             message_type = message_data["message_type"]
             target_agent = message_data["target_agent"]
 
+            if not self._should_send_message(
+                sender_id=sender_id,
+                message_text=message_text,
+                message_type=message_type,
+                target_agent=target_agent,
+                sender_position=sender_position,
+                current_sim_time=current_sim_time,
+            ):
+                return None
+
             # Check message memory - prevent repetition
             if self.memory.is_repeat_message(sender_id, message_text, current_sim_time):
                 return None
@@ -121,6 +147,14 @@ class MessageSystem:
                 sender_id, message_text, message_type, recipient_ids, current_sim_time
             )
 
+            self._record_message_constraints_state(
+                sender_id=sender_id,
+                message_text=message_text,
+                message_type=message_type,
+                sender_position=sender_position,
+                current_sim_time=current_sim_time,
+            )
+
             # Store in message history
             self.message_history.append(message_record)
 
@@ -135,6 +169,97 @@ class MessageSystem:
         except Exception as e:
             logger.warning(f"Error extracting message from {sender_id}: {e}")
             return None
+
+    def _should_send_message(
+        self,
+        sender_id: str,
+        message_text: str,
+        message_type: str | None,
+        target_agent: str | None,
+        sender_position: tuple[float, float],
+        current_sim_time: float,
+    ) -> bool:
+        """Apply lightweight social realism constraints before message delivery."""
+        if message_type != "shout":
+            return True
+
+        # Directed communication should not be throttled like crowd shouts.
+        if target_agent and target_agent != "null":
+            return True
+
+        last_shout_time = self._last_shout_time_by_agent.get(sender_id)
+        if last_shout_time is not None and current_sim_time - last_shout_time < self.shout_cooldown:
+            return False
+
+        bucket = int(current_sim_time)
+        if self._shout_count_by_bucket.get(bucket, 0) >= self.max_shouts_per_timestep:
+            return False
+
+        if self._is_generic_alert(message_text) and self._has_nearby_recent_alert(
+            sender_position, current_sim_time
+        ):
+            return False
+
+        return True
+
+    def _record_message_constraints_state(
+        self,
+        sender_id: str,
+        message_text: str,
+        message_type: str | None,
+        sender_position: tuple[float, float],
+        current_sim_time: float,
+    ) -> None:
+        """Update shout throttling state after a message is accepted."""
+        if message_type != "shout":
+            return
+
+        self._last_shout_time_by_agent[sender_id] = current_sim_time
+        bucket = int(current_sim_time)
+        self._shout_count_by_bucket[bucket] = self._shout_count_by_bucket.get(bucket, 0) + 1
+
+        if self._is_generic_alert(message_text):
+            self._recent_local_alerts.append(
+                {
+                    "time": current_sim_time,
+                    "position": sender_position,
+                }
+            )
+            self._prune_recent_local_alerts(current_sim_time)
+
+    def _prune_recent_local_alerts(self, current_sim_time: float) -> None:
+        """Drop stale local alert records outside suppression window."""
+        cutoff = current_sim_time - self.local_duplicate_window
+        self._recent_local_alerts = [
+            alert for alert in self._recent_local_alerts if alert["time"] >= cutoff
+        ]
+
+    def _has_nearby_recent_alert(
+        self, sender_position: tuple[float, float], current_sim_time: float
+    ) -> bool:
+        """True if another generic alert was shouted nearby very recently."""
+        self._prune_recent_local_alerts(current_sim_time)
+        sx, sy = sender_position
+        r2 = self.local_duplicate_radius * self.local_duplicate_radius
+
+        for alert in self._recent_local_alerts:
+            ax, ay = alert["position"]
+            dx = sx - ax
+            dy = sy - ay
+            if dx * dx + dy * dy <= r2:
+                return True
+
+        return False
+
+    def _is_generic_alert(self, text: str) -> bool:
+        """Detect low-information evacuation shout patterns."""
+        normalized = text.lower()
+        return bool(
+            re.search(
+                r"\b(evacuat|alarm|fire|head(?:ing)? to|exit|stay calm|follow the crowd)\b",
+                normalized,
+            )
+        )
 
     def get_received_messages(self, agent_id: str) -> list[dict[str, Any]]:
         """Get messages received by an agent and clear them."""

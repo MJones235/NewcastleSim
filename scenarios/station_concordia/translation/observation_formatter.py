@@ -56,7 +56,7 @@ class ObservationFormatter:
                 "quiet": " (quietly)",
                 "shout": " (shouting)",
             }.get(msg_type, "")
-            lines.append(f'  - {sender_name}{type_indicator}: "{msg["text"]}"')
+            lines.append(f'{sender_name}{type_indicator} said: "{msg["text"]}"')
 
         return lines
 
@@ -123,9 +123,15 @@ class ObservationFormatter:
         """
         # Only list IDs when there are a few people (not in crowds)
         if len(nearby_agents) > 0 and len(nearby_agents) <= 5:
-            nearby_ids = [a.get("id") for a in nearby_agents[:5] if a.get("id")]
-            if nearby_ids:
-                return [f"Nearby: {', '.join(nearby_ids)}"]
+            nearby_people = []
+            for agent in nearby_agents[:5]:
+                aid = agent.get("id")
+                if aid:
+                    person_name = aid.replace("agent_", "Person ")
+                    nearby_people.append(f"{person_name} ({aid})")
+
+            if nearby_people:
+                return [f"Nearby people: {', '.join(nearby_people)}."]
         return []
 
     @staticmethod
@@ -163,10 +169,14 @@ class ObservationFormatter:
         if not events:
             return []
 
-        lines = ["Recent events:"]
-        for event in events[-3:]:  # Last 3 events
-            lines.append(f"  - {event}")
+        # Normalize spacing to avoid odd double-spaces in prompt text.
+        recent = [" ".join(str(event).split()) for event in events[-3:]]  # Last 3 events
+        if len(recent) == 1:
+            return [f"Recent events: {recent[0]}"]
 
+        lines = ["Recent events:"]
+        for event in recent:
+            lines.append(f"- {event}")
         return lines
 
     @staticmethod
@@ -217,11 +227,11 @@ class ObservationFormatter:
         if not visible_blocked:
             return []
 
-        lines = ["⚠️ Visual observations:"]
+        lines = ["Visual observations:"]
         for blocked in visible_blocked:
             lines.append(
-                f"  - The {blocked['name']} appears blocked/obstructed "
-                f"({blocked['distance']} away)"
+                f"The {blocked['name']} appears blocked or obstructed "
+                f"({blocked['distance']} away)."
             )
 
         return lines
@@ -301,20 +311,25 @@ class ObservationFormatter:
             else:
                 target_desc = "to a location"
 
-            speed_desc = f" at {speed}" if speed else ""
+            speed_label = speed.replace("_", " ") if speed else ""
+            speed_desc = f" at {speed_label}" if speed_label else ""
             lines.append(
-                f"[Your previous decision at t={decision_time:.0f}s] You decided to move {target_desc}{speed_desc}."
+                f"At t={decision_time:.0f}s, your previous decision was to move {target_desc}{speed_desc}."
             )
 
             if reasoning:
-                lines.append(f"  Reasoning: {reasoning[:100]}")  # Limit length for clarity
+                lines.append(f"You reasoned: {reasoning}")
 
         elif action_type == "wait":
             wait_desc = wait_reason if wait_reason else "at your current location"
-            lines.append(
-                f"[Your previous decision at t={decision_time:.0f}s] You decided to wait {wait_desc}."
-            )
+            if wait_reason:
+                lines.append(f"At t={decision_time:.0f}s, your previous decision was to wait.")
+                lines.append(f"You waited because: {wait_desc}")
+            else:
+                lines.append(
+                    f"At t={decision_time:.0f}s, your previous decision was to wait {wait_desc}."
+                )
             if reasoning:
-                lines.append(f"  Reasoning: {reasoning[:100]}")  # Limit length for clarity
+                lines.append(f"You reasoned: {reasoning}")
 
         return lines

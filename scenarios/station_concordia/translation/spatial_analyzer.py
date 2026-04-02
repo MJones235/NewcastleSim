@@ -4,6 +4,7 @@ Spatial analysis for observation generation.
 Handles zone identification, exit queries, and geometry-based calculations.
 """
 
+import re
 from typing import Any
 
 from scenarios.common.logger import get_logger
@@ -34,6 +35,7 @@ class SpatialAnalyzer:
         self.zones_polygons = station_layout.get("zones_polygons", {})
         self.exits = station_layout.get("exits", {})
         self.exits_polygons = station_layout.get("exits_polygons", {})
+        self.obstacles = station_layout.get("obstacles", {})
         self.walkable_areas = station_layout.get("walkable_areas", {})
         self.exit_registry = exit_registry
         # Concourse-level down-escalator zones (zone_name -> centroid coords)
@@ -239,7 +241,7 @@ class SpatialAnalyzer:
         Returns:
             List of visible exits with name and distance_category
         """
-        visible_exits = []
+        visible_by_key: dict[str, dict[str, Any]] = {}
 
         # Get level-specific exits for multi-level simulations
         exits_to_check = {}
@@ -261,19 +263,18 @@ class SpatialAnalyzer:
             # Single-level or no level info: use all exits
             exits_to_check = self.exits
 
+        # Prefer level-specific obstacles for line-of-sight checks.
+        level_obstacles = None
+        if agent_level and jps_sim and hasattr(jps_sim, "simulations"):
+            level_sim = jps_sim.simulations.get(agent_level)
+            if level_sim and hasattr(level_sim, "geometry_manager"):
+                level_obstacles = getattr(level_sim.geometry_manager, "obstacles", None)
+
         # Check each exit for visibility
         for exit_name, exit_pos in exits_to_check.items():
             distance = ((position[0] - exit_pos[0]) ** 2 + (position[1] - exit_pos[1]) ** 2) ** 0.5
 
-            if distance < visual_range:
-                # Categorize distance
-                if distance < 10:
-                    dist_cat = "very close"
-                elif distance < 20:
-                    dist_cat = "nearby"
-                else:
-                    dist_cat = "visible in distance"
-
+            if self._has_line_of_sight(position, exit_pos, level_obstacles):
                 # Use display name if registry available
                 display_name = (
                     self.exit_registry.get_display_name(exit_name)
@@ -281,9 +282,96 @@ class SpatialAnalyzer:
                     else exit_name
                 )
 
-                visible_exits.append({"name": display_name, "distance": dist_cat})
+                # Some levels expose the same physical escalator under two IDs
+                # (e.g. "escalator_a_down" and "L0_esc_a_down"). Deduplicate here.
+                canonical_key = self._canonical_visible_exit_key(exit_name)
+                existing = visible_by_key.get(canonical_key)
+
+                if existing is None:
+                    visible_by_key[canonical_key] = {
+                        "name": display_name,
+                        "distance_m": distance,
+                    }
+                else:
+                    # Keep closest distance category and prefer richer human labels.
+                    existing["distance_m"] = min(existing["distance_m"], distance)
+                    existing["name"] = self._prefer_exit_label(existing["name"], display_name)
+
+        visible_exits = []
+        for exit_info in sorted(
+            visible_by_key.values(), key=lambda e: (e["distance_m"], e["name"].lower())
+        ):
+            distance = exit_info["distance_m"]
+            if distance < 10:
+                dist_cat = "very close"
+            elif distance < 20:
+                dist_cat = "nearby"
+            else:
+                dist_cat = "visible in distance"
+
+            visible_exits.append({"name": exit_info["name"], "distance": dist_cat})
 
         return visible_exits
+
+    def _has_line_of_sight(
+        self,
+        start: tuple[float, float],
+        end: tuple[float, float],
+        obstacles: dict[str, Any] | None = None,
+    ) -> bool:
+        """Return True if the segment from start to end is not blocked by an obstacle."""
+        obstacles_to_check = obstacles if obstacles is not None else self.obstacles
+        if not obstacles_to_check:
+            return True
+
+        try:
+            from shapely.geometry import LineString
+
+            sight_line = LineString([start, end])
+            for poly in obstacles_to_check.values():
+                if poly is None:
+                    continue
+                # Treat any interior intersection as blocked. Endpoint touching is fine.
+                if sight_line.crosses(poly) or sight_line.within(poly):
+                    return False
+
+                if sight_line.intersects(poly):
+                    inter = sight_line.intersection(poly)
+                    if not inter.is_empty and not inter.touches(sight_line.boundary):
+                        return False
+        except Exception:
+            # Fallback to distance-only visibility if geometry checks fail.
+            return True
+
+        return True
+
+    def _canonical_visible_exit_key(self, exit_name: str) -> str:
+        """Map equivalent exit IDs to one canonical key for display deduplication."""
+        escalator_match = re.match(r"^escalator_([a-z])_(up|down)$", exit_name)
+        if escalator_match:
+            letter, direction = escalator_match.groups()
+            return f"escalator_{letter}_{direction}"
+
+        zone_escalator_match = re.match(r"^L[^_]+_esc_([a-z])_(up|down)$", exit_name)
+        if zone_escalator_match:
+            letter, direction = zone_escalator_match.groups()
+            return f"escalator_{letter}_{direction}"
+
+        return exit_name
+
+    def _prefer_exit_label(self, current_label: str, candidate_label: str) -> str:
+        """Prefer the more descriptive label when equivalent exits collide."""
+        current_specific = " to " in current_label.lower()
+        candidate_specific = " to " in candidate_label.lower()
+
+        if candidate_specific and not current_specific:
+            return candidate_label
+        if current_specific and not candidate_specific:
+            return current_label
+
+        if len(candidate_label) > len(current_label):
+            return candidate_label
+        return current_label
 
     def get_visible_blocked_exits(
         self, position: tuple[float, float], blocked_exits: set[str], visual_range: float = 20.0

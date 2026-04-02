@@ -19,10 +19,11 @@ class TestLoadGeometry:
 
         network_path = Path("scenarios/station_sim/network")
 
-        entrance_areas, platform_areas = load_geometry(network_path)
+        entrance_areas, platform_areas, walkable_areas = load_geometry(network_path)
 
         assert len(entrance_areas) > 0
         assert len(platform_areas) > 0
+        assert len(walkable_areas) > 0
         assert all(isinstance(name, str) for name in entrance_areas.keys())
         assert all(isinstance(name, str) for name in platform_areas.keys())
 
@@ -126,7 +127,7 @@ class TestIntegration:
 
         # Load geometry
         network_path = Path("scenarios/station_sim/network")
-        entrance_areas, platform_areas = load_geometry(network_path)
+        entrance_areas, platform_areas, _ = load_geometry(network_path)
 
         # Setup exits
         exits, exit_journeys = setup_evacuation_exits(sim, entrance_areas)

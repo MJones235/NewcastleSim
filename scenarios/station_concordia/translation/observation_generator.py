@@ -5,6 +5,7 @@ Converts geometric and simulation data into observations that Concordia
 agents can reason about.
 """
 
+import re
 from typing import Any
 
 from scenarios.common.logger import get_logger
@@ -96,18 +97,13 @@ class ObservationGenerator:
         if conversation_history is None:
             conversation_history = {}
 
+        # Scenario first: surface urgent context before local details.
+        event_lines = ObservationFormatter.format_events(events)
+        observations.extend(event_lines)
+
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
         # Time is also omitted as it's not meaningful for agent decisions
-
-        # ---BEGIN: AGENT'S MEMORY OF PREVIOUS DECISION (Concordia formative memory)---
-        # This allows agents to remember and reason about their commitments
-        if agent_id in agent_last_decision:
-            last_decision_lines = ObservationFormatter.format_last_decision(
-                agent_id, agent_last_decision[agent_id]
-            )
-            observations.extend(last_decision_lines)
-        # ---END: AGENT'S MEMORY OF PREVIOUS DECISION---
 
         # EARLY CHECK: Detect circular following BEFORE other observations
         # This makes it the most salient new information
@@ -190,10 +186,38 @@ class ObservationGenerator:
         zone_label = zone_labels.get(zone, zone)
         observations.append(f"You are in {zone_label}.")
 
+        # Current situation: remind agent what it was doing and its own state.
+        if agent_id in agent_last_decision:
+            last_decision_lines = ObservationFormatter.format_last_decision(
+                agent_id, agent_last_decision[agent_id]
+            )
+            observations.extend(last_decision_lines)
+
+        status_lines = ObservationFormatter.format_own_status(
+            agent_id, agent_injured, agent_action, state_queries
+        )
+        observations.extend(status_lines)
+
         # Visual discovery of exits (efficient distance-based line of sight)
         visible_exits = self.spatial_analyzer.get_visible_exits(
             position, agent_level=agent_level, jps_sim=self.jps_sim, visual_range=25.0
         )
+        nearest_visible_name = visible_exits[0]["name"] if visible_exits else None
+
+        # Estimate nearby flow toward exits before rendering spatial summary.
+        exit_crowds: dict[str, int] = {}
+        if nearby_agents:
+            exit_crowds = self.crowd_analyzer.count_agents_per_exit(nearby_agents)
+            exit_crowds = self._humanize_exit_crowd_keys(exit_crowds)
+
+        # Keep spatial guidance concise and ordered.
+        if nearest_visible_name:
+            nearest_count = exit_crowds.get(nearest_visible_name, 0)
+            nearest_density = CrowdAnalyzer.categorize_count(nearest_count)
+            observations.append(
+                f"Nearest visible exit: {nearest_visible_name}. Nearby flow toward it is {nearest_density}."
+            )
+
         exit_sight_lines = ObservationFormatter.format_visible_exits(visible_exits)
         observations.extend(exit_sight_lines)
 
@@ -201,12 +225,6 @@ class ObservationGenerator:
         num_nearby = len(nearby_agents)
         density = CrowdAnalyzer.categorize_density(num_nearby)
         observations.append(f"The area is {density}.")
-
-        # Phase 4.1: Agent's own status
-        status_lines = ObservationFormatter.format_own_status(
-            agent_id, agent_injured, agent_action, state_queries
-        )
-        observations.extend(status_lines)
 
         # Nearby agent behaviors
         if nearby_agents:
@@ -216,22 +234,6 @@ class ObservationGenerator:
             # Phase 5.1: List nearby agent IDs for targeting messages
             nearby_ids = ObservationFormatter.format_nearby_agent_ids(nearby_agents)
             observations.extend(nearby_ids)
-
-            # Exit crowd information (Phase 4.2: helps agents make informed route decisions)
-            exit_crowds = self.crowd_analyzer.count_agents_per_exit(nearby_agents)
-            exit_crowd_lines = ObservationFormatter.format_exit_crowds(
-                exit_crowds, CrowdAnalyzer.categorize_count
-            )
-            observations.extend(exit_crowd_lines)
-
-            # Phase 4.3: Overall movement pattern information for information seeking
-            movement_pattern = CrowdAnalyzer.analyze_movement_pattern(nearby_agents)
-            if movement_pattern:
-                observations.append(movement_pattern)
-
-        # Recent events
-        event_lines = ObservationFormatter.format_events(events)
-        observations.extend(event_lines)
 
         # Phase 5: Messages from nearby people
         message_lines = ObservationFormatter.format_received_messages(received_messages)
@@ -273,4 +275,59 @@ class ObservationGenerator:
         blocked_lines = ObservationFormatter.format_blocked_exits(visible_blocked)
         observations.extend(blocked_lines)
 
-        return " ".join(observations)
+        cleaned_lines = [line.strip() for line in observations if line and line.strip()]
+        return "\n".join(cleaned_lines)
+
+    def _humanize_exit_crowd_keys(self, exit_crowds: dict[str, int]) -> dict[str, int]:
+        """Translate technical exit IDs into display names and merge equivalent escalator IDs."""
+        if not exit_crowds:
+            return exit_crowds
+
+        merged: dict[str, dict[str, Any]] = {}
+
+        for exit_id, count in exit_crowds.items():
+            canonical_key = self._canonical_exit_key(exit_id)
+            display_name = (
+                self.exit_registry.get_display_name(exit_id) if self.exit_registry else exit_id
+            )
+
+            if canonical_key not in merged:
+                merged[canonical_key] = {"display_name": display_name, "count": count}
+            else:
+                merged[canonical_key]["count"] += count
+                merged[canonical_key]["display_name"] = self._prefer_exit_label(
+                    merged[canonical_key]["display_name"], display_name
+                )
+
+        return {
+            data["display_name"]: data["count"]
+            for data in sorted(merged.values(), key=lambda item: item["display_name"].lower())
+        }
+
+    def _canonical_exit_key(self, exit_id: str) -> str:
+        """Map equivalent exit IDs (zone IDs vs escalator IDs) to one canonical key."""
+        escalator_match = re.match(r"^escalator_([a-z])_(up|down)$", exit_id)
+        if escalator_match:
+            letter, direction = escalator_match.groups()
+            return f"escalator_{letter}_{direction}"
+
+        zone_escalator_match = re.match(r"^L[^_]+_esc_([a-z])_(up|down)$", exit_id)
+        if zone_escalator_match:
+            letter, direction = zone_escalator_match.groups()
+            return f"escalator_{letter}_{direction}"
+
+        return exit_id
+
+    def _prefer_exit_label(self, current_label: str, candidate_label: str) -> str:
+        """Prefer more descriptive display labels when combining equivalent exits."""
+        current_specific = " to " in current_label.lower()
+        candidate_specific = " to " in candidate_label.lower()
+
+        if candidate_specific and not current_specific:
+            return candidate_label
+        if current_specific and not candidate_specific:
+            return current_label
+
+        if len(candidate_label) > len(current_label):
+            return candidate_label
+        return current_label

@@ -231,9 +231,17 @@ class PromptCache:
         filtered = observation
 
         # 1. Remove the previous-decision memory block
-        # "[Your previous decision at t=15s] You decided to move... Reasoning: ..."
+        # Supports both old and new wording styles.
         filtered = re.sub(
-            r"\[Your previous decision[^\]]+\].*?(?=You are in|You can see|The area|Nearby:|Recent events:|$)",
+            r"(?:\[Your previous decision[^\]]+\].*?|At t=\d+(?:\.\d+)?s, your previous decision was to .*?)(?=You are in|You can see|The area|Nearby:|Nearby people:|Recent events:|$)",
+            "",
+            filtered,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Remove explicit reasoning lines tied to previous-decision memory.
+        filtered = re.sub(
+            r"You reasoned:\s.*?(?=You are in|You can see|The area|Nearby:|Nearby people:|Recent events:|$)",
             "",
             filtered,
             flags=re.DOTALL | re.IGNORECASE,
@@ -286,6 +294,7 @@ class PromptCache:
         # "agent_5, agent_12" → "" (crowd level line stays)
         filtered = re.sub(r"\bagent_\d+\b(?:[,\s]+agent_\d+\b)*", "", filtered, flags=re.IGNORECASE)
         filtered = re.sub(r"\bNearby:\s*(?:[,\s]*)(\n|$)", "", filtered)
+        filtered = re.sub(r"\bNearby people:\s*(?:[^\n]*)(\n|$)", "", filtered)
 
         # 6. Normalise exact crowd counts to bands
         # "5 people" / "3 agents" → "several"
