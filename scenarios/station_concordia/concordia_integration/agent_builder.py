@@ -155,16 +155,16 @@ class AgentBuilder:
         _zone_labels = self.station_layout.get("zone_labels", {})
         zone_label = _zone_labels.get(initial_zone, f"the {initial_zone} area")
 
+        # Order memories so high-level purpose appears first in recent observations,
+        # followed by current location, then platform-navigation specifics.
+        purpose_memories = self._build_purpose_memories(config)
         initial_memories = [
             *base_memories,
             *profile_memories,
-            *location_memories,
+            *purpose_memories,
             f"I am currently in {zone_label}.",
+            *location_memories,
         ]
-
-        # Add scenario-purpose memories based on why the agent is at the station
-        purpose_memories = self._build_purpose_memories(config)
-        initial_memories.extend(purpose_memories)
 
         # Add injury-specific memories
         if config.get("is_injured", False):

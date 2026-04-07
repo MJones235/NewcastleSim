@@ -122,7 +122,7 @@ class DecisionProcessor:
         if not lines:
             return ""
         bullets = "\n".join(lines)
-        return "\n\u2550\u2550\u2550 AVAILABLE ZONES \u2550\u2550\u2550\n" f"{bullets}\n\n"
+        return "\nAvailable zones:\n" f"{bullets}\n\n"
 
     def _get_valid_exits_section(
         self, agent_id: str, observation: str, agent_level: str | None
@@ -197,10 +197,7 @@ class DecisionProcessor:
                 exits = _sort_display_exits(exits)
                 if exits:
                     bullets = "".join(f"\n  \u2022 {e}" for e in exits)
-                    return (
-                        "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (use exactly one of these) \u2550\u2550\u2550"
-                        f"{bullets}\n\n"
-                    )
+                    return "\nAllowed exits now:" f"{bullets}\n\n"
             else:
                 # Level 0: include both down-access escalators (to reach platforms)
                 # and street exits (for evacuation). Agent decides which to use.
@@ -209,10 +206,7 @@ class DecisionProcessor:
                 exits = _sort_display_exits(exits)
                 if exits:
                     bullets = "".join(f"\n  \u2022 {e}" for e in exits)
-                    return (
-                        "\n\u2550\u2550\u2550 EXITS AVAILABLE FROM THIS LEVEL \u2550\u2550\u2550"
-                        f"{bullets}\n\n"
-                    )
+                    return "\nAllowed exits now:" f"{bullets}\n\n"
         else:
             # Novice: only exits whose display name appears in this observation
             all_display = [
@@ -224,14 +218,12 @@ class DecisionProcessor:
             # Restrict "visible" exits to explicit visual sentences only.
             # This avoids false positives from lines like "People heading toward exits".
             visual_fragments = re.findall(r"You can see\s+([^\.]+)\.", observation)
+            visual_fragments += re.findall(r"Visible exits right now:\s*([^\.]+)\.", observation)
             visual_text = " ".join(visual_fragments)
             visible = [n for n in all_display if n in visual_text]
             if visible:
                 bullets = "".join(f"\n  \u2022 {e}" for e in visible)
-                return (
-                    "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (only what you can currently see) \u2550\u2550\u2550"
-                    f"{bullets}\n\n"
-                )
+                return "\nVisible exits right now:" f"{bullets}\n\n"
             elif agent_level != "-1":
                 # On the concourse: fall back to street exits + down escalators from memory
                 fallback_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
@@ -240,14 +232,10 @@ class DecisionProcessor:
                 ]
                 if fallback:
                     bullets = "".join(f"\n  \u2022 {e}" for e in fallback)
-                    return (
-                        "\n\u2550\u2550\u2550 VALID EXIT OPTIONS (known from your station memory) \u2550\u2550\u2550"
-                        f"{bullets}\n\n"
-                    )
+                    return "\nAllowed exits now:" f"{bullets}\n\n"
             return (
-                "\n\u2550\u2550\u2550 VALID EXIT OPTIONS \u2550\u2550\u2550\n"
-                "No exits are visible to you yet. Do NOT use target_type='exit'.\n"
-                "Follow someone (target_type='agent') or wait (target_type='current_position').\n\n"
+                "\nVisible exits right now: none.\n"
+                "Do NOT use target_type='exit'. Follow someone or wait.\n\n"
             )
         return ""
 
@@ -401,10 +389,11 @@ class DecisionProcessor:
             # Build follower constraint block (injected when circular/following detected)
             following_constraint_text = self._get_following_constraint_text(observation)
 
-            # Pre-compute zones section so we can suppress the 'zone' target_type when
-            # no zones are available on the agent's current level (e.g. level-0 agents
-            # whose only navigable targets are escalator/street exits, not zone areas).
-            zones_section = self._build_zones_section(zones, agent_level)
+            # Only expose zone-targeting when it is meaningful this turn.
+            # In practice this is when exits are not currently available/visible,
+            # so the agent needs an intermediate area-level move.
+            include_zones = "Visible exits right now: none." in valid_exits_text
+            zones_section = self._build_zones_section(zones, agent_level) if include_zones else ""
             has_zones = bool(zones_section.strip())
 
             # The 'zone' target_type is only valid when AVAILABLE ZONES is non-empty.
@@ -418,67 +407,37 @@ class DecisionProcessor:
                 if has_zones
                 else '  "zone_name": null,\n'
             )
-            # target_type listing and movement instructions
-            zone_valid_value = (
-                "  'zone' → Move to a specific nearby area (requires zone_name from AVAILABLE ZONES)\n\n"
-                if has_zones
-                else ""
-            )
-            zone_move_guidance = (
-                "  target_type='zone': Move to a specific area\n"
-                "    Set zone_name exactly as shown in AVAILABLE ZONES below\n"
-                if has_zones
-                else ""
-            )
-            zone_decision_tree = (
-                "4. Do I want to reach a specific nearby area? YES→ target_type='zone'\n"
-                "5. Else→ wait\n\n"
-                if has_zones
-                else "4. Else→ wait\n\n"
+            zone_constraint_line = (
+                "- If target_type='zone', zone_name is required.\n" if has_zones else ""
             )
 
             # Build the action spec with prompt text
             action_spec = entity_lib.ActionSpec(
                 call_to_action=(
-                    "DECIDE YOUR NEXT ACTION. Respond with ONLY this JSON:\n"
+                    "Decision task: choose your next action now. Respond with ONLY this JSON:\n"
                     "{{\n"
-                    '  "reasoning": "Why this action (1-2 sentences)",\n'
+                    '  "reasoning": "1-2 sentences grounded in goal + current observations",\n'
                     '  "action_type": "wait" or "move",\n'
                     f"{zone_target_type_line}"
                     '  "target_agent": null (or agent_id like "agent_5"),\n'
-                    '  "exit_name": null (or the exit name EXACTLY as shown in your observations),\n'
+                    '  "exit_name": null (or the exit name EXACTLY as listed in visible/valid exits),\n'
                     f"{zone_name_example}"
                     '  "wait_reason": null (or reason if waiting),\n'
                     '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
                     '  "message": null (or your spoken words),\n'
                     '  "message_type": null (or "directed", "shout"),\n'
                     "}}\n\n"
-                    f"VALID target_type VALUES:\n"
-                    "  'current_position' → Wait at your current location (action_type='wait')\n"
-                    "  'exit' → Move to an exit for evacuation or to change level (requires exit_name)\n"
-                    "  'agent' → Move toward another agent to follow/help (requires target_agent)\n"
-                    f"{zone_valid_value}"
-                    "═══ YOUR OPTIONS ═══\n"
-                    "WAITING (action_type='wait', target_type='current_position'):\n"
-                    "  Explain why in wait_reason (e.g. 'Waiting to see which way the crowd moves').\n\n"
-                    "MOVING (action_type='move', choose ONE target_type):\n"
-                    "  target_type='agent': Move toward another agent to follow them or help them\n"
-                    "    Set target_agent='agent_5' (the person's ID)\n"
-                    "  target_type='exit': Move to an exit for evacuation or to change level\n"
-                    "    Prefer exits you can currently see; use memory if none are visible yet\n"
-                    "    If on platform level: choose a UP escalator to reach the concourse\n"
-                    "    If on concourse level: choose a DOWN escalator to reach platforms, or a street exit to leave\n"
-                    "    Plan level-by-level: use escalators to change level, then choose your destination\n"
-                    f"{zone_move_guidance}"
-                    "\n═══ COMMUNICATION ═══\n"
-                    "message: Short phrase (keep it REAL, not narrated)\n"
-                    "message_type: 'directed' (to specific person), 'shout' (everyone nearby can hear)\n"
-                    "target_agent: If directed message, who are you talking to?\n\n"
-                    "═══ DECISION TREE ═══\n"
-                    "1. Am I injured or helping someone? YES→ stay together or coordinate (agent)\n"
-                    "2. Should I evacuate now? YES→ target_type='exit'\n"
-                    "3. Do I want to follow someone? YES→ target_type='agent'\n"
-                    f"{zone_decision_tree}"
+                    "Hard constraints:\n"
+                    "- If action_type='wait', target_type MUST be 'current_position'.\n"
+                    "- If target_type='exit', exit_name is required and must match an allowed exit name exactly.\n"
+                    "- If target_type='agent', target_agent is required.\n"
+                    f"{zone_constraint_line}"
+                    "- Keep spoken message short and natural; no narration.\n\n"
+                    "Decision policy:\n"
+                    "1. If injured/helping someone, stay coordinated with that person.\n"
+                    "2. If evacuating now, choose target_type='exit'.\n"
+                    "3. If following someone, choose target_type='agent'.\n"
+                    "4. Otherwise wait or reorient.\n\n"
                     f"{zones_section}"
                     f"{following_constraint_text}"
                     f"{valid_exits_text}"

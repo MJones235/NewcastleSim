@@ -195,7 +195,7 @@ station:
           zones: ["concourse"]
         memories:
           - "I am on the concourse level. From here, street exits are: Blackett Street, Grey Street, and Eldon Square."
-          - "These are the final exits to leave the station and reach street level."
+          - "From the concourse, these street exits are the final routes out of the station to street level."
           - "To reach Platforms 3 and 4, I use 'Escalator A (down to Platforms 3 & 4)'."
           - "To reach Platforms 1 and 2, I use 'Escalator D (down to Platforms 1 & 2)'."
 

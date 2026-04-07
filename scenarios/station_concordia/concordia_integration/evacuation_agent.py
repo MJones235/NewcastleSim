@@ -69,6 +69,9 @@ class EvacuationAgent(prefab_lib.Prefab):
         age = self.params.get("age", 30)
         gender = self.params.get("gender", "neutral")
         risk_tolerance = self.params.get("risk_tolerance", "moderate")
+        agent_role = self.params.get("agent_role", "heading_to_platform")
+        target_platform = self.params.get("target_platform", 1)
+        trip_purpose = self.params.get("trip_purpose", "their destination")
 
         # Define personality descriptions
         personality_descriptions = {
@@ -103,8 +106,8 @@ class EvacuationAgent(prefab_lib.Prefab):
         # Recent observations
         observation_key = agent_components.observation.DEFAULT_OBSERVATION_COMPONENT_KEY
         observation = agent_components.observation.LastNObservations(
-            history_length=10,
-            pre_act_label="\nRecent Events (newest last)",
+            history_length=1,
+            pre_act_label="\nCurrent Situation",
         )
 
         # Static personality (no LLM call needed)
@@ -120,8 +123,20 @@ class EvacuationAgent(prefab_lib.Prefab):
 
         # Goal component - everyday objective (no emergency framing)
         goal_key = "Goal"
+        if agent_role == "heading_to_platform":
+            goal_state = f"Catch your train from Platform {target_platform}."
+        elif agent_role == "waiting_for_train":
+            goal_state = f"Wait on Platform {target_platform} and board your train when it arrives."
+        elif agent_role == "just_arrived":
+            goal_state = (
+                "Leave the station and continue with your day "
+                f"(next destination: {trip_purpose})."
+            )
+        else:
+            goal_state = "Continue your planned journey."
+
         evacuation_goal = agent_components.constant.Constant(
-            state="Continue your planned trip (e.g., wait for your train or head to your destination).",
+            state=goal_state,
             pre_act_label="\nGoal",
         )
 

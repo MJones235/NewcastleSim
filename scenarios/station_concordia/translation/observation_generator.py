@@ -46,6 +46,10 @@ class ObservationGenerator:
         self.spatial_analyzer = SpatialAnalyzer(station_layout, self.exit_registry)
         self.crowd_analyzer = CrowdAnalyzer(self.exits)
 
+        # Per-agent novelty tracking so prompts contain genuinely new information.
+        self._last_event_signatures: dict[str, set[str]] = {}
+        self._last_message_signatures: dict[str, set[str]] = {}
+
     def generate_observation(
         self,
         agent_id: str,
@@ -97,9 +101,9 @@ class ObservationGenerator:
         if conversation_history is None:
             conversation_history = {}
 
-        # Scenario first: surface urgent context before local details.
-        event_lines = ObservationFormatter.format_events(events)
-        observations.extend(event_lines)
+        # Surface only genuinely new information first.
+        new_info_lines = self._format_new_information(agent_id, events, received_messages)
+        observations.extend(new_info_lines)
 
         # Note: Station layout is now in agent formative memory, not observations
         # This keeps observations stable when nothing changes
@@ -186,13 +190,8 @@ class ObservationGenerator:
         zone_label = zone_labels.get(zone, zone)
         observations.append(f"You are in {zone_label}.")
 
-        # Current situation: remind agent what it was doing and its own state.
-        if agent_id in agent_last_decision:
-            last_decision_lines = ObservationFormatter.format_last_decision(
-                agent_id, agent_last_decision[agent_id]
-            )
-            observations.extend(last_decision_lines)
-
+        # Current situation: include own status (injury/waiting), but avoid repeating
+        # full previous-decision recap every timestep.
         status_lines = ObservationFormatter.format_own_status(
             agent_id, agent_injured, agent_action, state_queries
         )
@@ -202,24 +201,11 @@ class ObservationGenerator:
         visible_exits = self.spatial_analyzer.get_visible_exits(
             position, agent_level=agent_level, jps_sim=self.jps_sim, visual_range=25.0
         )
-        nearest_visible_name = visible_exits[0]["name"] if visible_exits else None
-
-        # Estimate nearby flow toward exits before rendering spatial summary.
-        exit_crowds: dict[str, int] = {}
-        if nearby_agents:
-            exit_crowds = self.crowd_analyzer.count_agents_per_exit(nearby_agents)
-            exit_crowds = self._humanize_exit_crowd_keys(exit_crowds)
-
-        # Keep spatial guidance concise and ordered.
-        if nearest_visible_name:
-            nearest_count = exit_crowds.get(nearest_visible_name, 0)
-            nearest_density = CrowdAnalyzer.categorize_count(nearest_count)
-            observations.append(
-                f"Nearest visible exit: {nearest_visible_name}. Nearby flow toward it is {nearest_density}."
-            )
-
-        exit_sight_lines = ObservationFormatter.format_visible_exits(visible_exits)
-        observations.extend(exit_sight_lines)
+        if visible_exits:
+            visible_names = [exit_info["name"] for exit_info in visible_exits]
+            observations.append(f"Visible exits right now: {', '.join(visible_names)}.")
+        else:
+            observations.append("Visible exits right now: none.")
 
         # Crowd density (categorized to prevent constant LLM calls as people move)
         num_nearby = len(nearby_agents)
@@ -277,6 +263,46 @@ class ObservationGenerator:
 
         cleaned_lines = [line.strip() for line in observations if line and line.strip()]
         return "\n".join(cleaned_lines)
+
+    def _format_new_information(
+        self,
+        agent_id: str,
+        events: list[str],
+        received_messages: list[dict[str, Any]],
+    ) -> list[str]:
+        """Format only new information since this agent's previous observation."""
+        event_sigs = {" ".join(str(event).split()) for event in events[-3:]}
+        msg_sigs = {
+            f"{msg.get('from', 'unknown')}::{msg.get('text', '').strip()}"
+            for msg in (received_messages or [])
+            if msg.get("text", "").strip()
+        }
+
+        prev_events = self._last_event_signatures.get(agent_id, set())
+        prev_msgs = self._last_message_signatures.get(agent_id, set())
+
+        new_events = [evt for evt in sorted(event_sigs) if evt not in prev_events]
+        new_msgs = [msig for msig in sorted(msg_sigs) if msig not in prev_msgs]
+
+        self._last_event_signatures[agent_id] = event_sigs
+        self._last_message_signatures[agent_id] = msg_sigs
+
+        lines = ["What is NEW since your last decision:"]
+        if not new_events and not new_msgs:
+            lines.append("No significant new information.")
+            return lines
+
+        updates: list[str] = []
+        updates.extend(new_events)
+
+        for msg_sig in new_msgs[-3:]:
+            sender, text = msg_sig.split("::", 1)
+            sender_name = sender.replace("agent_", "Person ")
+            updates.append(f'{sender_name} said: "{text}"')
+
+        lines.append("; ".join(updates))
+
+        return lines
 
     def _humanize_exit_crowd_keys(self, exit_crowds: dict[str, int]) -> dict[str, int]:
         """Translate technical exit IDs into display names and merge equivalent escalator IDs."""

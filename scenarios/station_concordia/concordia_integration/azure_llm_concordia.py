@@ -131,7 +131,12 @@ class AzureLLMConcordia:
         system_message = (
             "You are a simulation engine for everyday station scenarios. "
             "Generate realistic behavioral responses for simulated agents based on their personality profiles, "
-            "situational context, and normal station routines."
+            "situational context, and normal station routines. "
+            "When a fire alarm is sounding with no clear visible fire, use this empirical prior for initial behavior: "
+            "about 10% evacuate immediately, about 15% decide to leave but delay, and about 75% initially hesitate, "
+            "wait for others, or ignore at first. "
+            "Use this as a population-level prior while still adapting each individual response to local observations, "
+            "social cues, and personal goals."
         )
 
         # Retry logic

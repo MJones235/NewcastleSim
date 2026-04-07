@@ -64,6 +64,20 @@ class AzureLLMProvider(LLMProvider):
         "additionalProperties": False,
     }
 
+    # Behavioral prior for initial reactions to a fire alarm with no visible hazard.
+    # This nudges the model toward realistic heterogeneity instead of uniform evacuation.
+    SYSTEM_MESSAGE = (
+        "You are analyzing an evacuation scenario for a transport station. "
+        "Consider urgency, credibility, social cues, and local context before deciding. "
+        "Empirical baseline for initial reactions to a fire alarm (when there is no clear visible fire): "
+        "about 10% evacuate immediately, about 15% decide to leave but with delay, and about 75% "
+        "initially wait, hesitate, or ignore until social proof or stronger evidence appears. "
+        "For each individual decision, use this as a prior while still adapting to personality, location, "
+        "crowd behavior, and direct observations. Do not force identical behavior across agents. "
+        "IMPORTANT: Respond ONLY with valid JSON in this exact format:\n"
+        '{"decision": "evacuate" or "stay", "reasoning": "brief explanation", "confidence": 0.0 to 1.0}'
+    )
+
     def __init__(
         self,
         endpoint: str | None = None,
@@ -186,15 +200,7 @@ class AzureLLMProvider(LLMProvider):
                 call_start = time.perf_counter()
                 # Build messages
                 messages = [
-                    SystemMessage(
-                        content=(
-                            "You are analyzing an evacuation scenario. "
-                            "Consider the urgency and credibility of the information. "
-                            "Provide your decision with reasoning and confidence level. "
-                            "IMPORTANT: Respond ONLY with valid JSON in this exact format:\n"
-                            '{"decision": "evacuate" or "stay", "reasoning": "brief explanation", "confidence": 0.0 to 1.0}'
-                        )
-                    ),
+                    SystemMessage(content=self.SYSTEM_MESSAGE),
                     UserMessage(content=prompt),
                 ]
 
