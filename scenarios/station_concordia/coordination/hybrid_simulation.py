@@ -36,6 +36,7 @@ from scenarios.station_concordia.decision.decision_processor import DecisionProc
 from scenarios.station_concordia.jps_integration.exit_tracker import ExitTracker
 from scenarios.station_concordia.jps_integration.simulation_interface import PedestrianSimulation
 from scenarios.station_concordia.reporting.financial_reporter import FinancialReporter
+from scenarios.station_concordia.reporting.population_monitor import PopulationMonitor
 from scenarios.station_concordia.reporting.results_writer import ResultsWriter
 from scenarios.station_concordia.systems.event_manager import EventManager
 from scenarios.station_concordia.systems.messaging import MessageSystem
@@ -70,6 +71,7 @@ class HybridSimulationRunner:
         output_file: Path | None = None,
         test_scenarios: dict[str, Any] | None = None,
         enable_video: bool = False,
+        monitoring_config: dict[str, Any] | None = None,
     ):
         """
         Initialize the hybrid simulation runner.
@@ -85,6 +87,9 @@ class HybridSimulationRunner:
             output_file: Path to output file for saving results
             test_scenarios: Test scenario configuration
             enable_video: Whether to track position history for video generation
+            monitoring_config: Optional monitoring configuration dict with keys
+                ``interval_seconds`` and ``zones`` (list of zone spec dicts).
+                If ``None``, PopulationMonitor defaults are used.
         """
         self.jps_sim = jupedsim_simulation
         self.station_layout = station_layout
@@ -231,6 +236,14 @@ class HybridSimulationRunner:
             self.position_tracker = PositionHistoryTracker(save_interval=0.5)
             logger.info("Position history tracking enabled for video generation")
 
+        # Population monitor — records zone occupancy at configured intervals
+        monitoring_config = monitoring_config or {}
+        self.population_monitor = PopulationMonitor(
+            jupedsim_simulation,
+            zone_specs=monitoring_config.get("zones"),  # None → use defaults
+            interval_seconds=monitoring_config.get("interval_seconds", 60.0),
+        )
+
         # Bootstrap decisions at t=0 so agents choose initial journeys before first sim step
         self._bootstrap_initial_decisions()
 
@@ -295,6 +308,11 @@ class HybridSimulationRunner:
 
                     # Check for agents who have exited and remove them
                     self.exit_tracker.check_exited_agents(self.current_sim_time, self.current_step)
+
+                    # Record population snapshot every simulation minute
+                    self.population_monitor.record_snapshot(
+                        self.current_sim_time, self.exited_agents
+                    )
 
                     # Drain the recently-transferred set.  Transferred agents are
                     # given a temporary destination so they keep moving
@@ -397,6 +415,13 @@ class HybridSimulationRunner:
 
         # Print financial report
         print(FinancialReporter.generate_report(self.llm_provider, len(self.concordia_agents)))
+
+        # Display and save population time series
+        self.population_monitor.record_snapshot(self.current_sim_time, self.exited_agents)
+        self.population_monitor.display_summary()
+        if self.output_file:
+            self.population_monitor.save(self.output_file.parent)
+        results["population_timeseries"] = self.population_monitor.to_dict()
 
         # Save position history if video generation is enabled
         if self.position_tracker and self.output_file:

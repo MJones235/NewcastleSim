@@ -68,6 +68,39 @@ events:
   - time: 15.0
     message: "The fire alarm is sounding throughout the station.  You cannot see any evidence of a fire."
 
+# Population monitoring configuration
+# Snapshots are recorded every interval_seconds of simulation time.
+# Each zone entry supports:
+#   name                   - identifier used in output files
+#   description            - human-readable label for tables/charts
+#   type: exited           - cumulative count of fully evacuated agents
+#   type: level (default)  - active agents, filtered by level and/or area
+#   level                  - JuPedSim level ID to filter on ("0" = concourse, "-1" = platforms)
+#   area_patterns          - list of name prefixes: count only agents inside matching polygons
+#   exclude_area_patterns  - list of name prefixes: exclude agents inside matching polygons
+monitoring:
+  interval_seconds: 60
+  zones:
+    - name: left_station
+      description: "Agents who have left the station"
+      type: exited
+
+    - name: concourse
+      description: "Agents on the concourse (level 0)"
+      level: "0"
+
+    - name: escalator_bottom
+      description: "Agents at the bottom of escalators (level -1, escalator zones)"
+      level: "-1"
+      area_patterns:
+        - "L-1_esc"   # matches L-1_esc_* exit boxes and L-1_esc_corridor_* polygons
+
+    - name: platform
+      description: "Agents on a platform (level -1)"
+      level: "-1"
+      exclude_area_patterns:
+        - "L-1_esc"
+
 # Test scenarios - disabled
 test_scenarios:
   blocked_exit:

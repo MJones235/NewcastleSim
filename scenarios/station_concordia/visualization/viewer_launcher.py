@@ -10,7 +10,6 @@ This module is responsible for:
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
 
 from scenarios.common.logger import get_logger
 
@@ -27,7 +26,7 @@ class ViewerLauncher:
         network_path: Path,
         launch_gui: bool = True,
         launch_spatial: bool = True,
-    ) -> Tuple[Optional[subprocess.Popen], Optional[subprocess.Popen]]:
+    ) -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
         """
         Launch visualization viewers for the simulation.
 
@@ -55,7 +54,7 @@ class ViewerLauncher:
     def launch_gui_viewer(
         decisions_file: Path,
         run_id: str,
-    ) -> Optional[subprocess.Popen]:
+    ) -> subprocess.Popen | None:
         """
         Launch the GUI viewer for live monitoring.
 
@@ -91,7 +90,7 @@ class ViewerLauncher:
     def launch_spatial_viewer(
         decisions_file: Path,
         network_path: Path,
-    ) -> Optional[subprocess.Popen]:
+    ) -> subprocess.Popen | None:
         """
         Launch the spatial matplotlib viewer showing agent positions on map.
 

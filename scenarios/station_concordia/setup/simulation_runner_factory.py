@@ -56,6 +56,9 @@ class SimulationRunnerFactory:
         video_config = config.get("video", {})
         enable_video = video_config.get("enabled", False)
 
+        # Monitoring settings
+        monitoring_config = config.get("monitoring", {})
+
         logger.info("Creating HybridSimulationRunner...")
 
         try:
@@ -70,6 +73,7 @@ class SimulationRunnerFactory:
                 output_file=decisions_file,
                 test_scenarios=test_scenarios_config,
                 enable_video=enable_video,
+                monitoring_config=monitoring_config,
             )
             logger.info("HybridSimulationRunner initialized")
         except Exception as e:

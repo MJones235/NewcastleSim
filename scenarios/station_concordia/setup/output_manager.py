@@ -10,7 +10,6 @@ This module is responsible for:
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
 
 from scenarios.common.logger import get_logger
 
@@ -21,7 +20,7 @@ class OutputManager:
     """Handles output directory and file management for simulation runs."""
 
     @staticmethod
-    def setup_output_directory(config: dict) -> Tuple[str, Path, Path]:
+    def setup_output_directory(config: dict) -> tuple[str, Path, Path]:
         """
         Setup output directory structure for a simulation run.
 
