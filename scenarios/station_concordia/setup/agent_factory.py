@@ -14,19 +14,6 @@ from scenarios.common.station_agent import PERSONALITY_TYPES
 
 logger = get_logger(__name__)
 
-# Trip purposes for agents — used in initial goal/memory injection
-_TRIP_PURPOSES = [
-    "work",
-    "school",
-    "a shopping trip in the city centre",
-    "a medical appointment",
-    "a visit to family",
-    "a university lecture",
-    "a day out in the city",
-    "a job interview",
-    "a meeting in the city centre",
-]
-
 
 class AgentFactory:
     """Handles creation of agent configurations."""
@@ -57,10 +44,13 @@ class AgentFactory:
 
         # Create agent configurations
         agents_config = []
-        knowledge_distribution = config["agents"]["knowledge_profiles"]
+        agents_section = config.get("agents", {})
+        knowledge_distribution = agents_section["knowledge_profiles"]
         for i in range(num_agents):
             profile = AgentFactory._select_knowledge_profile(knowledge_distribution)
-            agent_cfg = AgentFactory._create_single_agent(i, i in injured_agents, profile)
+            agent_cfg = AgentFactory._create_single_agent(
+                i, i in injured_agents, profile, agents_section
+            )
             agents_config.append(agent_cfg)
 
         logger.info(f"Created {num_agents} agent configuration(s)")
@@ -97,6 +87,7 @@ class AgentFactory:
         agent_index: int,
         is_injured: bool,
         knowledge_profile: str,
+        agents_section: dict,
     ) -> dict:
         """
         Create a single agent configuration with randomized attributes.
@@ -104,6 +95,8 @@ class AgentFactory:
         Args:
             agent_index: Index of the agent (used for ID)
             is_injured: Whether this agent is injured
+            knowledge_profile: Knowledge profile name
+            agents_section: The ``agents`` sub-dict from the scenario config
 
         Returns:
             Agent configuration dictionary
@@ -116,9 +109,16 @@ class AgentFactory:
         gender = random.choice(["male", "female"])
         risk_tolerance = random.choice(["low", "moderate", "high"])
 
-        # Scenario purpose: which platform and why they are travelling
-        target_platform = random.randint(1, 4)
-        trip_purpose = random.choice(_TRIP_PURPOSES)
+        # Sample purpose from config; sample target from all role target options
+        purposes = agents_section.get("purposes", ["their destination"])
+        purpose = random.choice(purposes)
+
+        all_targets = [
+            v
+            for role_cfg in agents_section.get("roles", {}).values()
+            for v in role_cfg.get("target", [])
+        ]
+        target = random.choice(all_targets) if all_targets else ""
 
         return {
             "id": agent_id,
@@ -131,9 +131,10 @@ class AgentFactory:
             "initial_zone": "platform",
             "destination": "exit",
             "is_injured": is_injured,
-            "target_platform": target_platform,
-            "trip_purpose": trip_purpose,
-            # agent_role is assigned later by AgentManager once the spawn zone is known
+            "purpose": purpose,
+            "target": target,
+            # agent_role, goal_state, purpose_memories and initial_goal are assigned
+            # later by AgentManager once the spawn zone is known
         }
 
     @staticmethod

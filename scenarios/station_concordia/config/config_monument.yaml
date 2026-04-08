@@ -62,6 +62,50 @@ agents:
     novice: 30.0
     commuter: 70.0
 
+  # Agent roles define behaviour, goal text, and initial memories.
+  # spawn_zones: which zones assign this role (matched after coordinate-based zone detection).
+  # weight:      tie-break probability when multiple roles share the same spawn zone.
+  # goal:        template for the Concordia goal component.  Placeholders: {target}, {purpose}.
+  # memories:    template strings added to starting memory.  Same placeholders.
+  # target:      list of values to sample for the {target} placeholder (omit if unused).
+  roles:
+    heading_to_platform:
+      spawn_zones: ["concourse"]
+      weight: 1.0
+      goal: "Catch your train from Platform {target}."
+      memories:
+        - "I am at the station today because I need to catch a train from Platform {target}."
+        - "My reason for travelling is {purpose}."
+      target: [1, 2, 3, 4]
+    waiting_for_train:
+      spawn_zones: ["platform_abc", "platform_def"]
+      weight: 0.5
+      goal: "Wait on Platform {target} and board your train when it arrives."
+      memories:
+        - "I am standing on the platform waiting to board my train from Platform {target}."
+        - "I am travelling for {purpose}."
+      target: [1, 2, 3, 4]
+    just_arrived:
+      spawn_zones: ["platform_abc", "platform_def"]
+      weight: 0.5
+      goal: "Leave the station and continue with your day (next destination: {purpose})."
+      memories:
+        - "I have just got off my train and stepped onto the platform."
+        - "Now that I have arrived I intend to leave the station and get on with my day — I am heading to {purpose}."
+      target: []
+
+  # Purposes sampled for the {purpose} placeholder in role templates.
+  purposes:
+    - "work"
+    - "school"
+    - "a shopping trip in the city centre"
+    - "a medical appointment"
+    - "a visit to family"
+    - "a university lecture"
+    - "a day out in the city"
+    - "a job interview"
+    - "a meeting in the city centre"
+
 # Event configuration
 events:
   # A single global event: the fire alarm is sounding

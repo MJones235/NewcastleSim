@@ -129,30 +129,23 @@ class AgentManager:
                     break
             agent_cfg["initial_zone"] = assigned_zone or default_zone or "station"
 
-            # Assign scenario role based on where the agent spawned:
-            #   concourse / other level-0 zone  -> heading to a platform to catch a train
-            #   platform zone                   -> 50 % waiting to board, 50 % just arrived
+            # Assign role from config: find roles whose spawn_zones include this zone.
             initial_zone = agent_cfg["initial_zone"]
-            if initial_zone in ("platform_abc", "platform_def"):
-                agent_cfg["agent_role"] = random.choice(["waiting_for_train", "just_arrived"])
-            else:
-                # concourse or any entrance zone
-                agent_cfg["agent_role"] = "heading_to_platform"
+            roles_config = config["agents"].get("roles", {})
+            agent_cfg["agent_role"] = AgentManager._assign_role(initial_zone, roles_config)
 
-            # Store the initial goal text so decision_processor can seed agent_goals.
+            # Format goal and memory templates now that role, target, and purpose are known.
             role = agent_cfg["agent_role"]
-            target_platform = agent_cfg.get("target_platform", 1)
-            trip_purpose = agent_cfg.get("trip_purpose", "your destination")
-            if role == "heading_to_platform":
-                agent_cfg["initial_goal"] = f"Catch your train from Platform {target_platform}."
-            elif role == "waiting_for_train":
-                agent_cfg["initial_goal"] = (
-                    f"Wait on Platform {target_platform} and board your train when it arrives."
-                )
-            elif role == "just_arrived":
-                agent_cfg["initial_goal"] = f"Leave the station and continue to {trip_purpose}."
-            else:
-                agent_cfg["initial_goal"] = "Continue your planned journey."
+            role_cfg = roles_config.get(role, {})
+            subs = {
+                "target": agent_cfg.get("target", ""),
+                "purpose": agent_cfg.get("purpose", "their destination"),
+            }
+            agent_cfg["goal_state"] = role_cfg.get("goal", "Continue your planned journey.").format(
+                **subs
+            )
+            agent_cfg["purpose_memories"] = [t.format(**subs) for t in role_cfg.get("memories", [])]
+            agent_cfg["initial_goal"] = agent_cfg["goal_state"]
 
             is_injured = i in injured_agents
 
@@ -170,3 +163,26 @@ class AgentManager:
             else:
                 # Single-level simulation
                 jps_sim.add_agent(agent_id, start_pos, walking_speed=walking_speed)
+
+    @staticmethod
+    def _assign_role(initial_zone: str, roles_config: dict) -> str:
+        """
+        Pick a role whose spawn_zones include ``initial_zone``, using configured weights.
+
+        When multiple roles share the same spawn zone (e.g. ``waiting_for_train`` and
+        ``just_arrived`` both spawn on platforms) the ``weight`` values are used for
+        random selection.  Falls back to a uniform draw across all roles when no
+        spawn_zones match.
+        """
+        matching = [
+            (role, cfg)
+            for role, cfg in roles_config.items()
+            if initial_zone in cfg.get("spawn_zones", [])
+        ]
+        if not matching:
+            matching = list(roles_config.items())
+        if not matching:
+            return "default"
+        roles_list = [r for r, _ in matching]
+        weights = [float(cfg.get("weight", 1.0)) for _, cfg in matching]
+        return random.choices(roles_list, weights=weights, k=1)[0]

@@ -180,42 +180,8 @@ class AgentBuilder:
 
     @staticmethod
     def _build_purpose_memories(config: dict[str, Any]) -> list[str]:
-        """
-        Build scenario-purpose memories that describe why an agent is at the station.
-
-        The role is determined by where the agent spawned:
-          - ``heading_to_platform``: spawned on the concourse / at an entrance and
-            intends to board a train from a specific platform.
-          - ``waiting_for_train``: already on the platform, waiting to board.
-          - ``just_arrived``: just stepped off a train and intends to leave.
-
-        Args:
-            config: Agent configuration dictionary (must include ``agent_role``,
-                ``target_platform``, and ``trip_purpose``).
-
-        Returns:
-            List of memory strings to add to the agent's initial memory bank.
-        """
-        role = config.get("agent_role", "heading_to_platform")
-        platform = config.get("target_platform", 1)
-        purpose = config.get("trip_purpose", "work")
-
-        if role == "heading_to_platform":
-            return [
-                f"I am at the station today because I need to catch a train from Platform {platform}.",
-                f"My reason for travelling is {purpose}.",
-            ]
-        elif role == "waiting_for_train":
-            return [
-                f"I am standing on the platform waiting to board my train from Platform {platform}.",
-                f"I am travelling for {purpose}.",
-            ]
-        elif role == "just_arrived":
-            return [
-                "I have just got off my train and stepped onto the platform.",
-                f"Now that I have arrived I intend to leave the station and get on with my day — I am heading to {purpose}.",
-            ]
-        return []
+        """Return pre-computed purpose memories stored in the agent config."""
+        return config.get("purpose_memories", [])
 
     @staticmethod
     def _select_location_memories(
