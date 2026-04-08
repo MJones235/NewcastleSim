@@ -12,6 +12,17 @@
     <poly id="jps.walkable_area_7" name="platform_3" type="jupedsim.walkable_area" color="179,217,255" fill="1" layer="1.00" shape="-66.335393,46.979934 -66.062135,44.138042 -15.454609,46.979934 -15.399958,49.548566 -66.499349,46.925282 -66.335393,46.979934" />
     <poly id="jps.walkable_area_8" name="platform_4" type="jupedsim.walkable_area" color="179,217,255" fill="1" layer="1.00" shape="-69.680638,37.624417 -69.680638,35.303963 -17.590460,33.463604 -17.510444,35.624026 -69.760654,37.544401 -69.680638,37.624417" />
     <poly id="jps.walkable_area_9" name="platform_2" type="jupedsim.walkable_area" color="179,217,255" fill="1" layer="1.00" shape="-21.363856,30.585112 -22.535365,-32.910670 -19.840894,-33.144972 -19.255140,30.467961 -21.598158,30.585112 -21.363856,30.585112" />
+    <!-- Escalator corridor zones — physics enforcement (minimum speed) only, not walkable_area.
+         Covers the full ~12 m corridor between the railing obstacles for each escalator run. -->
+    <!-- ABC bank: horizontal corridors bounded by obstacle_15 (A/B railing) and obstacle_16 (B/C railing) -->
+    <poly id="jps.escalator_0" name="L-1_esc_corridor_a" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-32.31,40.1 -21.94,40.1 -21.94,41.03 -32.31,41.03"/>
+    <poly id="jps.escalator_1" name="L-1_esc_corridor_b" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-32.31,38.65 -21.94,38.65 -21.94,39.58 -32.31,39.58"/>
+    <poly id="jps.escalator_2" name="L-1_esc_corridor_c" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-32.31,37.22 -21.94,37.22 -21.94,38.15 -32.31,38.15"/>
+    <!-- DEF bank: diagonal corridors, bounded by obstacle_13 (D/E railing) and obstacle_14 (E/F railing) -->
+    <poly id="jps.escalator_3" name="L-1_esc_corridor_d" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-7.583,17.662 -6.400,17.270 -11.191,2.810 -12.375,3.202"/>
+    <poly id="jps.escalator_4" name="L-1_esc_corridor_e" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-10.484,2.523 -9.540,2.210 -4.748,16.670 -5.693,16.982"/>
+    <poly id="jps.escalator_5" name="L-1_esc_corridor_f" type="jupedsim.escalator" color="100,180,255" fill="0" layer="1.50" shape="-4.015,16.368 -2.660,15.919 -7.452,1.459 -8.807,1.908"/>
+
     <poly id="jps.obstacle_0" type="jupedsim.obstacle" color="255,204,204" fill="1" layer="2.00" shape="-62.693310,44.521747 -62.282704,37.130826 -41.670246,36.268551 -41.629185,41.195832 -40.849033,41.154771 -40.890093,45.794627 -62.734371,44.562807 -62.693310,44.521747" />
     <poly id="jps.obstacle_1" type="jupedsim.obstacle" color="255,204,204" fill="1" layer="2.00" shape="-39.176744,45.779696 -39.139416,41.113711 -37.198366,41.113711 -37.161038,45.929008 -39.251399,45.854352 -39.176744,45.779696" />
     <poly id="jps.obstacle_10" type="jupedsim.obstacle" color="255,204,204" fill="1" layer="2.00" shape="-9.540206,-5.968879 -9.474077,-7.754352 -3.522501,-7.886610 -3.456373,-6.035008 -9.540206,-6.035008 -9.540206,-5.968879" />

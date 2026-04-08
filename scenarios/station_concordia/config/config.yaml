@@ -12,6 +12,9 @@ simulation:
   multi_level: true  # Enable multi-level simulation
   levels: ["0", "-1"]  # Level IDs to load (0 = concourse, -1 = platforms)
   level_id: 0  # Default spawn level (used only if multi_level is false)
+  # Escalator belt speed in m/s.  Agents on an escalator will never move slower
+  # than this relative to the surrounding floor (standard commercial escalator ~0.5 m/s).
+  escalator_belt_speed: 0.5
 
 # Agent configuration
 agents:

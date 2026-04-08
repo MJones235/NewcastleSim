@@ -11,6 +11,9 @@ simulation:
   # Multi-level simulation (Monument Station has 2 levels: concourse and platforms)
   multi_level: true
   levels: ["0", "-1"]  # Level 0 = concourse, Level -1 = platforms
+  # Escalator belt speed in m/s.  Agents on an escalator will never move slower
+  # than this relative to the surrounding floor (standard commercial escalator ~0.5 m/s).
+  escalator_belt_speed: 0.5
 
 # Agent configuration
 agents:
@@ -92,17 +95,62 @@ output:
 
 station:
   # Human-readable labels for zone/level IDs — used in agent observations and memories.
+  # These labels should clearly identify where the agent is AND what exits are nearby,
+  # so the agent can connect its goal (e.g. "Platform 2") to its current location.
   zone_labels:
     level_-1: "the underground platform level"
     level_-2: "the lower underground level"
     level_1:  "the upper concourse level"
-    platform_1: "Platform 1"
-    platform_2: "Platform 2"
-    platform_3: "Platform 3"
-    platform_4: "Platform 4"
-    concourse:  "the concourse"
-    platform_abc: "the platform near Escalators A, B and C"
-    platform_def: "the platform near Escalators D, E and F"
+    platform_1: "Platform 1 (Escalators E and F go up to the concourse)"
+    platform_2: "Platform 2 (Escalators E and F go up to the concourse)"
+    platform_3: "Platform 3 (Escalators B and C go up to the concourse)"
+    platform_4: "Platform 4 (Escalators B and C go up to the concourse)"
+    concourse:  "the concourse (upper level — exits to Blackett Street, Grey Street and Eldon Square)"
+
+  # Exits that arrive INTO each zone from elsewhere (not valid departure choices).
+  # Prevents agents being offered an escalator that brings them here as a way to leave.
+  # Scenario-agnostic — populated per-zone, not per-level.
+  arrival_exits_by_zone:
+    concourse:   [escalator_b_up, escalator_c_up, escalator_e_up, escalator_f_up]
+    platform_1:  []
+    platform_2:  []
+    platform_3:  []
+    platform_4:  []
+
+  # Exits each knowledge profile can recall from memory, organised by zone.
+  # Commuters know the specific exits for the zone they are in.
+  # Novices rely on what they can see; they only know major signed exits as a fallback.
+  zone_known_exits_by_profile:
+    platform_1:
+      commuter: [escalator_e_up, escalator_f_up]
+      novice:   []
+    platform_2:
+      commuter: [escalator_e_up, escalator_f_up]
+      novice:   []
+    platform_3:
+      commuter: [escalator_b_up, escalator_c_up]
+      novice:   []
+    platform_4:
+      commuter: [escalator_b_up, escalator_c_up]
+      novice:   []
+    concourse:
+      commuter: [blackett_street, grey_street, eldon_square, L0_esc_a_down, L0_esc_d_down]
+      novice:   [blackett_street, grey_street, eldon_square]
+
+  # Zone names hidden from the intermediate-navigation zones list when the agent is in a
+  # given zone.  Prevents offering destinations that cannot be reached without first
+  # using an exit (e.g. platform zones are not directly walkable from the concourse).
+  zones_hidden_for_zone:
+    concourse: [platform_1, platform_2, platform_3, platform_4]
+
+  # Substrings that indicate an agent's goal refers to a particular zone.
+  # Used to detect when an agent has already reached their goal destination.
+  zone_goal_keywords:
+    platform_1: ["Platform 1"]
+    platform_2: ["Platform 2"]
+    platform_3: ["Platform 3"]
+    platform_4: ["Platform 4"]
+    concourse:  []
 
   # UP escalators reachable from each platform zone (used for commuter valid-exits prompt).
   platform_up_exits:

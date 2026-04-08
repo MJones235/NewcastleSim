@@ -37,6 +37,7 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
     try:
         from scenarios.station_jupedsim.geometry import (
             load_entrance_areas,
+            load_escalator_corridors,
             load_obstacles,
             load_platform_areas,
             load_walkable_areas,
@@ -60,6 +61,7 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
                 entrance_areas = load_entrance_areas(str(level_file))
                 platform_areas = load_platform_areas(str(level_file))
                 obstacles = load_obstacles(str(level_file))
+                escalator_corridors = load_escalator_corridors(str(level_file))
 
                 geometry["levels"][level_name] = {
                     "walkable_areas": {
@@ -72,12 +74,15 @@ def load_geometry_from_network(network_path: Path) -> dict | None:
                         name: poly_to_coords(poly) for name, poly in platform_areas.items()
                     },
                     "obstacles": [poly_to_coords(poly) for poly in obstacles],
+                    "escalator_corridors": {
+                        name: poly_to_coords(poly) for name, poly in escalator_corridors.items()
+                    },
                 }
 
                 logger.info(
                     f"Loaded {level_name}: {len(walkable_areas)} walkable areas, "
                     f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
-                    f"{len(obstacles)} obstacles"
+                    f"{len(obstacles)} obstacles, {len(escalator_corridors)} escalator corridors"
                 )
             except Exception as e:
                 logger.error(f"Failed to load {level_name}: {e}")

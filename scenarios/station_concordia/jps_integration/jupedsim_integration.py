@@ -246,6 +246,23 @@ class ConcordiaJuPedSimulation:
 
         logger.info(f"Set agent {agent_id} speed to {speed:.2f} m/s")
 
+    def get_agent_speed(self, agent_id: str) -> float | None:
+        """
+        Get an agent's current desired walking speed.
+
+        Args:
+            agent_id: Concordia agent ID
+
+        Returns:
+            Agent's desired speed in m/s, or None if agent has exited
+        """
+        if not self.agent_tracker.is_agent_active(agent_id):
+            return None
+
+        jps_id = self.agent_tracker.get_jps_id(agent_id)
+        agent = self.simulation.agent(jps_id)
+        return float(agent.model.v0)
+
     def get_nearby_agents(self, agent_id: str, radius: float) -> list[dict[str, Any]]:
         """
         Get information about agents within radius of given agent.
@@ -428,6 +445,26 @@ class ConcordiaJuPedSimulation:
                         distance_to_polygon=0.4,  # Min 0.4m from boundaries
                         seed=seed + idx,
                     )
+                    # Reject any position that falls inside an escalator corridor so
+                    # agents are never spawned mid-escalator.
+                    escalator_corridors = getattr(self.geometry_manager, "escalator_corridors", {})
+                    if escalator_corridors:
+                        from shapely.geometry import Point as _Point
+
+                        filtered = [
+                            p
+                            for p in positions
+                            if not any(
+                                cpoly.contains(_Point(p)) for cpoly in escalator_corridors.values()
+                            )
+                        ]
+                        rejected = len(positions) - len(filtered)
+                        if rejected:
+                            logger.info(
+                                f"  {area_name}: filtered out {rejected} spawn position(s) "
+                                "inside escalator corridors"
+                            )
+                        positions = filtered
                     spawn_positions.extend(positions)
                     logger.info(f"  {area_name}: {len(positions)} agents")
                 except Exception as e:

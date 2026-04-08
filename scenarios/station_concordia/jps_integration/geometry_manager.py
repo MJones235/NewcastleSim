@@ -14,6 +14,7 @@ from scenarios.common.logger import get_logger
 from scenarios.station_jupedsim.geometry import (
     GeometryProcessor,
     load_entrance_areas,
+    load_escalator_corridors,
     load_obstacles,
     load_platform_areas,
     load_walkable_areas,
@@ -59,6 +60,7 @@ class GeometryManager:
             self.entrance_areas,
             self.platform_areas,
             self.obstacles,
+            self.escalator_corridors,
         ) = self._load_geometry()
 
         # Create JuPedSim simulation
@@ -108,6 +110,7 @@ class GeometryManager:
         entrance_areas = load_entrance_areas(str(geom_file))
         platform_areas = load_platform_areas(str(geom_file))
         obstacles = load_obstacles(str(geom_file))
+        escalator_corridors = load_escalator_corridors(str(geom_file))
 
         # Integrate obstacles into walkable areas as polygon holes
         walkable_areas_with_obstacles, fixed_obstacles = GeometryProcessor.integrate_obstacles(
@@ -119,6 +122,7 @@ class GeometryManager:
         logger.info(f"  Loaded {len(platform_areas)} platform areas")
         logger.info(f"  Loaded {len(obstacles)} obstacles")
         logger.info(f"  Integrated {len(fixed_obstacles)} obstacles into walkable areas")
+        logger.info(f"  Loaded {len(escalator_corridors)} escalator corridors")
 
         return (
             walkable_areas,
@@ -126,6 +130,7 @@ class GeometryManager:
             entrance_areas,
             platform_areas,
             fixed_obstacles,
+            escalator_corridors,
         )
 
     def _create_simulation(self) -> jps.Simulation:

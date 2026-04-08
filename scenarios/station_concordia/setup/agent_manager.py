@@ -52,6 +52,16 @@ class AgentManager:
         # Generate spawn positions
         spawn_positions = SpawnManager.generate_spawn_positions(jps_sim, num_agents)
 
+        # Warn and cap if fewer positions were generated than requested
+        # (e.g. some rejected because they fell inside escalator corridors).
+        actual_count = len(spawn_positions)
+        if actual_count < num_agents:
+            logger.warning(
+                f"Only {actual_count} spawn positions available for {num_agents} requested agents. "
+                f"Reducing agent count to {actual_count}."
+            )
+            num_agents = actual_count
+
         # Create agent configurations
         agents_config, injured_agents = AgentFactory.create_agents(num_agents, config)
 
@@ -128,6 +138,21 @@ class AgentManager:
             else:
                 # concourse or any entrance zone
                 agent_cfg["agent_role"] = "heading_to_platform"
+
+            # Store the initial goal text so decision_processor can seed agent_goals.
+            role = agent_cfg["agent_role"]
+            target_platform = agent_cfg.get("target_platform", 1)
+            trip_purpose = agent_cfg.get("trip_purpose", "your destination")
+            if role == "heading_to_platform":
+                agent_cfg["initial_goal"] = f"Catch your train from Platform {target_platform}."
+            elif role == "waiting_for_train":
+                agent_cfg["initial_goal"] = (
+                    f"Wait on Platform {target_platform} and board your train when it arrives."
+                )
+            elif role == "just_arrived":
+                agent_cfg["initial_goal"] = f"Leave the station and continue to {trip_purpose}."
+            else:
+                agent_cfg["initial_goal"] = "Continue your planned journey."
 
             is_injured = i in injured_agents
 

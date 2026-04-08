@@ -2,6 +2,7 @@
 
 from .geometry_loader import (
     load_entrance_areas,
+    load_escalator_corridors,
     load_obstacles,
     load_platform_areas,
     load_walkable_areas,
@@ -13,5 +14,6 @@ __all__ = [
     "load_obstacles",
     "load_entrance_areas",
     "load_platform_areas",
+    "load_escalator_corridors",
     "GeometryProcessor",
 ]

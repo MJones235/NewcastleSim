@@ -137,7 +137,7 @@ class EvacuationAgent(prefab_lib.Prefab):
 
         evacuation_goal = agent_components.constant.Constant(
             state=goal_state,
-            pre_act_label="\nGoal",
+            pre_act_label="\nInitial intent",
         )
 
         # Assemble all components (removed RelevantMemories - it was making extra LLM calls)

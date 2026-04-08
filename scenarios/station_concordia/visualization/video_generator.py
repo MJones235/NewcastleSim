@@ -12,7 +12,6 @@ from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.animation import FFMpegWriter
-from matplotlib.lines import Line2D
 from matplotlib.patches import Polygon as MPLPolygon
 
 from scenarios.common.logger import get_logger
@@ -271,6 +270,20 @@ class VideoGenerator:
                     polygon = MPLPolygon(coords, fill=True, alpha=0.3, color="blue")
                     ax.add_patch(polygon)
 
+        # Draw escalator corridors (distinct orange, outline only so walkable floor shows through)
+        if "escalator_corridors" in geom:
+            for _, coords in geom["escalator_corridors"].items():
+                if coords:
+                    polygon = MPLPolygon(
+                        coords,
+                        fill=True,
+                        alpha=0.35,
+                        facecolor="#FF8C00",
+                        edgecolor="#FF4500",
+                        linewidth=1.2,
+                    )
+                    ax.add_patch(polygon)
+
         # Draw obstacles
         if "obstacles" in geom:
             for coords in geom["obstacles"]:
@@ -387,35 +400,6 @@ class VideoGenerator:
                                 label="_agent",
                             )
 
-        # Determine agent states
-        waiting_agents = {}
-
-        # Use agent_states if available (from position history)
-        agent_states = frame_data.get("agent_states", {})
-        if agent_states:
-            for agent_id, state in agent_states.items():
-                action_type = state.get("action_type", "")
-                if action_type == "wait":
-                    wait_reason = state.get("wait_reason", "unknown")
-                    waiting_agents[agent_id] = wait_reason
-
-        # Fallback: extract from decisions if agent_states not available
-        if not agent_states:
-            decisions = frame_data.get("decisions", {})
-            if isinstance(decisions, dict):
-                for agent_id, agent_data in decisions.items():
-                    if isinstance(agent_data, dict) and "decisions" in agent_data:
-                        decisions_list = agent_data["decisions"]
-                        if decisions_list:
-                            latest = decisions_list[-1]
-                            if isinstance(latest, dict):
-                                translated = latest.get("translated", {})
-                                if isinstance(translated, dict):
-                                    action_type = translated.get("action_type", "")
-                                    if action_type == "wait":
-                                        wait_reason = translated.get("wait_reason", "unknown")
-                                        waiting_agents[agent_id] = wait_reason
-
         # Draw agent positions on appropriate level
         positions = frame_data.get("positions", {})
         for agent_id, pos in positions.items():
@@ -433,68 +417,8 @@ class VideoGenerator:
 
                 ax = axes_dict[level_key]
 
-                # Determine color and size
-                if agent_id in waiting_agents:
-                    wait_reason = waiting_agents[agent_id]
-                    color = {
-                        "seeking_information": "purple",
-                        "waiting_for_help": "gold",
-                        "observing_others": "cyan",
-                        "assessing_situation": "magenta",
-                    }.get(wait_reason, "gray")
-                    size = 9
-                else:
-                    color = "red"
-                    size = 8
-
-                ax.plot(x, y, "o", color=color, markersize=size, label="_agent")
+                ax.plot(x, y, "o", color="red", markersize=8, label="_agent")
                 ax.text(x, y + 1, agent_id, ha="center", fontsize=8, label="_agent")
-
-        # Add legend (only to the first level axes)
-        legend_elements = [
-            Line2D(
-                [0], [0], marker="o", color="w", markerfacecolor="red", markersize=8, label="Moving"
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="purple",
-                markersize=9,
-                label="Wait: Seeking Info",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="gold",
-                markersize=9,
-                label="Wait: For Help",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="cyan",
-                markersize=9,
-                label="Wait: Observing",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="magenta",
-                markersize=9,
-                label="Wait: Assessing",
-            ),
-        ]
-        if axes_dict:
-            first_ax = list(axes_dict.values())[0]
-            first_ax.legend(handles=legend_elements, loc="upper right", fontsize=8)
 
     def generate(self, output_path: Path, dpi: int = 100) -> bool:
         """

@@ -32,6 +32,7 @@ class VideoGenerationHelper:
         try:
             from scenarios.station_jupedsim.geometry import (
                 load_entrance_areas,
+                load_escalator_corridors,
                 load_obstacles,
                 load_platform_areas,
                 load_walkable_areas,
@@ -54,6 +55,7 @@ class VideoGenerationHelper:
             entrance_areas = load_entrance_areas(str(geom_file))
             platform_areas = load_platform_areas(str(geom_file))
             obstacles = load_obstacles(str(geom_file))
+            escalator_corridors = load_escalator_corridors(str(geom_file))
 
             def poly_to_coords(poly):
                 return list(poly.exterior.coords)
@@ -69,13 +71,16 @@ class VideoGenerationHelper:
                     name: poly_to_coords(poly) for name, poly in platform_areas.items()
                 },
                 "obstacles": [poly_to_coords(poly) for poly in obstacles],
+                "escalator_corridors": {
+                    name: poly_to_coords(poly) for name, poly in escalator_corridors.items()
+                },
             }
 
             logger.info(
                 f"Loaded geometry from {geom_file}: "
                 f"{len(walkable_areas)} walkable areas, "
                 f"{len(entrance_areas)} entrances, {len(platform_areas)} platforms, "
-                f"{len(obstacles)} obstacles"
+                f"{len(obstacles)} obstacles, {len(escalator_corridors)} escalator corridors"
             )
 
             return geometry

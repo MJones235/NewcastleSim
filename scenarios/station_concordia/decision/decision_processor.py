@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from concordia.typing import entity as entity_lib
+from shapely.geometry import Point
 
 from scenarios.common.logger import get_logger
 from scenarios.station_concordia.decision.action_utils import extract_exit_name
@@ -86,36 +87,45 @@ class DecisionProcessor:
         self.llm_calls_skipped = 0  # Statistics tracking
         self.llm_calls_made = 0
 
-        # Read geometry-specific exit lists from station config rather than hardcoding.
-        # These are defined under station.platform_up_exits / station.street_exits /
-        # station.default_platform_zone in the YAML config.
-        self._PLATFORM_UP_EXITS: dict[str, list[str]] = station_layout.get("platform_up_exits", {})
-        self._STREET_EXIT_IDS: list[str] = station_layout.get("street_exits", [])
-        self._DOWN_ACCESS_EXIT_IDS: list[str] = list(
-            station_layout.get("down_access_exits", {}).keys()
+        # Per-agent persistent goal text (plain string, updated via goal_update field).
+        # Seeded from agent_cfg["initial_goal"] on first decision.
+        self.agent_goals: dict[str, str] = {}
+
+        # Config-driven exit knowledge — replaces hardcoded level-number comparisons.
+        # All keys are defined in station.yaml under the station: section.
+        self._arrival_exits_by_zone: dict[str, list[str]] = station_layout.get(
+            "arrival_exits_by_zone", {}
         )
-        self._default_platform_zone: str = station_layout.get("default_platform_zone", "")
+        self._zone_known_exits: dict[str, dict[str, list[str]]] = station_layout.get(
+            "zone_known_exits_by_profile", {}
+        )
+        self._zones_hidden_for_zone: dict[str, list[str]] = station_layout.get(
+            "zones_hidden_for_zone", {}
+        )
+        self._zone_goal_keywords: dict[str, list[str]] = station_layout.get(
+            "zone_goal_keywords", {}
+        )
 
         logger.debug("DecisionProcessor initialized for parallel async processing")
 
-    def _build_zones_section(self, zones: list[str], agent_level: str | None = None) -> str:
+    def _build_zones_section(self, zones: list[str], zone_id: str | None = None) -> str:
         """Build the AVAILABLE ZONES block for the prompt.
 
         Uses zone_labels from station config to show human-readable names alongside
         the technical zone_name the LLM must copy verbatim into its JSON response.
         Returns an empty string when no zones are configured.
 
-        Platform zones (platform_N) are suppressed for level-0 (concourse) agents
-        because those zones are physically on level -1 and cannot be walked to
-        directly — agents should instead choose a down escalator exit.
+        Zones that cannot be reached directly without first using an exit (e.g. platform
+        zones from the concourse) are hidden via the zones_hidden_for_zone config key,
+        keeping the list meaningful for reorientation.
         """
         if not zones:
             return ""
         zone_labels: dict[str, str] = self.station_layout.get("zone_labels", {})
+        hidden = set(self._zones_hidden_for_zone.get(zone_id or "", []))
         lines = []
         for z in zones:
-            # Hide platform-level zones from concourse agents
-            if agent_level == "0" and re.match(r"^platform_", z):
+            if z in hidden:
                 continue
             label = zone_labels.get(z, z.replace("_", " ").title())
             lines.append(f"  \u2022 {label} (zone_name='{z}')")
@@ -124,44 +134,45 @@ class DecisionProcessor:
         bullets = "\n".join(lines)
         return "\nAvailable zones:\n" f"{bullets}\n\n"
 
-    def _get_valid_exits_section(
-        self, agent_id: str, observation: str, agent_level: str | None
-    ) -> str:
+    def _get_valid_exits_section(self, agent_id: str, observation: str, zone_id: str | None) -> str:
         """Build a prompt section listing the valid exit names for this agent.
 
-        Commuters already know their platform's UP escalators (or all street exits on
-        level 0) from memory.  Novices only know exits they can currently see; if none
-        are visible they are directed to follow another agent instead.
+        Uses config-driven knowledge tables rather than hard-coded level numbers:
+        - arrival_exits_by_zone: exits that arrive INTO this zone (filtered out)
+        - zone_known_exits_by_profile: exits recalled from memory per zone/profile
+
+        Commuters recall memorized exits for their current zone.
+        Novices rely on what they can see; they have a small fallback list of
+        exits they could read from signs (e.g. named street exits on the concourse).
         """
         registry = self.action_translator.exit_registry
         valid_ids = set(registry.get_all_ids())
         cfg = self._agent_cfg.get(agent_id, {})
         profile = cfg.get("knowledge_profile", "novice")
-        initial_zone = cfg.get("initial_zone", self._default_platform_zone)
+
+        # Exits that arrive INTO this zone are one-way arrivals, not departure choices.
+        arrival_exits = set(self._arrival_exits_by_zone.get(zone_id or "", []))
+
+        def _is_valid_departure(eid: str) -> bool:
+            return eid not in arrival_exits
 
         def _extract_visible_distance_ranks(text: str) -> dict[str, int]:
-            """Map visible exit display names to distance rank (0=closest)."""
             ranks: dict[str, int] = {}
-            distance_patterns = [
+            for pattern, rank in [
                 (r"You can see\s+([^\.]+?)\s+very close to you\.", 0),
                 (r"You can see\s+([^\.]+?)\s+nearby\.", 1),
                 (r"You can see\s+([^\.]+?)\s+in the distance\.", 2),
-            ]
-
-            for pattern, rank in distance_patterns:
+            ]:
                 for m in re.finditer(pattern, text):
                     for raw_name in m.group(1).split(","):
                         name = raw_name.strip()
-                        if not name:
-                            continue
-                        if name not in ranks or rank < ranks[name]:
+                        if name and name not in ranks:
                             ranks[name] = rank
             return ranks
 
         visible_distance_rank = _extract_visible_distance_ranks(observation)
 
         def _sort_display_exits(display_names: list[str]) -> list[str]:
-            """Sort exits by observed visibility, then observed proximity, then original order."""
             indexed = list(enumerate(display_names))
 
             def key_fn(item: tuple[int, str]) -> tuple[int, int, int, str]:
@@ -172,72 +183,50 @@ class DecisionProcessor:
 
             return [name for _, name in sorted(indexed, key=key_fn)]
 
-        def _is_standard_exit(eid: str) -> bool:
-            """Only include exits that are valid departure points for the agent's level.
-            - Level 0 (concourse): street exits + down escalators only (no up escalators)
-            - Level -1 (platform): up escalators only (no down escalators, no street exits)
-            - Unknown level: exclude escalator_X_down (legacy safe default)
-            """
-            if agent_level == "0":
-                # Concourse: bar up-escalators (they are arrival zones here, not exits)
-                return not re.match(r"^escalator_[a-f]_up$", eid)
-            elif agent_level == "-1":
-                # Platform: bar down-escalators (they are arrival zones here, not exits)
-                return not re.match(r"^escalator_[a-f]_down$", eid)
-            # Unknown level: keep original safe default
-            return not re.match(r"^escalator_[a-f]_down$", eid)
-
+        # ── Commuter: recall memorized exits for this zone ───────────────────
         if profile == "commuter":
-            if agent_level == "-1":
-                fallback = next(iter(self._PLATFORM_UP_EXITS), None)
-                exit_ids = self._PLATFORM_UP_EXITS.get(initial_zone) or (
-                    self._PLATFORM_UP_EXITS.get(fallback, []) if fallback else []
-                )
-                exits = [registry.get_display_name(eid) for eid in exit_ids if eid in valid_ids]
-                exits = _sort_display_exits(exits)
-                if exits:
-                    bullets = "".join(f"\n  \u2022 {e}" for e in exits)
-                    return "\nAllowed exits now:" f"{bullets}\n\n"
-            else:
-                # Level 0: include both down-access escalators (to reach platforms)
-                # and street exits (for evacuation). Agent decides which to use.
-                combined_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
-                exits = [registry.get_display_name(eid) for eid in combined_ids if eid in valid_ids]
-                exits = _sort_display_exits(exits)
-                if exits:
-                    bullets = "".join(f"\n  \u2022 {e}" for e in exits)
-                    return "\nAllowed exits now:" f"{bullets}\n\n"
-        else:
-            # Novice: only exits whose display name appears in this observation
-            all_display = [
+            mem_ids = self._zone_known_exits.get(zone_id or "", {}).get("commuter", [])
+            exits = [
                 registry.get_display_name(eid)
-                for eid in registry.get_all_ids()
-                if _is_standard_exit(eid)
+                for eid in mem_ids
+                if eid in valid_ids and _is_valid_departure(eid)
             ]
+            exits = _sort_display_exits(exits)
+            if exits:
+                bullets = "".join(f"\n  \u2022 {e}" for e in exits)
+                return "\nAllowed exits now:" f"{bullets}\n\n"
+            # Fall through to visible-exit check if no memorized exits for this zone
 
-            # Restrict "visible" exits to explicit visual sentences only.
-            # This avoids false positives from lines like "People heading toward exits".
-            visual_fragments = re.findall(r"You can see\s+([^\.]+)\.", observation)
-            visual_fragments += re.findall(r"Visible exits right now:\s*([^\.]+)\.", observation)
-            visual_text = " ".join(visual_fragments)
-            visible = [n for n in all_display if n in visual_text]
-            if visible:
-                bullets = "".join(f"\n  \u2022 {e}" for e in visible)
-                return "\nVisible exits right now:" f"{bullets}\n\n"
-            elif agent_level != "-1":
-                # On the concourse: fall back to street exits + down escalators from memory
-                fallback_ids = self._DOWN_ACCESS_EXIT_IDS + self._STREET_EXIT_IDS
-                fallback = [
-                    registry.get_display_name(eid) for eid in fallback_ids if eid in valid_ids
-                ]
-                if fallback:
-                    bullets = "".join(f"\n  \u2022 {e}" for e in fallback)
-                    return "\nAllowed exits now:" f"{bullets}\n\n"
-            return (
-                "\nVisible exits right now: none.\n"
-                "Do NOT use target_type='exit'. Follow someone or wait.\n\n"
-            )
-        return ""
+        # ── Visible exits (both profiles) ────────────────────────────────────
+        # Restrict to explicit visual sentences to avoid false positives.
+        visual_fragments = re.findall(r"You can see\s+([^\.]+)\.", observation)
+        visual_fragments += re.findall(r"Visible exits right now:\s*([^\.]+)\.", observation)
+        visual_text = " ".join(visual_fragments)
+
+        all_departure = [
+            registry.get_display_name(eid) for eid in valid_ids if _is_valid_departure(eid)
+        ]
+        visible = [n for n in all_departure if n in visual_text]
+        if visible:
+            visible = _sort_display_exits(visible)
+            bullets = "".join(f"\n  \u2022 {n}" for n in visible)
+            return "\nVisible exits right now:" f"{bullets}\n\n"
+
+        # ── No visible exits: check profile's memorized fallback ─────────────
+        fallback_ids = self._zone_known_exits.get(zone_id or "", {}).get(profile, [])
+        fallback = [
+            registry.get_display_name(eid)
+            for eid in fallback_ids
+            if eid in valid_ids and _is_valid_departure(eid)
+        ]
+        if fallback:
+            bullets = "".join(f"\n  \u2022 {n}" for n in fallback)
+            return "\nAllowed exits now:" f"{bullets}\n\n"
+
+        return (
+            "\nVisible exits right now: none.\n"
+            "Do NOT use target_type='exit'. Follow someone or wait.\n\n"
+        )
 
     def _get_following_constraint_text(self, observation: str) -> str:
         """Build a hard movement constraint block when followers are detected.
@@ -295,6 +284,51 @@ class DecisionProcessor:
             )
         return ""
 
+    def _identify_zone(self, position: tuple[float, float]) -> str | None:
+        """Return the zone_id containing *position*, or None if not in any named zone."""
+        try:
+            from shapely.geometry import Point as _Point
+
+            pt = _Point(position)
+            for zone_id, poly in self.action_translator.zones_polygons.items():
+                try:
+                    if poly.covers(pt) or poly.contains(pt):
+                        return zone_id
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return None
+
+    def _agent_is_on_escalator(self, agent_id: str) -> bool:
+        """Return True if the agent is currently inside an escalator corridor polygon.
+
+        Agents on escalators have no meaningful choices to make — direction and
+        minimum speed are enforced physically.  Skipping decision-making prevents
+        the LLM from issuing a 'wait' action mid-escalator, which would override
+        the agent's journey and leave them stationary.
+        """
+        if not self.jps_sim:
+            return False
+        pos = self.jps_sim.get_agent_position(agent_id)
+        if pos is None:
+            return False
+        level_id = None
+        if hasattr(self.jps_sim, "agent_levels"):
+            level_id = self.jps_sim.agent_levels.get(agent_id)
+        # For multi-level simulations look up the per-level sim; for single-level use jps_sim.
+        if level_id is not None and hasattr(self.jps_sim, "simulations"):
+            sim = self.jps_sim.simulations.get(level_id)
+        else:
+            sim = self.jps_sim
+        if sim is None:
+            return False
+        corridors = getattr(getattr(sim, "geometry_manager", None), "escalator_corridors", {})
+        if not corridors:
+            return False
+        p = Point(pos)
+        return any(poly.contains(p) for poly in corridors.values())
+
     def process_all_agents(
         self,
         observations: dict[str, str],
@@ -344,7 +378,9 @@ class DecisionProcessor:
         agents_to_process = [
             agent_id
             for agent_id in candidate_agents
-            if agent_id in self.concordia_agents and agent_id not in self.exited_agents
+            if agent_id in self.concordia_agents
+            and agent_id not in self.exited_agents
+            and not self._agent_is_on_escalator(agent_id)
         ]
 
         tasks = [
@@ -374,17 +410,38 @@ class DecisionProcessor:
         current_sim_time: float,
     ):
         """Process a single agent's decision (async) with intelligent prompt caching."""
-        # Get agent's level and filter exits accordingly
-        agent_level = None
-        if self.jps_sim and hasattr(self.jps_sim, "agent_levels"):
-            agent_level = self.jps_sim.agent_levels.get(agent_id)
-
         try:
-            # Get observation for this agent
+            # ── Position & zone (needed for goal status and exit filtering) ──
+            position = self.state_queries.get_agent_position(agent_id)
+            if position is None:
+                logger.debug(f"{agent_id}: No position found, likely exited")
+                return
+            zone_id = self._identify_zone(position)
+
+            # ── Persistent goal ──────────────────────────────────────────────
+            if agent_id not in self.agent_goals:
+                cfg = self._agent_cfg.get(agent_id, {})
+                self.agent_goals[agent_id] = cfg.get("initial_goal", "")
+            agent_goal = self.agent_goals[agent_id]
+
+            # Build goal-context prefix for the observation
+            goal_lines: list[str] = []
+            if agent_goal:
+                goal_lines.append(f"Your current goal: {agent_goal}")
+                if zone_id:
+                    keywords = self._zone_goal_keywords.get(zone_id, [])
+                    if any(kw.lower() in agent_goal.lower() for kw in keywords):
+                        goal_lines.append(
+                            "Goal status: You are currently at your goal destination."
+                        )
+
+            # Get observation for this agent and prepend goal context
             observation = observations.get(agent_id, "")
+            if goal_lines:
+                observation = "\n".join(goal_lines) + "\n\n" + observation
 
             # Build profile-aware valid exit options block
-            valid_exits_text = self._get_valid_exits_section(agent_id, observation, agent_level)
+            valid_exits_text = self._get_valid_exits_section(agent_id, observation, zone_id)
 
             # Build follower constraint block (injected when circular/following detected)
             following_constraint_text = self._get_following_constraint_text(observation)
@@ -393,7 +450,7 @@ class DecisionProcessor:
             # In practice this is when exits are not currently available/visible,
             # so the agent needs an intermediate area-level move.
             include_zones = "Visible exits right now: none." in valid_exits_text
-            zones_section = self._build_zones_section(zones, agent_level) if include_zones else ""
+            zones_section = self._build_zones_section(zones, zone_id) if include_zones else ""
             has_zones = bool(zones_section.strip())
 
             # The 'zone' target_type is only valid when AVAILABLE ZONES is non-empty.
@@ -426,18 +483,19 @@ class DecisionProcessor:
                     '  "speed": null (or "slow_walk", "normal_walk", "brisk_walk", "jog", "run"),\n'
                     '  "message": null (or your spoken words),\n'
                     '  "message_type": null (or "directed", "shout"),\n'
+                    '  "goal_update": null (or revised plain-text goal if your fundamental objective has changed),\n'
                     "}}\n\n"
                     "Hard constraints:\n"
                     "- If action_type='wait', target_type MUST be 'current_position'.\n"
                     "- If target_type='exit', exit_name is required and must match an allowed exit name exactly.\n"
                     "- If target_type='agent', target_agent is required.\n"
                     f"{zone_constraint_line}"
-                    "- Keep spoken message short and natural; no narration.\n\n"
+                    "- Keep spoken message short and natural; no narration.\n"
+                    "- goal_update: null unless your fundamental objective has genuinely changed.\n\n"
                     "Decision policy:\n"
-                    "1. If injured/helping someone, stay coordinated with that person.\n"
-                    "2. If evacuating now, choose target_type='exit'.\n"
-                    "3. If following someone, choose target_type='agent'.\n"
-                    "4. Otherwise wait or reorient.\n\n"
+                    "1. If helping someone, stay coordinated with that person.\n"
+                    "2. To progress toward your goal, choose target_type='exit' or target_type='agent'.\n"
+                    "3. If uncertain or waiting, choose target_type='current_position'.\n\n"
                     f"{zones_section}"
                     f"{following_constraint_text}"
                     f"{valid_exits_text}"
@@ -515,8 +573,15 @@ class DecisionProcessor:
             with self.perf_timer.measure("parse_json_response", is_parallel=True):
                 reasoning = self._parse_json_response(action)
 
+            # Persist goal update if the agent revised their objective
+            if isinstance(reasoning, dict):
+                goal_update = reasoning.get("goal_update", "")
+                if goal_update and isinstance(goal_update, str) and goal_update.strip():
+                    async with self._state_lock:
+                        self.agent_goals[agent_id] = goal_update.strip()
+                    logger.info(f"{agent_id}: Updated goal → '{goal_update.strip()}'")
+
             # Translate action to JuPedSim command
-            position = self.state_queries.get_agent_position(agent_id)
             if position is None:
                 # Agent has likely exited - skip action execution
                 logger.debug(f"{agent_id}: No position found, likely exited")
@@ -612,6 +677,7 @@ class DecisionProcessor:
                 "risk_assessment": data.get("risk_assessment", ""),
                 "social_context": data.get("social_context", ""),
                 "reasoning": data.get("reasoning", ""),
+                "goal_update": data.get("goal_update", ""),
             }
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse JSON response: {response[:200]}")

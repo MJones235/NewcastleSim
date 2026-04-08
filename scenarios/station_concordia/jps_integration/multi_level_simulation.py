@@ -7,6 +7,7 @@ via escalators. Each level has its own JuPedSim simulation instance.
 
 import math
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +30,18 @@ class MultiLevelJuPedSimulation:
     between levels via escalators/stairs.
     """
 
+    #: Pattern used to parse escalator zone names.
+    _ESCALATOR_ZONE_RE = re.compile(r"^L([^_]+)_esc_([a-f])_(up|down)$")
+    #: Pattern used to extract level and escalator letter from corridor names.
+    _CORRIDOR_NAME_RE = re.compile(r"^L([^_]+)_esc_corridor_([a-f])$")
+
     def __init__(
         self,
         network_path: Path,
         dt: float = 0.05,
         exit_radius: float = 10.0,
         levels: list[str] | None = None,
+        escalator_belt_speed: float = 0.5,
     ):
         """
         Initialize multi-level simulation.
@@ -44,12 +51,19 @@ class MultiLevelJuPedSimulation:
             dt: Timestep in seconds
             exit_radius: Radius of circular exits in meters
             levels: List of level IDs to load (default: ["0", "-1"])
+            escalator_belt_speed: Speed of the escalator belt in m/s.  Agents
+                inside an escalator zone will have their desired speed raised to
+                at least this value so they are never stationary relative to the
+                surrounding floor.  Agents that drift into an arrival-only zone
+                (wrong direction for their level) are redirected to the nearest
+                valid exit.  Default 0.5 m/s (standard commercial escalator).
         """
         self.dt = dt
         self.exit_radius = exit_radius
         self.network_path = Path(network_path)
         self.current_step = 0
         self.is_complete = False
+        self.escalator_belt_speed = escalator_belt_speed
 
         if levels is None:
             levels = ["0", "-1"]
@@ -86,11 +100,218 @@ class MultiLevelJuPedSimulation:
         # Setup level transfer manager
         self.transfer_manager = LevelTransferManager(network_path, levels)
 
+        # Pre-classify every known escalator zone as a *departure* zone (has a
+        # registered JuPedSim exit on its level) or an *arrival* zone (no exit —
+        # agents spawn here after transferring and must walk out).
+        # Built once after both transfer_manager and simulations are ready.
+        self._zone_is_departure: dict[str, bool] = self._classify_escalator_zones()
+
+        # Track which exit each agent has been routed to while inside a corridor.
+        # Used to avoid redundant journey switches every step — only re-route when
+        # the agent first enters the corridor or their assigned exit changes.
+        self._corridor_routed_exit: dict[str, str] = {}  # agent_id -> exit_name
+
         logger.info(
             f"Multi-level simulation initialized with {len(self.simulations)} levels: "
             f"{', '.join(levels)}"
         )
         logger.info(f"Transfer info: {self.transfer_manager.get_transfer_info()}")
+        logger.info(
+            f"Escalator belt speed: {self.escalator_belt_speed} m/s  "
+            f"Departure zones: "
+            f"{[z for z, dep in self._zone_is_departure.items() if dep]}  "
+            f"Arrival zones: "
+            f"{[z for z, dep in self._zone_is_departure.items() if not dep]}"
+        )
+
+    # ------------------------------------------------------------------
+    # Escalator zone helpers
+    # ------------------------------------------------------------------
+
+    def _classify_escalator_zones(self) -> dict[str, bool]:
+        """
+        Classify every escalator zone as a departure (True) or arrival (False) zone.
+
+        A zone is a *departure* zone if a JuPedSim exit stage is registered for the
+        corresponding canonical exit name on that level.  Arrival zones have no exit
+        stage — they only exist so transferred agents can be spawned inside them.
+
+        Returns:
+            Mapping of zone_name -> is_departure_zone.
+        """
+        result: dict[str, bool] = {}
+        for zone_name in self.transfer_manager.escalator_zones:
+            m = self._ESCALATOR_ZONE_RE.match(zone_name)
+            if not m:
+                result[zone_name] = False
+                continue
+            zone_level, esc_letter, direction = m.groups()
+            exit_name = f"escalator_{esc_letter}_{direction}"
+            level_sim = self.simulations.get(zone_level)
+            if level_sim is None:
+                result[zone_name] = False
+                continue
+            result[zone_name] = exit_name in level_sim.exit_manager.evacuation_exits
+        return result
+
+    def _enforce_escalator_constraints(self) -> None:
+        """
+        Per-step escalator physics enforcement — called every simulation step.
+
+        Checks two classes of escalator zone:
+
+        **Exit boxes** (the small ~2 m² terminal zones from which JuPedSim removes
+        agents to trigger a level transfer):
+        - Departure boxes: enforce minimum speed.
+        - Arrival boxes: redirect any agent who hasn't just been transferred (direction
+          correction), plus enforce minimum speed.
+
+        **Corridor zones** (``jupedsim.escalator`` polygons in the XML) covering the
+        full navigable corridor between the railing obstacles:
+        - Enforce minimum speed only.  Direction is already controlled by routing;
+          corridor zones exist to prevent agents appearing stationary mid-escalator.
+        """
+        for level_id, sim in self.simulations.items():
+            escalator_corridors = getattr(sim.geometry_manager, "escalator_corridors", {})
+            agent_ids = list(sim.agent_tracker.agent_ids.keys())
+            for agent_id in agent_ids:
+                pos = sim.get_agent_position(agent_id)
+                if pos is None:
+                    continue
+
+                point = Point(pos)
+                handled = False
+
+                # --- Check escalator EXIT BOXES ---
+                for zone_name, zone_poly in self.transfer_manager.escalator_zones.items():
+                    m = self._ESCALATOR_ZONE_RE.match(zone_name)
+                    if not m or m.group(1) != level_id:
+                        continue
+                    if not zone_poly.contains(point):
+                        continue
+
+                    handled = True
+
+                    # Enforce minimum speed (applies regardless of direction).
+                    current_speed = sim.get_agent_speed(agent_id)
+                    if current_speed is not None and current_speed < self.escalator_belt_speed:
+                        sim.set_agent_speed(agent_id, self.escalator_belt_speed)
+                        logger.debug(
+                            f"[ESCALATOR] {agent_id} in {zone_name}: raised speed from "
+                            f"{current_speed:.2f} to {self.escalator_belt_speed:.2f} m/s"
+                        )
+
+                    is_departure = self._zone_is_departure.get(zone_name, False)
+                    if not is_departure:
+                        # Arrival-only zone.  Only redirect if the agent was NOT
+                        # recently transferred here.
+                        steps_since = self.current_step - self._last_transfer_step.get(
+                            agent_id, -(self._transfer_cooldown_steps + 1)
+                        )
+                        if steps_since > self._transfer_cooldown_steps // 5:
+                            nearest_exit = self._find_nearest_valid_exit_for_level(pos, level_id)
+                            if nearest_exit:
+                                logger.warning(
+                                    f"[ESCALATOR] Direction violation: {agent_id} on level "
+                                    f"{level_id} entered arrival-only zone '{zone_name}'. "
+                                    f"Redirecting to '{nearest_exit}'."
+                                )
+                                sim.set_agent_evacuation_exit(agent_id, nearest_exit)
+
+                    # Each agent can only be in one zone at a time.
+                    break
+
+                if handled:
+                    continue
+
+                # --- Check escalator CORRIDORS ---
+                in_any_corridor = False
+                for corridor_name, corridor_poly in escalator_corridors.items():
+                    if not corridor_poly.contains(point):
+                        continue
+                    in_any_corridor = True
+
+                    # Enforce minimum speed.
+                    current_speed = sim.get_agent_speed(agent_id)
+                    if current_speed is not None and current_speed < self.escalator_belt_speed:
+                        sim.set_agent_speed(agent_id, self.escalator_belt_speed)
+                        logger.debug(
+                            f"[ESCALATOR CORRIDOR] {agent_id} in {corridor_name}: raised speed "
+                            f"from {current_speed:.2f} to {self.escalator_belt_speed:.2f} m/s"
+                        )
+
+                    # Route the agent toward the departure exit for this corridor
+                    # letter on this level.  If no departure exit exists (arrival
+                    # side of the escalator), leave them alone — they have already
+                    # been given a waypoint into the concourse/platform and should
+                    # not be sent back the way they came.
+                    m = self._CORRIDOR_NAME_RE.match(corridor_name)
+                    if m:
+                        esc_letter = m.group(2)
+                        departure_exit = next(
+                            (
+                                name
+                                for name in sim.exit_manager.evacuation_exits
+                                if name == f"escalator_{esc_letter}_down"
+                                or name == f"escalator_{esc_letter}_up"
+                            ),
+                            None,
+                        )
+                        if (
+                            departure_exit
+                            and self._corridor_routed_exit.get(agent_id) != departure_exit
+                        ):
+                            logger.debug(
+                                f"[ESCALATOR CORRIDOR] {agent_id} in '{corridor_name}' "
+                                f"— routing to '{departure_exit}'"
+                            )
+                            sim.set_agent_evacuation_exit(agent_id, departure_exit)
+                            self._corridor_routed_exit[agent_id] = departure_exit
+                    break
+
+                if not in_any_corridor:
+                    # Agent left the corridor — clear the cached route so it is
+                    # re-asserted if they re-enter.
+                    self._corridor_routed_exit.pop(agent_id, None)
+
+    def _find_nearest_valid_exit_for_level(
+        self, pos: tuple[float, float], level_id: str
+    ) -> str | None:
+        """
+        Return the name of the nearest registered exit on *level_id* to *pos*.
+
+        Returns None if no exits are available.
+        """
+        level_sim = self.simulations.get(level_id)
+        if level_sim is None:
+            return None
+        exits = level_sim.exit_manager.exit_coordinates
+        if not exits:
+            return None
+        nearest_name = min(
+            exits,
+            key=lambda name: math.hypot(pos[0] - exits[name][0], pos[1] - exits[name][1]),
+        )
+        return nearest_name
+
+    # ------------------------------------------------------------------
+
+    def get_agent_speed(self, agent_id: str) -> float | None:
+        """
+        Get an agent's current desired walking speed.
+
+        Args:
+            agent_id: Concordia agent ID
+
+        Returns:
+            Agent's desired speed in m/s, or None if agent has exited / unknown level.
+        """
+        if agent_id not in self.agent_levels:
+            return None
+        level_id = self.agent_levels[agent_id]
+        return self.simulations[level_id].get_agent_speed(agent_id)
+
+    # ------------------------------------------------------------------
 
     @property
     def geometry_manager(self):
@@ -147,6 +368,10 @@ class MultiLevelJuPedSimulation:
         for sim in self.simulations.values():
             if sim.step():
                 any_active = True
+
+        # Step 3: Enforce escalator physics (minimum speed + direction correction).
+        # Done after JuPedSim has advanced so position data is fresh.
+        self._enforce_escalator_constraints()
 
         self.current_step += 1
 
@@ -313,6 +538,10 @@ class MultiLevelJuPedSimulation:
 
         self._pending_spawn_positions.append(spawn_pos)
 
+        # Clear cached corridor route so the arriving agent is re-routed immediately
+        # if they land inside a corridor on the target level.
+        self._corridor_routed_exit.pop(agent_id, None)
+
         # Spawn agent in target level
         try:
             self.simulations[target_level].add_agent(agent_id, spawn_pos)
@@ -338,22 +567,13 @@ class MultiLevelJuPedSimulation:
                 safe_main = main_poly.buffer(-0.3)
                 if safe_main.is_empty:
                     safe_main = main_poly
-                main_centroid = safe_main.centroid
-                temp_pos = None
-                for _wp_attempt in range(60):
-                    wp_angle = random.uniform(0, 2 * math.pi)
-                    wp_radius = random.uniform(
-                        0.5, min(3.0, safe_main.bounds[2] - safe_main.bounds[0]) / 3
-                    )
-                    wp_candidate = (
-                        main_centroid.x + math.cos(wp_angle) * wp_radius,
-                        main_centroid.y + math.sin(wp_angle) * wp_radius,
-                    )
-                    if safe_main.contains(Point(wp_candidate)):
-                        temp_pos = wp_candidate
-                        break
-                if temp_pos is None:
-                    temp_pos = (main_centroid.x, main_centroid.y)
+                # representative_point() is always inside the polygon (unlike centroid
+                # which may lie outside concave shapes like the Monument concourse).
+                anchor = safe_main.representative_point()
+                # Use representative_point directly — it is guaranteed inside the
+                # polygon and well away from the corridor exit boxes, so the agent
+                # walks out of the escalator corridor before the next LLM decision.
+                temp_pos = (anchor.x, anchor.y)
                 level_sim.set_agent_target(agent_id, temp_pos)
                 logger.debug(
                     f"Assigned temporary waypoint {temp_pos} to "
@@ -410,6 +630,11 @@ class MultiLevelJuPedSimulation:
         - On platform levels: Agents route to escalator exits (e.g., "escalator_a_up")
         - On concourse levels: Agents route to street exits (e.g., "eldon_square")
 
+        Direction is enforced programmatically: UP escalators are not valid exits
+        from the concourse (level 0), and DOWN escalators are not valid exits from
+        the platform level (level -1).  Any such request is rejected with an error
+        log and the agent keeps its current journey.
+
         Args:
             agent_id: ID of the agent
             exit_name: Name of the exit to route - must exist on current level
@@ -419,6 +644,28 @@ class MultiLevelJuPedSimulation:
 
         level_id = self.agent_levels[agent_id]
         level_sim = self.simulations[level_id]
+
+        # Explicit direction guard: detect wrong-way escalator requests and log
+        # a clear error before the generic existence check catches them silently.
+        esc_m = re.match(r"^escalator_([a-f])_(up|down)$", exit_name)
+        if esc_m:
+            direction = esc_m.group(2)
+            if level_id == "0" and direction == "up":
+                logger.error(
+                    f"[DIRECTION VIOLATION] {agent_id} on concourse (level 0) requested "
+                    f"UP escalator '{exit_name}'.  UP escalators are arrival zones on "
+                    f"the concourse — agents must use a DOWN escalator to reach platforms, "
+                    f"or a street exit to leave the building.  Request refused."
+                )
+                return
+            if level_id == "-1" and direction == "down":
+                logger.error(
+                    f"[DIRECTION VIOLATION] {agent_id} on platform level (-1) requested "
+                    f"DOWN escalator '{exit_name}'.  DOWN escalators are arrival zones on "
+                    f"the platform — agents must use an UP escalator to reach the concourse.  "
+                    f"Request refused."
+                )
+                return
 
         # Check if exit exists on this level
         if exit_name not in level_sim.exit_manager.evacuation_exits:

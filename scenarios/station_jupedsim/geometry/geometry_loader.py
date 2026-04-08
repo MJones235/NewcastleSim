@@ -137,6 +137,37 @@ def load_obstacles(xml_path: str) -> list[Polygon]:
     return obstacles
 
 
+def load_escalator_corridors(xml_path: str) -> dict[str, Polygon]:
+    """
+    Load escalator corridor zones from a SUMO geometry file.
+
+    Corridors are polygons of type 'jupedsim.escalator' that cover the full
+    walkable shaft of each escalator run (the area between the railing
+    obstacles).  They are NOT walkable_area polygons, so they do not affect
+    JuPedSim path-planning.  They are loaded purely for physics enforcement
+    (minimum belt speed) in MultiLevelJuPedSimulation.
+
+    Args:
+        xml_path: Path to a level_*.xml geometry file
+
+    Returns:
+        Dictionary mapping corridor names to Shapely Polygon objects
+        (e.g. 'L0_esc_corridor_b' -> Polygon(...))
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+
+    corridors: dict[str, Polygon] = {}
+    for poly in root.findall('.//poly[@type="jupedsim.escalator"]'):
+        name = poly.get("name")
+        shape_str = poly.get("shape")
+        if name and shape_str:
+            coords = parse_shape_string(shape_str)
+            corridors[name] = Polygon(coords)
+
+    return corridors
+
+
 def combine_walkable_geometry(
     walkable_areas: dict[str, Polygon], obstacles: list[Polygon] | None = None
 ) -> tuple:

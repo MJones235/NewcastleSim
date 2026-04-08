@@ -74,7 +74,6 @@ class SpatialConcordiaViewer:
         self.agent_dots = {}
         self.agent_labels = {}
         self.blocked_exit_markers = []  # Phase 4.2: Visual markers for blocked exits
-        self.legend_created = False  # Track if legend has been added
         self.current_data = {}  # Store current simulation data
 
     def _load_geometry(self, geometry_file: Path) -> dict:
@@ -91,6 +90,7 @@ class SpatialConcordiaViewer:
         try:
             from scenarios.station_jupedsim.geometry import (
                 load_entrance_areas,
+                load_escalator_corridors,
                 load_obstacles,
                 load_platform_areas,
                 load_walkable_areas,
@@ -114,6 +114,7 @@ class SpatialConcordiaViewer:
             entrance_areas = load_entrance_areas(str(geom_file))
             platform_areas = load_platform_areas(str(geom_file))
             obstacles = load_obstacles(str(geom_file))
+            escalator_corridors = load_escalator_corridors(str(geom_file))
 
             def poly_to_coords(poly):
                 return list(poly.exterior.coords)
@@ -129,6 +130,9 @@ class SpatialConcordiaViewer:
                     name: poly_to_coords(poly) for name, poly in platform_areas.items()
                 },
                 "obstacles": [poly_to_coords(poly) for poly in obstacles],
+                "escalator_corridors": {
+                    name: poly_to_coords(poly) for name, poly in escalator_corridors.items()
+                },
             }
 
             print(
@@ -136,7 +140,8 @@ class SpatialConcordiaViewer:
                 f"{len(walkable_areas)} walkable, "
                 f"{len(entrance_areas)} entrances, "
                 f"{len(platform_areas)} platforms, "
-                f"{len(obstacles)} obstacles"
+                f"{len(obstacles)} obstacles, "
+                f"{len(escalator_corridors)} escalator corridors"
             )
 
             return geometry
@@ -196,6 +201,21 @@ class SpatialConcordiaViewer:
                 if coords:
                     polygon = MPLPolygon(
                         coords, fill=True, alpha=0.3, color="blue", label="Platform"
+                    )
+                    ax.add_patch(polygon)
+
+        # Draw escalator corridors
+        if "escalator_corridors" in geometry:
+            for _, coords in geometry["escalator_corridors"].items():
+                if coords:
+                    polygon = MPLPolygon(
+                        coords,
+                        fill=True,
+                        alpha=0.35,
+                        facecolor="#FF8C00",
+                        edgecolor="#FF4500",
+                        linewidth=1.2,
+                        label="Escalator",
                     )
                     ax.add_patch(polygon)
 
@@ -356,44 +376,6 @@ class SpatialConcordiaViewer:
         if not self.agent_positions:
             return  # No positions yet
 
-        # Determine which agents are helping/being helped and waiting
-        helping_agents = set()
-        helped_agents = set()
-        waiting_agents = {}  # Maps agent_id -> wait_reason
-
-        # Use active_helping_pairs from the data if available
-        if "active_helping_pairs" in self.current_data:
-            active_helping_pairs = self.current_data["active_helping_pairs"]
-            if isinstance(active_helping_pairs, dict):
-                for helper_id, pair_info in active_helping_pairs.items():
-                    helping_agents.add(helper_id)
-                    helped_id = pair_info.get("helped")
-                    if helped_id:
-                        helped_agents.add(helped_id)
-
-        # Check decisions for wait actions and helping (fallback)
-        if isinstance(self.agent_decisions, dict):
-            for agent_id, agent_data in self.agent_decisions.items():
-                if isinstance(agent_data, dict) and "decisions" in agent_data:
-                    decisions_list = agent_data["decisions"]
-                    # Check most recent decision
-                    if decisions_list:
-                        latest_decision = decisions_list[-1]
-                        if isinstance(latest_decision, dict):
-                            # Check the translated action (the actual action executed)
-                            translated = latest_decision.get("translated", {})
-                            if isinstance(translated, dict):
-                                action_type = translated.get("action_type", "")
-
-                                # Track wait actions with reasons
-                                if action_type == "wait":
-                                    wait_reason = translated.get("wait_reason", "unknown")
-                                    waiting_agents[agent_id] = wait_reason
-
-                                # Fallback: check for help actions if no active_helping_pairs
-                                if action_type == "help" and not helping_agents:
-                                    helping_agents.add(agent_id)
-
         for agent_id, pos in self.agent_positions.items():
             if pos and len(pos) >= 2:
                 x, y = pos[0], pos[1]  # Handle both list and tuple from JSON
@@ -402,108 +384,11 @@ class SpatialConcordiaViewer:
                 agent_level = self.agent_levels.get(agent_id, "0")  # Default to level 0
                 ax = self.ax_level_0 if agent_level == "0" else self.ax_level_m1
 
-                # Color code priority: helping > helped > waiting > normal
-                if agent_id in helping_agents:
-                    color = "blue"  # Helpers are blue
-                    size = 10
-                elif agent_id in helped_agents:
-                    color = "orange"  # Being helped are orange
-                    size = 10
-                elif agent_id in waiting_agents:
-                    # Color by wait reason (Phase 4.3)
-                    wait_reason = waiting_agents[agent_id]
-                    if wait_reason == "seeking_information":
-                        color = "purple"
-                    elif wait_reason == "waiting_for_help":
-                        color = "gold"
-                    elif wait_reason == "observing_others":
-                        color = "cyan"
-                    elif wait_reason == "assessing_situation":
-                        color = "magenta"
-                    else:
-                        color = "gray"  # Unknown wait reason
-                    size = 9
-                else:
-                    color = "red"  # Normal agents are red
-                    size = 8
-
-                dot = ax.plot(x, y, "o", color=color, markersize=size)[0]
+                dot = ax.plot(x, y, "o", color="red", markersize=8)[0]
                 label = ax.text(x, y + 1, agent_id, ha="center", fontsize=8)
 
                 self.agent_dots[agent_id] = dot
                 self.agent_labels[agent_id] = label
-
-        # Add legend if not already created
-        if not self.legend_created and self.agent_dots:
-            from matplotlib.lines import Line2D
-
-            legend_elements = [
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="red",
-                    markersize=8,
-                    label="Moving",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="blue",
-                    markersize=10,
-                    label="Helping",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="orange",
-                    markersize=10,
-                    label="Being Helped",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="purple",
-                    markersize=9,
-                    label="Wait: Seeking Info",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="gold",
-                    markersize=9,
-                    label="Wait: For Help",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="cyan",
-                    markersize=9,
-                    label="Wait: Observing",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="magenta",
-                    markersize=9,
-                    label="Wait: Assessing",
-                ),
-            ]
-            self.ax_level_0.legend(handles=legend_elements, loc="upper right", fontsize=8)
-            self.legend_created = True
 
     def run(self):
         """Run the viewer with animation."""
